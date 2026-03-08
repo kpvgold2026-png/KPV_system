@@ -75,19 +75,30 @@ async function loadAccounting() {
       if (_tG > 0) wacPerG = _tC / _tG;
     }
 
-    var sell = { newGoldG: 0, txCount: 0 };
+    var sell = { newGoldG: 0, txCount: 0, received: 0 };
     var tradein = { newGoldG: 0, oldGoldG: 0, moneyNoP: 0, txCount: 0 };
     var exchange = { newGoldG: 0, oldGoldG: 0, txCount: 0 };
     var wd = { newGoldG: 0, txCount: 0 };
-    var bb = { oldGoldG: 0, txCount: 0 };
+    var bb = { oldGoldG: 0, txCount: 0, received: 0 };
     var otherExpenseLAK = 0;
     var incomplete = { money: 0, gold: 0 };
+    var incSell = { money: 0, gold: 0, count: 0 };
+    var incTradein = { money: 0, gold: 0, count: 0 };
+    var incExchange = { money: 0, gold: 0, count: 0 };
+    var incWithdraw = { money: 0, gold: 0, count: 0 };
+    var incBuyback = { money: 0, gold: 0, count: 0 };
 
     sells.slice(1).forEach(function(row) {
       var date = parseSheetDate(row[9]);
       if (date && date >= dayStart && date <= dayEnd) {
-        if (row[10] === 'COMPLETED') { sell.txCount++; try { JSON.parse(row[2]).forEach(function(item) { sell.newGoldG += getGoldWeight(item.productId) * item.qty; }); } catch(e) {} }
-        else if (row[10] !== 'REJECTED') { incomplete.money += parseFloat(row[3]) || 0; incomplete.gold += calcGold(row[2]); }
+        if (row[10] === 'COMPLETED') {
+          sell.txCount++;
+          var totalLAK = parseFloat(row[3]) || 0;
+          var changeLAK = parseFloat(row[8]) || 0;
+          sell.received += totalLAK + changeLAK;
+          try { JSON.parse(row[2]).forEach(function(item) { sell.newGoldG += getGoldWeight(item.productId) * item.qty; }); } catch(e) {}
+        }
+        else if (row[10] !== 'REJECTED') { var m = parseFloat(row[3]) || 0; var g = calcGold(row[2]); incomplete.money += m; incomplete.gold += g; incSell.money += m; incSell.gold += g; incSell.count++; }
       }
     });
 
@@ -97,7 +108,7 @@ async function loadAccounting() {
         if (row[12] === 'COMPLETED') {
           tradein.txCount++; tradein.moneyNoP += (parseFloat(row[4]) || 0) + (parseFloat(row[5]) || 0);
           try { JSON.parse(row[2]).forEach(function(item) { tradein.oldGoldG += getGoldWeight(item.productId) * item.qty; }); JSON.parse(row[3]).forEach(function(item) { tradein.newGoldG += getGoldWeight(item.productId) * item.qty; }); } catch(e) {}
-        } else if (row[12] !== 'REJECTED') { incomplete.money += (parseFloat(row[4]) || 0) + (parseFloat(row[5]) || 0) + (parseFloat(row[6]) || 0); incomplete.gold += calcGold(row[3]); }
+        } else if (row[12] !== 'REJECTED') { var m = (parseFloat(row[4]) || 0) + (parseFloat(row[5]) || 0) + (parseFloat(row[6]) || 0); var g = calcGold(row[3]); incomplete.money += m; incomplete.gold += g; incTradein.money += m; incTradein.gold += g; incTradein.count++; }
       }
     });
 
@@ -105,15 +116,19 @@ async function loadAccounting() {
       var date = parseSheetDate(row[11]);
       if (date && date >= dayStart && date <= dayEnd) {
         if (row[12] === 'COMPLETED') { exchange.txCount++; try { JSON.parse(row[2]).forEach(function(item) { exchange.oldGoldG += getGoldWeight(item.productId) * item.qty; }); JSON.parse(row[3]).forEach(function(item) { exchange.newGoldG += getGoldWeight(item.productId) * item.qty; }); } catch(e) {} }
-        else if (row[12] !== 'REJECTED') { incomplete.money += parseFloat(row[6]) || 0; incomplete.gold += calcGold(row[3]); }
+        else if (row[12] !== 'REJECTED') { var m = parseFloat(row[6]) || 0; var g = calcGold(row[3]); incomplete.money += m; incomplete.gold += g; incExchange.money += m; incExchange.gold += g; incExchange.count++; }
       }
     });
 
     buybacks.slice(1).forEach(function(row) {
       var date = parseSheetDate(row[9]);
       if (date && date >= dayStart && date <= dayEnd) {
-        if (row[10] === 'COMPLETED' || row[10] === 'PAID') { bb.txCount++; try { JSON.parse(row[2]).forEach(function(item) { bb.oldGoldG += getGoldWeight(item.productId) * item.qty; }); } catch(e) {} }
-        else if (row[10] !== 'REJECTED') { incomplete.money += parseFloat(row[6]) || 0; incomplete.gold += calcGold(row[2]); }
+        if (row[10] === 'COMPLETED' || row[10] === 'PAID') {
+          bb.txCount++;
+          bb.received += parseFloat(row[6]) || parseFloat(row[3]) || 0;
+          try { JSON.parse(row[2]).forEach(function(item) { bb.oldGoldG += getGoldWeight(item.productId) * item.qty; }); } catch(e) {}
+        }
+        else if (row[10] !== 'REJECTED') { var m = parseFloat(row[6]) || 0; var g = calcGold(row[2]); incomplete.money += m; incomplete.gold += g; incBuyback.money += m; incBuyback.gold += g; incBuyback.count++; }
       }
     });
 
@@ -121,7 +136,7 @@ async function loadAccounting() {
       var date = parseSheetDate(row[6]);
       if (date && date >= dayStart && date <= dayEnd) {
         if (row[7] === 'COMPLETED') { wd.txCount++; try { JSON.parse(row[2]).forEach(function(item) { wd.newGoldG += getGoldWeight(item.productId) * item.qty; }); } catch(e) {} }
-        else if (row[7] !== 'REJECTED') { incomplete.money += parseFloat(row[4]) || 0; incomplete.gold += calcGold(row[2]); }
+        else if (row[7] !== 'REJECTED') { var m = parseFloat(row[4]) || 0; var g = calcGold(row[2]); incomplete.money += m; incomplete.gold += g; incWithdraw.money += m; incWithdraw.gold += g; incWithdraw.count++; }
       }
     });
 
@@ -140,15 +155,26 @@ async function loadAccounting() {
     var netResult = calcNetSellBahtForRows(fS, fT, fE, fB, fW);
 
     var sellCostLAK = wacPerG * sell.newGoldG;
+    var sellDiff = sell.received - sellCostLAK;
     var tradeinDiffBaht = (tradein.newGoldG - tradein.oldGoldG) / 15;
     var tradeinAvg = tradeinDiffBaht !== 0 ? tradein.moneyNoP / tradeinDiffBaht : 0;
+    var tradeinCostLAK = wacPerG * (tradein.newGoldG - tradein.oldGoldG);
+    var tradeinDiffMoney = tradein.moneyNoP - tradeinCostLAK;
     var bbCostLAK = wacPerG * bb.oldGoldG;
+    var bbDiff = bb.received - bbCostLAK;
 
     var gpDiff = 0;
     if (diffData && diffData.length > 1) { diffData.slice(1).forEach(function(row) { var date = parseSheetDate(row[9]); if (date && date >= dayStart && date <= dayEnd) { gpDiff += parseFloat(row[8]) || 0; } }); }
     var pl = gpDiff - otherExpenseLAK;
 
     var netColor = netResult.netBaht >= 0 ? '#4caf50' : '#f44336';
+
+    var incDetail = '';
+    if (incSell.count > 0) incDetail += 'Sell: ' + formatNumber(Math.round(incSell.money)) + ' LAK | ' + incSell.gold.toFixed(2) + ' g | ' + incSell.count + ' tx<br>';
+    if (incTradein.count > 0) incDetail += 'Trade-in: ' + formatNumber(Math.round(incTradein.money)) + ' LAK | ' + incTradein.gold.toFixed(2) + ' g | ' + incTradein.count + ' tx<br>';
+    if (incExchange.count > 0) incDetail += 'Exchange: ' + formatNumber(Math.round(incExchange.money)) + ' LAK | ' + incExchange.gold.toFixed(2) + ' g | ' + incExchange.count + ' tx<br>';
+    if (incWithdraw.count > 0) incDetail += 'Withdraw: ' + formatNumber(Math.round(incWithdraw.money)) + ' LAK | ' + incWithdraw.gold.toFixed(2) + ' g | ' + incWithdraw.count + ' tx<br>';
+    if (incBuyback.count > 0) incDetail += 'Buyback: ' + formatNumber(Math.round(incBuyback.money)) + ' LAK | ' + incBuyback.gold.toFixed(2) + ' g | ' + incBuyback.count + ' tx<br>';
 
     document.getElementById('accountingStats').innerHTML =
       '<div class="stat-card" style="margin-bottom:20px;text-align:center;border:2px solid var(--gold-primary);">' +
@@ -157,14 +183,37 @@ async function loadAccounting() {
       '<div style="font-size:12px;color:var(--text-secondary);line-height:1.8;">' +
       'New Out ทั้งหมด: ' + netResult.totalNewGOut.toFixed(2) + ' g | Old In ทั้งหมด: ' + netResult.totalOldGIn.toFixed(2) + ' g | Net: ' + (netResult.totalNewGOut - netResult.totalOldGIn).toFixed(2) + ' g ÷ 15</div></div>' +
       '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:15px;margin-bottom:15px;">' +
-      '<div class="stat-card"><h3 style="color:var(--gold-primary);margin-bottom:8px;">SELL</h3><p style="font-size:13px;color:var(--text-secondary);margin:2px 0;">ต้นทุน (WAC)</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + formatNumber(Math.round(sellCostLAK)) + ' <span style="font-size:11px;">LAK</span></p><p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">New Gold Out</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + sell.newGoldG.toFixed(2) + ' g</p><p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">Transactions</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + sell.txCount + '</p></div>' +
-      '<div class="stat-card"><h3 style="color:var(--gold-primary);margin-bottom:8px;">TRADE-IN</h3><p style="font-size:13px;color:var(--text-secondary);margin:2px 0;">ราคาเฉลี่ย/บาท</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + formatNumber(Math.round(tradeinAvg)) + ' <span style="font-size:11px;">LAK</span></p><p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">New Gold Out</p><p style="font-size:14px;font-weight:bold;margin:2px 0;">' + tradein.newGoldG.toFixed(2) + ' g</p><p style="font-size:13px;color:var(--text-secondary);margin:4px 0 2px;">Old Gold In</p><p style="font-size:14px;font-weight:bold;margin:2px 0;">' + tradein.oldGoldG.toFixed(2) + ' g</p><p style="font-size:13px;color:var(--text-secondary);margin:4px 0 2px;">Transactions</p><p style="font-size:14px;font-weight:bold;margin:2px 0;">' + tradein.txCount + '</p></div>' +
+
+      '<div class="stat-card"><h3 style="color:var(--gold-primary);margin-bottom:8px;">SELL</h3>' +
+      '<p style="font-size:13px;color:var(--text-secondary);margin:2px 0;">ยอดขายที่ได้รับ</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + formatNumber(Math.round(sell.received)) + ' <span style="font-size:11px;">LAK</span></p>' +
+      '<p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">ต้นทุน (WAC)</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + formatNumber(Math.round(sellCostLAK)) + ' <span style="font-size:11px;">LAK</span></p>' +
+      '<p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">Diff</p><p style="font-size:16px;font-weight:bold;margin:2px 0;color:' + (sellDiff >= 0 ? '#4caf50' : '#f44336') + ';">' + formatNumber(Math.round(sellDiff)) + ' <span style="font-size:11px;">LAK</span></p>' +
+      '<p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">New Gold Out</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + sell.newGoldG.toFixed(2) + ' g</p>' +
+      '<p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">Transactions</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + sell.txCount + '</p></div>' +
+
+      '<div class="stat-card"><h3 style="color:var(--gold-primary);margin-bottom:8px;">TRADE-IN</h3>' +
+      '<p style="font-size:13px;color:var(--text-secondary);margin:2px 0;">ยอดขายที่ได้รับ</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + formatNumber(Math.round(tradein.moneyNoP)) + ' <span style="font-size:11px;">LAK</span></p>' +
+      '<p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">ต้นทุน (WAC)</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + formatNumber(Math.round(tradeinCostLAK)) + ' <span style="font-size:11px;">LAK</span></p>' +
+      '<p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">Diff</p><p style="font-size:16px;font-weight:bold;margin:2px 0;color:' + (tradeinDiffMoney >= 0 ? '#4caf50' : '#f44336') + ';">' + formatNumber(Math.round(tradeinDiffMoney)) + ' <span style="font-size:11px;">LAK</span></p>' +
+      '<p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">New Gold Out</p><p style="font-size:14px;font-weight:bold;margin:2px 0;">' + tradein.newGoldG.toFixed(2) + ' g</p>' +
+      '<p style="font-size:13px;color:var(--text-secondary);margin:4px 0 2px;">Old Gold In</p><p style="font-size:14px;font-weight:bold;margin:2px 0;">' + tradein.oldGoldG.toFixed(2) + ' g</p>' +
+      '<p style="font-size:13px;color:var(--text-secondary);margin:4px 0 2px;">Transactions</p><p style="font-size:14px;font-weight:bold;margin:2px 0;">' + tradein.txCount + '</p></div>' +
+
       '<div class="stat-card"><h3 style="color:var(--gold-primary);margin-bottom:8px;">EXCHANGE</h3><p style="font-size:13px;color:var(--text-secondary);margin:2px 0;">New Gold Out</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + exchange.newGoldG.toFixed(2) + ' g</p><p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">Old Gold In</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + exchange.oldGoldG.toFixed(2) + ' g</p><p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">Transactions</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + exchange.txCount + '</p></div>' +
       '<div class="stat-card"><h3 style="color:var(--gold-primary);margin-bottom:8px;">WITHDRAW</h3><p style="font-size:13px;color:var(--text-secondary);margin:2px 0;">New Gold Out</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + wd.newGoldG.toFixed(2) + ' g</p><p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">Transactions</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + wd.txCount + '</p></div>' +
       '</div>' +
       '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:15px;margin-bottom:15px;">' +
-      '<div class="stat-card"><h3 style="color:var(--gold-primary);margin-bottom:8px;">BUYBACK</h3><p style="font-size:13px;color:var(--text-secondary);margin:2px 0;">ต้นทุน (WAC)</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + formatNumber(Math.round(bbCostLAK)) + ' <span style="font-size:11px;">LAK</span></p><p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">Old Gold In</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + bb.oldGoldG.toFixed(2) + ' g</p><p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">Transactions</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + bb.txCount + '</p></div>' +
-      '<div class="stat-card" style="border:2px solid #c62828;background:linear-gradient(135deg,#1a1a1a 0%,#2d1a1a 100%);"><h3 style="color:#ef5350;margin-bottom:8px;">INCOMPLETE</h3><p style="font-size:16px;color:#ef5350;font-weight:bold;margin:5px 0;">' + formatNumber(Math.round(incomplete.money)) + ' <span style="font-size:11px;">LAK</span></p><p style="font-size:14px;color:#ef5350;margin:3px 0;">' + incomplete.gold.toFixed(2) + ' g</p></div>' +
+
+      '<div class="stat-card"><h3 style="color:var(--gold-primary);margin-bottom:8px;">BUYBACK</h3>' +
+      '<p style="font-size:13px;color:var(--text-secondary);margin:2px 0;">ยอดซื้อคืนที่จ่าย</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + formatNumber(Math.round(bb.received)) + ' <span style="font-size:11px;">LAK</span></p>' +
+      '<p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">ต้นทุน (WAC)</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + formatNumber(Math.round(bbCostLAK)) + ' <span style="font-size:11px;">LAK</span></p>' +
+      '<p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">Diff</p><p style="font-size:16px;font-weight:bold;margin:2px 0;color:' + (bbDiff >= 0 ? '#4caf50' : '#f44336') + ';">' + formatNumber(Math.round(bbDiff)) + ' <span style="font-size:11px;">LAK</span></p>' +
+      '<p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">Old Gold In</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + bb.oldGoldG.toFixed(2) + ' g</p>' +
+      '<p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">Transactions</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + bb.txCount + '</p></div>' +
+
+      '<div class="stat-card" style="border:2px solid #c62828;background:linear-gradient(135deg,#1a1a1a 0%,#2d1a1a 100%);"><h3 style="color:#ef5350;margin-bottom:8px;">INCOMPLETE</h3><p style="font-size:16px;color:#ef5350;font-weight:bold;margin:5px 0;">' + formatNumber(Math.round(incomplete.money)) + ' <span style="font-size:11px;">LAK</span></p><p style="font-size:14px;color:#ef5350;margin:3px 0;">' + incomplete.gold.toFixed(2) + ' g</p>' +
+      '<div style="border-top:1px solid rgba(239,83,80,0.3);margin-top:8px;padding-top:8px;font-size:11px;color:#ef9a9a;line-height:1.8;">' + (incDetail || 'ไม่มี') + '</div></div>' +
+
       '<div class="stat-card"><h3 style="color:var(--gold-primary);margin-bottom:8px;">GP / Diff</h3><p style="font-size:20px;font-weight:bold;color:' + (gpDiff >= 0 ? '#4caf50' : '#f44336') + ';margin:10px 0;">' + formatNumber(Math.round(gpDiff)) + ' <span style="font-size:12px;">LAK</span></p></div>' +
       '<div class="stat-card"><h3 style="color:var(--gold-primary);margin-bottom:8px;">Other Expense</h3><p style="font-size:20px;font-weight:bold;color:#ff9800;margin:10px 0;">' + formatNumber(Math.round(otherExpenseLAK)) + ' <span style="font-size:12px;">LAK</span></p></div>' +
       '</div>' +

@@ -236,9 +236,14 @@ async function loadDashSales(ids) {
     var totalNewGOut = salesNewGOut + wdNewGOut;
     var netSellBaht = (totalNewGOut - totalOldGIn) / 15;
 
+    var salesGoldBaht = (salesNewGOut - salesOldGIn) / 15;
+    var salesTotalPerBaht = salesGoldBaht > 0 ? Math.round(salesTotal / salesGoldBaht) : 0;
+
     document.getElementById('dashSalesBox').innerHTML =
       '<h3 style="color:var(--gold-primary);margin-bottom:8px;">💰 SALES</h3>' +
-      '<p style="font-size:18px;margin:3px 0;font-weight:bold;">' + formatNumber(Math.round(salesTotal)) + ' <span style="font-size:12px;">LAK</span></p>' +
+      '<p style="font-size:18px;margin:3px 0;font-weight:bold;">Total: ' + formatNumber(Math.round(salesTotal)) + ' <span style="font-size:12px;">LAK</span></p>' +
+      '<p style="font-size:13px;margin:3px 0;">GOLD Amount: <b>' + salesGoldBaht.toFixed(2) + '</b> <span style="font-size:11px;">บาท</span></p>' +
+      '<p style="font-size:13px;margin:3px 0;">Total/Amount: <b>' + formatNumber(salesTotalPerBaht) + '</b> <span style="font-size:11px;">LAK/บาท</span></p>' +
       '<p style="font-size:11px;color:var(--text-secondary);margin:2px 0;">Tx: <b>' + salesTotalTx + '</b></p>' +
       '<div style="border-top:1px solid var(--border-color);margin:6px 0;padding-top:6px;font-size:11px;color:var(--text-secondary);line-height:1.6;">' +
       'Sell: ' + formatNumber(Math.round(sellMoney)) + ' (' + sellRows.length + ')<br>' +
@@ -250,9 +255,15 @@ async function loadDashSales(ids) {
       '<span style="color:#4caf50;">▶ New Out: ' + salesNewGOut.toFixed(2) + ' g</span>' +
       '</div>';
 
+    var bbNewGOut = 0; buybackRows.forEach(function(r) { bbNewGOut += calcItemsGrams(r[2]); });
+    var bbGoldBaht = bbNewGOut / 15;
+    var bbTotalPerBaht = bbGoldBaht > 0 ? Math.round(bbMoney / bbGoldBaht) : 0;
+
     document.getElementById('dashBuybackBox').innerHTML =
       '<h3 style="color:var(--gold-primary);margin-bottom:8px;">🔄 BUYBACK</h3>' +
-      '<p style="font-size:18px;margin:3px 0;font-weight:bold;">' + formatNumber(Math.round(bbMoney)) + ' <span style="font-size:12px;">LAK</span></p>' +
+      '<p style="font-size:18px;margin:3px 0;font-weight:bold;">Total: ' + formatNumber(Math.round(bbMoney)) + ' <span style="font-size:12px;">LAK</span></p>' +
+      '<p style="font-size:13px;margin:3px 0;">GOLD Amount: <b>' + bbGoldBaht.toFixed(2) + '</b> <span style="font-size:11px;">บาท</span></p>' +
+      '<p style="font-size:13px;margin:3px 0;">Total/Amount: <b>' + formatNumber(bbTotalPerBaht) + '</b> <span style="font-size:11px;">LAK/บาท</span></p>' +
       '<p style="font-size:11px;color:var(--text-secondary);margin:2px 0;">Tx: <b>' + buybackRows.length + '</b></p>' +
       '<div style="border-top:1px solid var(--border-color);margin:6px 0;padding-top:6px;font-size:12px;">' +
       '<span style="color:#ff9800;">◀ Old In: ' + bbOldGIn.toFixed(2) + ' g</span>' +

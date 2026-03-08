@@ -127,14 +127,22 @@ async function getCompletedTxIds(txIds) {
     if (!cfg) continue;
     try {
       var sheetData = await fetchSheetData(cfg.sheet + '!A:' + String.fromCharCode(65 + cfg.statusCol));
-      if (!sheetData || sheetData.length <= 1) continue;
+      if (!sheetData || sheetData.length <= 1) {
+        prefixes[prefix].forEach(function(id) { completed[id] = true; });
+        continue;
+      }
+      var foundIds = {};
       for (var i = 1; i < sheetData.length; i++) {
         var rowId = String(sheetData[i][0] || '');
         var status = String(sheetData[i][cfg.statusCol] || '');
-        if (prefixes[prefix].indexOf(rowId) >= 0 && status === 'COMPLETED') {
+        foundIds[rowId] = true;
+        if (prefixes[prefix].indexOf(rowId) >= 0 && (status === 'COMPLETED' || status === 'REJECTED')) {
           completed[rowId] = true;
         }
       }
+      prefixes[prefix].forEach(function(id) {
+        if (!foundIds[id]) completed[id] = true;
+      });
     } catch(e) {}
   }
   return completed;

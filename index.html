@@ -280,6 +280,7 @@
             <tr>
               <th>Transaction ID</th>
               <th>PHONE NO.</th>
+              <th>Withdraw Code</th>
               <th>Items</th>
               <th>Premium (LAK)</th>
               <th>Total (LAK)</th>
@@ -290,7 +291,7 @@
           </thead>
           <tbody id="withdrawTable">
             <tr>
-              <td colspan="8" style="text-align: center; padding: 40px;">Loading...</td>
+              <td colspan="9" style="text-align: center; padding: 40px;">Loading...</td>
             </tr>
           </tbody>
         </table>
@@ -1139,7 +1140,7 @@
       </div>
 
       <div style="background:var(--bg-card);border:1px solid #ff9800;border-radius:8px;padding:12px;margin-bottom:12px;">
-        <label class="form-label" style="color:#ff9800;font-size:15px;">◀ SWITCH — OLD GOLD (ทองเก่า)</label>
+        <label class="form-label" style="color:#ff9800;font-size:15px;">◀ SWITCH — OLD GOLD (ทองเสียรูป)</label>
         <div id="exOldSwitch"></div>
         <button class="btn-secondary" style="margin-top:8px;" onclick="addExRow('exOldSwitch')">+ Add</button>
       </div>
@@ -1149,11 +1150,9 @@
         <div class="form-group" style="margin-bottom:8px;">
           <label class="form-label" style="font-size:12px;">รหัสบิลเก่า</label>
           <div style="display:flex;gap:8px;">
-            <input type="text" class="form-input" id="exFreeExBillId" placeholder="เช่น SE00001" style="flex:1;" oninput="onFreeExChanged()">
-            <button class="btn-secondary" onclick="verifyFreeExBill()" id="exVerifyBtn">ตรวจสอบ</button>
+            <input type="text" class="form-input" id="exFreeExBillId" placeholder="เช่น SE00001" style="flex:1;">
           </div>
-          <div style="margin-top:4px;font-size:11px;color:#9c27b0;">* บิลเก่าต้องไม่เกิน 1 เดือน</div>
-          <div id="exFreeExStatus" style="margin-top:5px;font-size:12px;"></div>
+          <div id="exFreeExStatus" style="display:none;"></div>
         </div>
         <div id="exOldFreeEx"></div>
         <button class="btn-secondary" style="margin-top:8px;" onclick="addExRow('exOldFreeEx');onFreeExChanged()">+ Add</button>
@@ -1327,6 +1326,10 @@
       <div class="form-group">
         <label class="form-label">Phone Number</label>
         <input type="text" class="form-input" id="withdrawPhone" placeholder="Enter phone number">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Withdraw Code</label>
+        <input type="text" class="form-input" id="withdrawCode" placeholder="รหัสถอน">
       </div>
       <div class="form-group">
         <label class="form-label">Products</label>

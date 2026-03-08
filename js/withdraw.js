@@ -1,8 +1,8 @@
 async function loadWithdraws() {
   try {
     var tbody = document.getElementById('withdrawTable');
-    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:30px;"><div style="display:inline-block;width:24px;height:24px;border:3px solid var(--border-color);border-top:3px solid var(--gold-primary);border-radius:50%;animation:spin 0.8s linear infinite;"></div></td></tr>';
-    const data = await fetchSheetData('Withdraws!A:J');
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:30px;"><div style="display:inline-block;width:24px;height:24px;border:3px solid var(--border-color);border-top:3px solid var(--gold-primary);border-radius:50%;animation:spin 0.8s linear infinite;"></div></td></tr>';
+    const data = await fetchSheetData('Withdraws!A:K');
     
     let filteredData = data.slice(1);
     
@@ -22,7 +22,7 @@ async function loadWithdraws() {
     
     tbody = document.getElementById('withdrawTable');
     if (filteredData.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 40px;">No records</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; padding: 40px;">No records</td></tr>';
     } else {
       tbody.innerHTML = filteredData.map(row => {
         const items = formatItemsForTable(row[2]);
@@ -55,6 +55,7 @@ async function loadWithdraws() {
           <tr>
             <td>${row[0]}</td>
             <td>${row[1]}</td>
+            <td>${row[10] || ''}</td>
             <td>${items}</td>
             <td>${formatNumber(premium)}</td>
             <td>${formatNumber(total)}</td>
@@ -113,6 +114,7 @@ function calculateWithdrawPremium() {
 async function calculateWithdraw() {
   if (_isSubmitting) return;
   const phone = document.getElementById('withdrawPhone').value;
+  const withdrawCode = document.getElementById('withdrawCode').value.trim();
   if (!phone) {
     alert('กรุณากรอกเบอร์โทร');
     return;
@@ -149,7 +151,8 @@ async function calculateWithdraw() {
       items: JSON.stringify(mergeItems(products)),
       premium,
       total,
-      user: currentUser.nickname
+      user: currentUser.nickname,
+      withdrawCode: withdrawCode
     });
     
     if (result.success) {
@@ -158,6 +161,7 @@ async function calculateWithdraw() {
       closeModal('withdrawModal');
       
       document.getElementById('withdrawPhone').value = '';
+      document.getElementById('withdrawCode').value = '';
       document.getElementById('withdrawProducts').innerHTML = '';
       withdrawCounter = 0;
       addWithdrawProduct();

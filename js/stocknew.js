@@ -245,8 +245,10 @@ function renderStockInCash() {
     var lakAmount = item.amount * item.rate;
     var rateHtml = '';
     if (item.currency !== 'LAK') {
-      rateHtml = '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;padding-top:8px;border-top:1px dashed var(--border-color);">' +
-        '<span style="font-size:11px;color:var(--text-secondary);">Rate: 1 ' + item.currency + ' = ' + formatNumber(item.rate) + ' LAK</span>' +
+      rateHtml = '<div style="display:flex;gap:10px;align-items:center;margin-top:8px;padding-top:8px;border-top:1px dashed var(--border-color);">' +
+        '<span style="font-size:11px;color:var(--text-secondary);white-space:nowrap;">Rate: 1 ' + item.currency + ' =</span>' +
+        '<input type="number" class="form-input" placeholder="Rate" value="' + (item.rate || '') + '" style="width:100px;" oninput="updateStockInCashRate(' + item.id + ',this.value)">' +
+        '<span style="font-size:11px;color:var(--text-secondary);">LAK</span>' +
         '<span class="lak-display" style="color:var(--gold-primary);font-weight:bold;">= ' + formatNumber(lakAmount) + ' LAK</span>' +
         '</div>';
     }
@@ -270,8 +272,10 @@ function renderStockInBank() {
     var lakAmount = item.amount * item.rate;
     var rateHtml = '';
     if (item.currency !== 'LAK') {
-      rateHtml = '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;padding-top:8px;border-top:1px dashed var(--border-color);">' +
-        '<span style="font-size:11px;color:var(--text-secondary);">Rate: 1 ' + item.currency + ' = ' + formatNumber(item.rate) + ' LAK</span>' +
+      rateHtml = '<div style="display:flex;gap:10px;align-items:center;margin-top:8px;padding-top:8px;border-top:1px dashed var(--border-color);">' +
+        '<span style="font-size:11px;color:var(--text-secondary);white-space:nowrap;">Rate: 1 ' + item.currency + ' =</span>' +
+        '<input type="number" class="form-input" placeholder="Rate" value="' + (item.rate || '') + '" style="width:100px;" oninput="updateStockInBankRate(' + item.id + ',this.value)">' +
+        '<span style="font-size:11px;color:var(--text-secondary);">LAK</span>' +
         '<span class="lak-display" style="color:var(--gold-primary);font-weight:bold;">= ' + formatNumber(lakAmount) + ' LAK</span>' +
         '</div>';
     }
@@ -304,7 +308,14 @@ function updateStockInCashCurrency(id, value) {
   var item = _stockInPayments.cash.find(function(i) { return i.id === id; });
   if (!item) return;
   item.currency = value;
-  item.rate = getStockInRate(value);
+  item.rate = value === 'LAK' ? 1 : 0;
+  renderStockInCash();
+}
+
+function updateStockInCashRate(id, value) {
+  var item = _stockInPayments.cash.find(function(i) { return i.id === id; });
+  if (!item) return;
+  item.rate = parseFloat(value) || 0;
   renderStockInCash();
 }
 
@@ -330,7 +341,14 @@ function updateStockInBankCurrency(id, value) {
   var item = _stockInPayments.bank.find(function(i) { return i.id === id; });
   if (!item) return;
   item.currency = value;
-  item.rate = getStockInRate(value);
+  item.rate = value === 'LAK' ? 1 : 0;
+  renderStockInBank();
+}
+
+function updateStockInBankRate(id, value) {
+  var item = _stockInPayments.bank.find(function(i) { return i.id === id; });
+  if (!item) return;
+  item.rate = parseFloat(value) || 0;
   renderStockInBank();
 }
 

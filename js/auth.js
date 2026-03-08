@@ -30,6 +30,27 @@ function setupManagerUI() {
   if (hBtn) hBtn.style.display = '';
   var bbTitle = document.getElementById('buybackTitle');
   if (bbTitle) bbTitle.textContent = 'History Buyback';
+
+  ['buybackDateFrom', 'buybackDateTo', 'historySellDateFrom', 'historySellDateTo'].forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
+  document.querySelectorAll('#buyback .date-filter, #historysell .date-filter').forEach(function(el) {
+    el.style.display = 'none';
+  });
+
+  if (currentUser && currentUser.role === 'Manager') {
+    ['addCashBankBtn', 'addOtherDepositBtn', 'addOtherIncomeBtn'].forEach(function(id) {
+      var el = document.getElementById(id);
+      if (el) el.style.display = 'none';
+    });
+    document.querySelectorAll('#cashbank .btn-primary, #cashbank .btn-secondary').forEach(function(btn) {
+      var txt = (btn.textContent || '').trim();
+      if (txt.indexOf('Cash') >= 0 || txt.indexOf('Bank') >= 0 || txt.indexOf('Deposit') >= 0 || txt.indexOf('Income') >= 0 || txt.indexOf('Expense') >= 0) {
+        btn.style.display = 'none';
+      }
+    });
+  }
 }
 
 var _inactivityTimer = null;

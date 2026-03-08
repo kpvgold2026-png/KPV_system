@@ -266,11 +266,6 @@ async function calculateExchangeNew() {
     return;
   }
 
-  if (oldFreeEx.length > 0 && !_exFreeExVerified) {
-    alert('❌ กรุณากดตรวจสอบบิลเก่า Free Exchange ก่อน');
-    return;
-  }
-
   var exchangeFee = 0;
   oldExchange.forEach(function(item) { exchangeFee += (EXCHANGE_FEES[item.productId] || 0) * item.qty; });
 

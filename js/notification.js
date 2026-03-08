@@ -14,6 +14,7 @@ function stopNotificationPolling() {
 }
 
 async function pollAll() {
+  await batchFetchAll();
   await pollNotifications();
   if (typeof checkPendingClose === 'function') checkPendingClose();
   if (typeof loadPendingTransferCount === 'function') loadPendingTransferCount();
@@ -21,16 +22,8 @@ async function pollAll() {
 
 async function pollNotifications() {
   try {
-    var url = 'https://sheets.googleapis.com/v4/spreadsheets/' + CONFIG.SHEET_ID + '/values/' + encodeURIComponent('_notifications!A:I') + '?key=' + CONFIG.API_KEY;
-    var resp = await fetch(url);
-    if (!resp.ok) {
-      _notifData = [];
-      updateNotifBadge();
-      return;
-    }
-    var json = await resp.json();
-    var data = json.values || [];
-    if (data.length <= 1) {
+    var data = await fetchSheetData('_notifications!A:I');
+    if (!data || data.length <= 1) {
       _notifData = [];
       updateNotifBadge();
       return;
@@ -244,6 +237,7 @@ async function refreshPage() {
 
   try {
     _sheetCache = {};
+    await batchFetchAll();
     await showSection(tabName);
     await pollAll();
   } catch(e) {}

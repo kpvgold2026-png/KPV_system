@@ -152,6 +152,7 @@ async function enterApp() {
 
   applyRoleUI();
 
+  await batchFetchAll();
   await fetchExchangeRates();
   if (typeof checkAndResumePendingClose === 'function') checkAndResumePendingClose();
   callAppsScript('INIT_STOCK').catch(function(){});

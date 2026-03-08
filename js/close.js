@@ -543,6 +543,23 @@ async function submitCloseWork() {
                 logout();
               };
             }
+          } else if (myClose && myClose[8] === 'REJECTED') {
+            if (_closePollingInterval) { clearInterval(_closePollingInterval); _closePollingInterval = null; }
+            var cBtn2 = document.getElementById('closeWorkCancelBtn');
+            if (cBtn2) cBtn2.style.display = 'none';
+            refreshCloseBtn.style.display = 'none';
+            if (submitBtn) {
+              submitBtn.style.background = '#f44336';
+              submitBtn.style.color = '#fff';
+              submitBtn.textContent = '❌ การปิดกะถูกปฏิเสธ กดเพื่อรับทราบ';
+              submitBtn.disabled = false;
+              submitBtn.onclick = function() {
+                _closeWorkLocked = false;
+                var modal = document.getElementById('closeWorkModal');
+                if (modal) modal.onclick = null;
+                closeModal('closeWorkModal');
+              };
+            }
           } else {
             showToast('⏳ ยังไม่ได้รับการอนุมัติ');
           }
@@ -587,6 +604,8 @@ function startClosePolling() {
 
         var cancelBtn = document.getElementById('closeWorkCancelBtn');
         if (cancelBtn) cancelBtn.style.display = 'none';
+        var refreshCloseBtn = document.getElementById('closeRefreshBtn');
+        if (refreshCloseBtn) refreshCloseBtn.style.display = 'none';
 
         var submitBtn = document.getElementById('closeWorkSubmitBtn');
         if (submitBtn) {
@@ -602,9 +621,31 @@ function startClosePolling() {
             logout();
           };
         }
+      } else if (myClose && myClose[8] === 'REJECTED') {
+        clearInterval(_closePollingInterval);
+        _closePollingInterval = null;
+
+        var cancelBtn = document.getElementById('closeWorkCancelBtn');
+        if (cancelBtn) cancelBtn.style.display = 'none';
+        var refreshCloseBtn = document.getElementById('closeRefreshBtn');
+        if (refreshCloseBtn) refreshCloseBtn.style.display = 'none';
+
+        var submitBtn = document.getElementById('closeWorkSubmitBtn');
+        if (submitBtn) {
+          submitBtn.style.background = '#f44336';
+          submitBtn.style.color = '#fff';
+          submitBtn.textContent = '❌ การปิดกะถูกปฏิเสธ กดเพื่อรับทราบ';
+          submitBtn.disabled = false;
+          submitBtn.onclick = function() {
+            _closeWorkLocked = false;
+            var modal = document.getElementById('closeWorkModal');
+            if (modal) modal.onclick = null;
+            closeModal('closeWorkModal');
+          };
+        }
       }
     } catch(e) {}
-  }, 5000);
+  }, 15000);
 }
 
 var _autoRefreshInterval = null;

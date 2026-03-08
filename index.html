@@ -408,11 +408,11 @@
     <section id="historysell" class="section">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
         <h2 style="font-family: 'Cormorant Garamond', serif; font-size: 36px; color: var(--gold-primary);">History Sell</h2>
-        <div style="display: flex; gap: 10px; align-items: center;">
-          <input type="date" class="form-input" id="historySellDateFrom" style="width: 150px;">
-          <span>to</span>
-          <input type="date" class="form-input" id="historySellDateTo" style="width: 150px;">
-          <button class="btn-secondary" onclick="resetHistorySellDateFilter()">Today</button>
+        <div style="display: flex; gap: 10px; align-items: center;" class="historysell-filters">
+          <input type="date" class="form-input date-filter" id="historySellDateFrom" style="width: 150px;">
+          <span class="date-filter">to</span>
+          <input type="date" class="form-input date-filter" id="historySellDateTo" style="width: 150px;">
+          <button class="btn-secondary date-filter" onclick="resetHistorySellDateFilter()">Today</button>
         </div>
       </div>
       <div class="table-container">
@@ -1152,6 +1152,7 @@
           <div style="display:flex;gap:8px;">
             <input type="text" class="form-input" id="exFreeExBillId" placeholder="เช่น SE00001" style="flex:1;">
           </div>
+          <div style="margin-top:4px;font-size:11px;color:#9c27b0;">* บิลเก่าต้องไม่เกิน 1 เดือน</div>
           <div id="exFreeExStatus" style="display:none;"></div>
         </div>
         <div id="exOldFreeEx"></div>
@@ -1328,7 +1329,7 @@
         <input type="text" class="form-input" id="withdrawPhone" placeholder="Enter phone number">
       </div>
       <div class="form-group">
-        <label class="form-label">Withdraw Code</label>
+        <label class="form-label">Withdraw Code (รหัสถอน)</label>
         <input type="text" class="form-input" id="withdrawCode" placeholder="รหัสถอน">
       </div>
       <div class="form-group">

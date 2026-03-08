@@ -269,6 +269,14 @@ async function calculateExchangeNew() {
   var exchangeFee = 0;
   oldExchange.forEach(function(item) { exchangeFee += (EXCHANGE_FEES[item.productId] || 0) * item.qty; });
 
+  if (oldFreeEx.length > 0) {
+    var billId = document.getElementById('exFreeExBillId').value.trim();
+    if (!billId) {
+      alert('❌ กรุณากรอกรหัสบิลเก่าสำหรับ Free Exchange');
+      return;
+    }
+  }
+
   var switchFee = 0;
   oldSwitch.forEach(function(item) { switchFee += (EXCHANGE_FEES_SWITCH[item.productId] || 0) * item.qty; });
 

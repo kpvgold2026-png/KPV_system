@@ -38,6 +38,8 @@ function setupManagerUI() {
   document.querySelectorAll('#buyback .date-filter, #historysell .date-filter').forEach(function(el) {
     el.style.display = 'none';
   });
+  var hsFilters = document.querySelector('.historysell-filters');
+  if (hsFilters) hsFilters.style.display = 'none';
 
   if (currentUser && currentUser.role === 'Manager') {
     ['addCashBankBtn', 'addOtherDepositBtn', 'addOtherIncomeBtn'].forEach(function(id) {

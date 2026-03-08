@@ -2,7 +2,7 @@ async function loadWithdraws() {
   try {
     var tbody = document.getElementById('withdrawTable');
     tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:30px;"><div style="display:inline-block;width:24px;height:24px;border:3px solid var(--border-color);border-top:3px solid var(--gold-primary);border-radius:50%;animation:spin 0.8s linear infinite;"></div></td></tr>';
-    const data = await fetchSheetData('Withdraws!A:K');
+    const data = await fetchSheetData('Withdraws!A:L');
     
     let filteredData = data.slice(1);
     
@@ -55,7 +55,7 @@ async function loadWithdraws() {
           <tr>
             <td>${row[0]}</td>
             <td>${row[1]}</td>
-            <td>${row[10] || ''}</td>
+            <td>${row[11] || ''}</td>
             <td>${items}</td>
             <td>${formatNumber(premium)}</td>
             <td>${formatNumber(total)}</td>

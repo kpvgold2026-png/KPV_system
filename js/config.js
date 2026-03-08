@@ -1,5 +1,15 @@
 const CONFIG = {
-  API_KEY: 'AIzaSyD9dDASdHGWQSk6ZBYOFZdhebXOXhUwpxM',
+  API_KEYS: [
+    'AIzaSyD9dDASdHGWQSk6ZBYOFZdhebXOXhUwpxM',
+    'AIzaSyCRiyPhA0zbuXMM0Ey0hXEi9YaI1SJOhzw',
+    'AIzaSyApseHUJjPPsetY8upAH3m5bb3S4sIJSgw'
+  ],
+  _keyIndex: 0,
+  get API_KEY() {
+    var key = this.API_KEYS[this._keyIndex];
+    this._keyIndex = (this._keyIndex + 1) % this.API_KEYS.length;
+    return key;
+  },
   SHEET_ID: '1SHbMQ9kMHvhh8mAW4Ax7UDWlEkEewQyZwrq1mTDWkkg',
   SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbzBzwdETz3zjWV_zc2KA7NqKUzTBAtUk19z4bW_H1_drEUrf1QRGAOlpMDNdexp3VKQ/exec'
 };

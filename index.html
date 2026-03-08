@@ -1,0 +1,2133 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KPV GOLD Manager System</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;500;600;700&family=Montserrat:wght@200;300;400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+  <link rel="stylesheet" href="style.css?v=120">
+  <script>
+    (function() {
+      const cb = localStorage.getItem('cacheBuster') || Date.now();
+      if (!localStorage.getItem('cacheBuster')) {
+        localStorage.setItem('cacheBuster', cb);
+      }
+      const link = document.querySelector('link[href*="style.css"]');
+      if (link) link.href = `style.css?v=${cb}`;
+    })();
+  </script>
+</head>
+<body>
+  <div class="luxury-bg"></div>
+  
+  <div class="loading" id="loading">
+    <div class="spinner"></div>
+  </div>
+
+  <div id="loginScreen" class="login-screen active">
+    <div class="login-card">
+      <div class="logo-icon">◆</div>
+      <h1>KPV GOLD</h1>
+      <p>Manager System</p>
+      <div class="form-group">
+        <label class="form-label">Username</label>
+        <input type="text" class="form-input" id="loginUsername" placeholder="Enter username">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Password</label>
+        <input type="password" class="form-input" id="loginPassword" placeholder="Enter password">
+      </div>
+      <button class="btn-primary" onclick="login()">Login</button>
+    </div>
+  </div>
+
+  <header id="mainHeader" style="display: none;">
+    <div class="header-content">
+      <div class="logo">
+        <div class="logo-icon">◆</div>
+        <div class="logo-text">
+          <h1>KPV GOLD</h1>
+          <p>Manager System</p>
+        </div>
+        <span id="refreshBtn" onclick="refreshPage()" style="cursor:pointer;margin-left:10px;font-size:16px;color:var(--text-secondary);border:1px solid var(--border-color);border-radius:6px;padding:4px 10px;display:inline-flex;align-items:center;justify-content:center;transition:all 0.2s;" title="Refresh">↻</span>
+      </div>
+      <div class="user-info">
+        <div id="notifBell" style="position:relative;cursor:pointer;margin-right:15px;" onclick="toggleNotifDropdown()">
+          <span style="font-size:22px;">🔔</span>
+          <span id="notifBadge" style="display:none;position:absolute;top:-5px;right:-8px;background:#f44336;color:#fff;border-radius:50%;min-width:18px;height:18px;font-size:11px;font-weight:bold;align-items:center;justify-content:center;padding:0 4px;">0</span>
+          <div id="notifDropdown" style="display:none;position:absolute;top:35px;right:0;width:320px;max-height:400px;overflow-y:auto;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,0.3);z-index:1000;">
+            <div style="padding:10px 15px;border-bottom:1px solid var(--border-color);font-weight:600;font-size:14px;">การแจ้งเตือน</div>
+            <div id="notifList"></div>
+          </div>
+        </div>
+        <button id="reviewCloseBtn" class="btn-secondary manager-only" style="background: #ff9800; color: #000; margin-right: 10px; display: none;" onclick="openReviewCloseModal()">📋 Review Close</button>
+        <button id="transferCashBtn" class="btn-secondary" style="background: #2196f3; color: #fff; margin-right: 10px; display: none;" onclick="openTransferCashModal()">💰 ย้ายเงินเข้าร้าน</button>
+        <button id="closeWorkBtn" class="btn-secondary" style="background: #c62828; color: #fff; margin-right: 15px;" onclick="openCloseWorkModal()">🔴 CLOSE</button>
+        <div class="user-avatar" id="userAvatar">U</div>
+        <div class="user-details">
+          <div class="user-name" id="userName">User</div>
+          <div class="user-role" id="userRole">Role</div>
+        </div>
+        <button class="btn-secondary" style="margin-left: 15px;" onclick="logout()">Logout</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="container" id="mainContainer" style="display: none;">
+    <nav class="navigation" id="mainNav">
+      <button class="nav-btn active" onclick="showSection('dashboard')">✦ Dashboard</button>
+      <button class="nav-btn" onclick="showSection('products')">◈ Products</button>
+      <button class="nav-btn" onclick="showSection('pricerate')">◇ Price Rate</button>
+      <button class="nav-btn" onclick="showSection('sell')">◐ Sell</button>
+      <button class="nav-btn" onclick="showSection('tradein')">◎ Trade-in</button>
+      <button class="nav-btn" onclick="showSection('exchange')">◍ Exchange</button>
+      <button class="nav-btn" onclick="showSection('buyback')">◑ Buyback</button>
+      <button class="nav-btn" onclick="showSection('withdraw')">◌ Withdraw</button>
+      <button class="nav-btn" id="navHistorySell" style="display:none;" onclick="showSection('historysell')">📋 History Sell</button>
+      <button class="nav-btn" onclick="showSection('cashbank')">◔ Cash/Bank</button>
+      <button class="nav-btn" onclick="showSection('accounting')">◕ Accounting</button>
+      <button class="nav-btn" onclick="showSection('diff')">◈ Diff</button>
+      <button class="nav-btn" onclick="showSection('reports')">◖ Wealth</button>
+      <button class="nav-btn" onclick="showSection('stockold')">◗ Stock (OLD)</button>
+      <button class="nav-btn" onclick="showSection('stocknew')">◘ Stock (NEW)</button>
+      <button class="nav-btn" onclick="showSection('wac')">◙ WAC</button>
+      <button id="navUserSetting" class="nav-btn" onclick="showSection('usersetting')" style="display:none;">⚙ User Setting</button>
+    </nav>
+
+    <section id="dashboard" class="section active">
+      <div style="margin-bottom: 20px;">
+        <h2 style="font-family: 'Cormorant Garamond', serif; font-size: 36px; color: var(--gold-primary);">Dashboard</h2>
+        <p style="color: var(--text-secondary); margin-top: 5px;">Daily Report: <span id="dashboardDate"></span></p>
+      </div>
+      <div id="dashboardContent">
+        <h3 style="color: var(--gold-primary); margin-bottom: 15px; font-family: 'Cormorant Garamond', serif;">Today's Transactions</h3>
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-bottom: 30px;">
+          <div class="stat-card" id="dashSalesBox">Loading...</div>
+          <div class="stat-card" id="dashBuybackBox">Loading...</div>
+          <div class="stat-card" id="dashWithdrawBox">Loading...</div>
+          <div class="stat-card" id="dashNetSellBox">Loading...</div>
+        </div>
+        
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-bottom: 30px;">
+          <div class="stat-card" id="dashPLBox">Loading...</div>
+          <div class="stat-card" id="dashWACBox">Loading...</div>
+          <div class="stat-card" id="dashReportBox">Loading...</div>
+        </div>
+        
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; margin-bottom: 30px;">
+          <div class="stat-card" id="dashNewStockBox">Loading...</div>
+          <div class="stat-card" id="dashOldStockBox">Loading...</div>
+        </div>
+        
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px;">
+          <div class="stat-card" id="dashCashBox">Loading...</div>
+          <div class="stat-card" id="dashBankBox">Loading...</div>
+        </div>
+        
+        <h3 style="color: var(--gold-primary); margin: 30px 0 15px; font-family: 'Cormorant Garamond', serif;">Total Assets</h3>
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px;">
+          <div class="stat-card" id="dashTotalGoldBox">Loading...</div>
+          <div class="stat-card" id="dashTotalCashBox">Loading...</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="products" class="section">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <h2 style="font-family: 'Cormorant Garamond', serif; font-size: 36px; color: var(--gold-primary);">Product Pricing</h2>
+        <button class="btn-primary manager-only" onclick="openModal('pricingModal')" id="setPricingBtn">Set Pricing</button>
+      </div>
+      <div style="background: rgba(212, 175, 55, 0.1); border: 1px solid var(--gold-primary); border-radius: 12px; padding: 15px 20px; margin-bottom: 30px;">
+        <span style="color: var(--text-secondary); font-size: 14px;">Current Base Price (SELL 1 BAHT):</span>
+        <span id="currentPriceDisplay" style="color: var(--gold-primary); font-weight: 600; font-size: 18px; margin-left: 15px;">0 LAK</span>
+      </div>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Product (SKU)</th>
+              <th>Unit</th>
+              <th>Sell Price (LAK)</th>
+              <th>Buyback (LAK)</th>
+              <th>Exchange Fee (LAK)</th>
+              <th>Exchange Fee - SWITCH (LAK)</th>
+            </tr>
+          </thead>
+          <tbody id="productsTable">
+            <tr>
+              <td colspan="7" style="text-align: center; padding: 40px;">Loading...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      
+      <h3 style="margin: 30px 0 15px 0; color: var(--gold-primary); font-size: 20px; font-weight: 600;">📊 Price History (Sell 1 Baht)</h3>
+      <div style="background: var(--bg-card); border-radius: 12px; padding: 15px 20px; border: 1px solid var(--border-color); margin-bottom: 20px;">
+        <div style="text-align:center;margin-bottom:8px;"><span id="pricingDateRange" style="font-size:13px;color:var(--text-secondary);"></span></div>
+        <div style="max-height:180px;"><canvas id="pricingChart"></canvas></div>
+      </div>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Sell 1 Baht (LAK)</th>
+              <th>Updated By</th>
+            </tr>
+          </thead>
+          <tbody id="priceHistoryTable">
+            <tr>
+              <td colspan="3" style="text-align: center; padding: 40px;">Loading...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="pricerate" class="section">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
+        <h2 style="font-family: 'Cormorant Garamond', serif; font-size: 36px; color: var(--gold-primary);">Price Rate Management</h2>
+        <button class="btn-primary manager-only" onclick="openPriceRateModal()">Update Price Rate</button>
+      </div>
+      <div class="dashboard-stats" style="margin-bottom: 30px;">
+        <div class="stat-card">
+          <div class="card-header">
+            <div class="card-title">THB/LAK (Sell)</div>
+            <div class="card-icon">◈</div>
+          </div>
+          <div class="stat-value" id="rateTHBSell">0</div>
+          <div class="stat-label">LAK per THB</div>
+        </div>
+        <div class="stat-card">
+          <div class="card-header">
+            <div class="card-title">USD/LAK (Sell)</div>
+            <div class="card-icon">◉</div>
+          </div>
+          <div class="stat-value" id="rateUSDSell">0</div>
+          <div class="stat-label">LAK per USD</div>
+        </div>
+        <div class="stat-card">
+          <div class="card-header">
+            <div class="card-title">LAK/THB (Buyback)</div>
+            <div class="card-icon">◐</div>
+          </div>
+          <div class="stat-value" id="rateTHBBuy">0</div>
+          <div class="stat-label">LAK per THB</div>
+        </div>
+        <div class="stat-card">
+          <div class="card-header">
+            <div class="card-title">LAK/USD (Buyback)</div>
+            <div class="card-icon">◑</div>
+          </div>
+          <div class="stat-value" id="rateUSDBuy">0</div>
+          <div class="stat-label">LAK per USD</div>
+        </div>
+      </div>
+      <div style="text-align:center;margin-bottom:10px;"><span id="priceRateDateRange" style="font-size:14px;color:var(--text-secondary);"></span></div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 30px;">
+        <div style="background: var(--bg-card); border-radius: 12px; padding: 20px; border: 1px solid var(--border-color);">
+          <h3 style="color: var(--gold-primary); margin-bottom: 10px; font-size: 16px;">📈 THB/LAK Rate History</h3>
+          <canvas id="thbChart" height="200"></canvas>
+        </div>
+        <div style="background: var(--bg-card); border-radius: 12px; padding: 20px; border: 1px solid var(--border-color);">
+          <h3 style="color: var(--gold-primary); margin-bottom: 10px; font-size: 16px;">📈 USD/LAK Rate History</h3>
+          <canvas id="usdChart" height="200"></canvas>
+        </div>
+      </div>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th rowspan="2" style="vertical-align: middle;">Date</th>
+              <th colspan="2" style="text-align: center; border-bottom: 1px solid var(--gold-primary);">SELL Rate</th>
+              <th colspan="2" style="text-align: center; border-bottom: 1px solid var(--gold-primary);">BUYBACK Rate</th>
+              <th rowspan="2" style="vertical-align: middle;">Updated By</th>
+            </tr>
+            <tr>
+              <th>THB/LAK</th>
+              <th>USD/LAK</th>
+              <th>LAK/THB</th>
+              <th>LAK/USD</th>
+            </tr>
+          </thead>
+          <tbody id="priceRateTable">
+            <tr>
+              <td colspan="6" style="text-align: center; padding: 40px;">Loading...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="withdraw" class="section">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
+        <h2 style="font-family: 'Cormorant Garamond', serif; font-size: 36px; color: var(--gold-primary);">Withdraw Management</h2>
+        <div style="display: flex; gap: 10px; align-items: center;">
+          <input type="date" class="form-input date-filter" id="withdrawDateFrom" style="width: 150px;">
+          <span class="date-filter">to</span>
+          <input type="date" class="form-input date-filter" id="withdrawDateTo" style="width: 150px;">
+          <button class="btn-secondary date-filter" onclick="resetWithdrawDateFilter()">Today</button>
+          <button class="btn-primary" onclick="openWithdrawModal()" id="addWithdrawBtn">+ New Withdraw</button>
+        </div>
+      </div>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Transaction ID</th>
+              <th>PHONE NO.</th>
+              <th>Items</th>
+              <th>Premium (LAK)</th>
+              <th>Total (LAK)</th>
+              <th>Status</th>
+              <th>Sale</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="withdrawTable">
+            <tr>
+              <td colspan="8" style="text-align: center; padding: 40px;">Loading...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="sell" class="section">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
+        <h2 style="font-family: 'Cormorant Garamond', serif; font-size: 36px; color: var(--gold-primary);">Sell Management</h2>
+        <div style="display: flex; gap: 10px; align-items: center;">
+          <input type="date" class="form-input date-filter" id="sellDateFrom" style="width: 150px;">
+          <span class="date-filter">to</span>
+          <input type="date" class="form-input date-filter" id="sellDateTo" style="width: 150px;">
+          <button class="btn-secondary date-filter" onclick="resetSellDateFilter()">Today</button>
+          <button class="btn-primary" onclick="openSellModal()" id="addSellBtn">+ New Sell</button>
+        </div>
+      </div>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Transaction ID</th>
+              <th>PHONE NO.</th>
+              <th>Items</th>
+              <th>Premium (LAK)</th>
+              <th>Total (LAK)</th>
+              <th>Status</th>
+              <th>Sale</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="sellTable">
+            <tr>
+              <td colspan="8" style="text-align: center; padding: 40px;">Loading...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="tradein" class="section">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
+        <h2 style="font-family: 'Cormorant Garamond', serif; font-size: 36px; color: var(--gold-primary);">Trade-in Management</h2>
+        <div style="display: flex; gap: 10px; align-items: center;">
+          <input type="date" class="form-input date-filter" id="tradeinDateFrom" style="width: 150px;">
+          <span class="date-filter">to</span>
+          <input type="date" class="form-input date-filter" id="tradeinDateTo" style="width: 150px;">
+          <button class="btn-secondary date-filter" onclick="resetTradeinDateFilter()">Today</button>
+          <button class="btn-primary" onclick="openTradeinModal()" id="addTradeinBtn">+ New Trade-in</button>
+        </div>
+      </div>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Transaction ID</th>
+              <th>PHONE NO.</th>
+              <th>Old Gold</th>
+              <th>New Gold</th>
+              <th>Difference</th>
+              <th>Premium</th>
+              <th>Total (LAK)</th>
+              <th>Status</th>
+              <th>Sale</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="tradeinTable">
+            <tr>
+              <td colspan="10" style="text-align: center; padding: 40px;">Loading...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="exchange" class="section">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
+        <h2 style="font-family: 'Cormorant Garamond', serif; font-size: 36px; color: var(--gold-primary);">Exchange Management</h2>
+        <div style="display: flex; gap: 10px; align-items: center;">
+          <input type="date" class="form-input date-filter" id="exchangeDateFrom" style="width: 150px;">
+          <span class="date-filter">to</span>
+          <input type="date" class="form-input date-filter" id="exchangeDateTo" style="width: 150px;">
+          <button class="btn-secondary date-filter" onclick="resetExchangeDateFilter()">Today</button>
+          <button class="btn-primary" onclick="openExchangeModal()" id="addExchangeBtn">+ New Exchange</button>
+        </div>
+      </div>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Transaction ID</th>
+              <th>PHONE NO.</th>
+              <th>Old Gold</th>
+              <th>New Gold</th>
+              <th>Exchange Fee</th>
+              <th>Switch Fee</th>
+              <th>Premium</th>
+              <th>Total (LAK)</th>
+              <th>Status</th>
+              <th>Sale</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="exchangeTable">
+            <tr>
+              <td colspan="11" style="text-align: center; padding: 40px;">Loading...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="historysell" class="section">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
+        <h2 style="font-family: 'Cormorant Garamond', serif; font-size: 36px; color: var(--gold-primary);">History Sell</h2>
+        <div style="display: flex; gap: 10px; align-items: center;">
+          <input type="date" class="form-input" id="historySellDateFrom" style="width: 150px;">
+          <span>to</span>
+          <input type="date" class="form-input" id="historySellDateTo" style="width: 150px;">
+          <button class="btn-secondary" onclick="resetHistorySellDateFilter()">Today</button>
+        </div>
+      </div>
+      <div class="table-container">
+        <table id="historySellTableEl">
+          <thead>
+            <tr>
+              <th>Transaction ID</th>
+              <th>Phone</th>
+              <th>Type</th>
+              <th>Old Gold</th>
+              <th>New Gold</th>
+              <th>Difference</th>
+              <th>Exchange Fee</th>
+              <th>Switch Fee</th>
+              <th>Premium</th>
+              <th>Total (LAK)</th>
+              <th>Status</th>
+              <th>Sale</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="historySellTable">
+            <tr><td colspan="13" style="text-align: center; padding: 40px;">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="buyback" class="section">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
+        <h2 id="buybackTitle" style="font-family: 'Cormorant Garamond', serif; font-size: 36px; color: var(--gold-primary);">Buyback Management</h2>
+        <div style="display: flex; gap: 10px; align-items: center;">
+          <input type="date" class="form-input date-filter" id="buybackDateFrom" style="width: 150px;">
+          <span class="date-filter">to</span>
+          <input type="date" class="form-input date-filter" id="buybackDateTo" style="width: 150px;">
+          <button class="btn-secondary date-filter" onclick="resetBuybackDateFilter()">Today</button>
+          <button class="btn-primary" onclick="openBuybackModal()" id="addBuybackBtn">+ New Buyback</button>
+        </div>
+      </div>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Transaction ID</th>
+              <th>PHONE NO.</th>
+              <th>Items</th>
+              <th>Price</th>
+              <th>Fee</th>
+              <th>Total</th>
+              
+              <th>คงค้าง</th>
+              <th>Status</th>
+              <th>Sale</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="buybackTable">
+            <tr>
+              <td colspan="10" style="text-align: center; padding: 40px;">Loading...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="cashbank" class="section">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
+        <h2 style="font-family: 'Cormorant Garamond', serif; font-size: 36px; color: var(--gold-primary);">Cash/Bank Management</h2>
+        <div style="display: flex; gap: 10px;">
+          <button class="btn-primary manager-only" onclick="openModal('cashModal')">Cash</button>
+          <button class="btn-primary manager-only" onclick="openModal('bankModal')">Bank</button>
+          <button class="btn-primary manager-only" onclick="openModal('otherIncomeModal')">Other Income</button>
+          <button class="btn-primary manager-only" onclick="openModal('otherExpenseModal')">Other Expense</button>
+        </div>
+      </div>
+      
+      <!-- Cash Row -->
+      <h3 style="margin: 20px 0 10px 0; color: var(--gold-primary); font-size: 24px; font-weight: 600;">💵 Cash</h3>
+      <div class="dashboard-stats" style="margin-bottom: 20px;">
+        <div class="stat-card">
+          <div class="card-header">
+            <div class="card-title">LAK</div>
+            <div class="card-icon">₭</div>
+          </div>
+          <div class="stat-value" id="cashLAK">0</div>
+          <div class="stat-label">LAK</div>
+        </div>
+        <div class="stat-card">
+          <div class="card-header">
+            <div class="card-title">THB</div>
+            <div class="card-icon">฿</div>
+          </div>
+          <div class="stat-value" id="cashTHB">0</div>
+          <div class="stat-label">THB</div>
+        </div>
+        <div class="stat-card">
+          <div class="card-header">
+            <div class="card-title">USD</div>
+            <div class="card-icon">$</div>
+          </div>
+          <div class="stat-value" id="cashUSD">0</div>
+          <div class="stat-label">USD</div>
+        </div>
+      </div>
+      
+      <!-- BCEL Bank Row -->
+      <h3 style="margin: 20px 0 10px 0; color: var(--gold-primary); font-size: 24px; font-weight: 600;">🏦 BCEL Bank</h3>
+      <div class="dashboard-stats" style="margin-bottom: 20px;">
+        <div class="stat-card">
+          <div class="card-header">
+            <div class="card-title">LAK</div>
+            <div class="card-icon">₭</div>
+          </div>
+          <div class="stat-value" id="bcelLAK">0</div>
+          <div class="stat-label">LAK</div>
+        </div>
+        <div class="stat-card">
+          <div class="card-header">
+            <div class="card-title">THB</div>
+            <div class="card-icon">฿</div>
+          </div>
+          <div class="stat-value" id="bcelTHB">0</div>
+          <div class="stat-label">THB</div>
+        </div>
+        <div class="stat-card">
+          <div class="card-header">
+            <div class="card-title">USD</div>
+            <div class="card-icon">$</div>
+          </div>
+          <div class="stat-value" id="bcelUSD">0</div>
+          <div class="stat-label">USD</div>
+        </div>
+      </div>
+      
+      <!-- LDB Bank Row -->
+      <h3 style="margin: 20px 0 10px 0; color: var(--gold-primary); font-size: 24px; font-weight: 600;">🏦 LDB Bank</h3>
+      <div class="dashboard-stats" style="margin-bottom: 20px;">
+        <div class="stat-card">
+          <div class="card-header">
+            <div class="card-title">LAK</div>
+            <div class="card-icon">₭</div>
+          </div>
+          <div class="stat-value" id="ldbLAK">0</div>
+          <div class="stat-label">LAK</div>
+        </div>
+        <div class="stat-card">
+          <div class="card-header">
+            <div class="card-title">THB</div>
+            <div class="card-icon">฿</div>
+          </div>
+          <div class="stat-value" id="ldbTHB">0</div>
+          <div class="stat-label">THB</div>
+        </div>
+        <div class="stat-card">
+          <div class="card-header">
+            <div class="card-title">USD</div>
+            <div class="card-icon">$</div>
+          </div>
+          <div class="stat-value" id="ldbUSD">0</div>
+          <div class="stat-label">USD</div>
+        </div>
+      </div>
+      
+      <!-- Other Bank Row -->
+      <h3 style="margin: 20px 0 10px 0; color: var(--gold-primary); font-size: 24px; font-weight: 600;">🏦 อื่น ๆ (Other)</h3>
+      <div class="dashboard-stats" style="margin-bottom: 20px;">
+        <div class="stat-card">
+          <div class="card-header">
+            <div class="card-title">LAK</div>
+            <div class="card-icon">₭</div>
+          </div>
+          <div class="stat-value" id="otherBankLAK">0</div>
+          <div class="stat-label">LAK</div>
+        </div>
+        <div class="stat-card">
+          <div class="card-header">
+            <div class="card-title">THB</div>
+            <div class="card-icon">฿</div>
+          </div>
+          <div class="stat-value" id="otherBankTHB">0</div>
+          <div class="stat-label">THB</div>
+        </div>
+        <div class="stat-card">
+          <div class="card-header">
+            <div class="card-title">USD</div>
+            <div class="card-icon">$</div>
+          </div>
+          <div class="stat-value" id="otherBankUSD">0</div>
+          <div class="stat-label">USD</div>
+        </div>
+      </div>
+      <div style="display: flex; justify-content: flex-end; gap: 10px; align-items: center; margin-bottom: 15px;">
+        <input type="date" id="cbStartDate" class="form-input" style="width: 150px;" onchange="filterCashBankByDate()">
+        <span style="color: var(--text-secondary);">to</span>
+        <input type="date" id="cbEndDate" class="form-input" style="width: 150px;" onchange="filterCashBankByDate()">
+        <button class="btn-secondary" onclick="showTodayCashBank()">TODAY</button>
+      </div>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Type</th>
+              <th>Amount</th>
+              <th>Currency</th>
+              <th>Method</th>
+              <th>Bank</th>
+              <th>Note</th>
+              <th>Date</th>
+            </tr>
+          </thead>
+          <tbody id="cashbankTable">
+            <tr>
+              <td colspan="8" style="text-align: center; padding: 40px;">Loading...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="accounting" class="section">
+      <div style="margin-bottom: 30px;">
+        <h2 style="font-family: 'Cormorant Garamond', serif; font-size: 36px; color: var(--gold-primary);">Accounting</h2>
+        <div style="display: flex; gap: 10px; align-items: center; margin-top: 15px;">
+          <input type="date" id="accDateFrom" class="form-input" style="width: 150px;">
+          <span style="color: var(--text-secondary);">to</span>
+          <input type="date" id="accDateTo" class="form-input" style="width: 150px;">
+          <button class="btn-secondary" onclick="resetAccDateFilter()">Today</button>
+        </div>
+      </div>
+      
+      <div id="accountingStats"></div>
+
+      <div style="margin-top: 20px;">
+        <div style="background: var(--bg-card); border-radius: 12px; padding: 20px; border: 1px solid var(--border-color);">
+          <h3 style="color: var(--gold-primary); margin-bottom: 10px; font-size: 16px;">⚖ Net Sell (บาท) — Last 7 Days</h3>
+          <canvas id="accNetSellChart" height="60"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <section id="diff" class="section">
+      <div style="margin-bottom: 30px;">
+        <h2 style="font-family: 'Cormorant Garamond', serif; font-size: 36px; color: var(--gold-primary);">Diff (Profit per Transaction)</h2>
+      </div>
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <div style="display: flex; gap: 10px; align-items: center;">
+          <input type="date" id="diffStartDate" class="form-input" style="width: 150px;" onchange="checkDiffFilter()">
+          <span style="color: var(--text-secondary);">to</span>
+          <input type="date" id="diffEndDate" class="form-input" style="width: 150px;" onchange="checkDiffFilter()">
+          <button class="btn-secondary" onclick="showTodayDiff()">TODAY</button>
+        </div>
+      </div>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr style="background: #2d2d2d !important; border-bottom: 2px solid #d4af37 !important;">
+              <th style="background: #2d2d2d !important; color: #d4af37 !important; border: 1px solid rgba(212, 175, 55, 0.5) !important; text-transform: uppercase !important; font-weight: 700 !important; padding: 14px 8px !important; font-size: 13px !important; text-align: center !important;">Transaction ID</th>
+              <th style="background: #2d2d2d !important; color: #d4af37 !important; border: 1px solid rgba(212, 175, 55, 0.5) !important; text-transform: uppercase !important; font-weight: 700 !important; padding: 14px 8px !important; font-size: 13px !important; text-align: center !important;">DIFFERENCE</th>
+              <th style="background: #2d2d2d !important; color: #d4af37 !important; border: 1px solid rgba(212, 175, 55, 0.5) !important; text-transform: uppercase !important; font-weight: 700 !important; padding: 14px 8px !important; font-size: 13px !important; text-align: center !important;">EXCHANGE</th>
+              <th style="background: #2d2d2d !important; color: #d4af37 !important; border: 1px solid rgba(212, 175, 55, 0.5) !important; text-transform: uppercase !important; font-weight: 700 !important; padding: 14px 8px !important; font-size: 13px !important; text-align: center !important;">SWITCH</th>
+              <th style="background: #2d2d2d !important; color: #d4af37 !important; border: 1px solid rgba(212, 175, 55, 0.5) !important; text-transform: uppercase !important; font-weight: 700 !important; padding: 14px 8px !important; font-size: 13px !important; text-align: center !important;">PREMIUM</th>
+              <th style="background: #2d2d2d !important; color: #d4af37 !important; border: 1px solid rgba(212, 175, 55, 0.5) !important; text-transform: uppercase !important; font-weight: 700 !important; padding: 14px 8px !important; font-size: 13px !important; text-align: center !important;">Cost(ส่วนต่าง)</th>
+              <th style="background: #2d2d2d !important; color: #d4af37 !important; border: 1px solid rgba(212, 175, 55, 0.5) !important; text-transform: uppercase !important; font-weight: 700 !important; padding: 14px 8px !important; font-size: 13px !important; text-align: center !important;">Cost(ทองเก่า)</th>
+              <th style="background: #2d2d2d !important; color: #d4af37 !important; border: 1px solid rgba(212, 175, 55, 0.5) !important; text-transform: uppercase !important; font-weight: 700 !important; padding: 14px 8px !important; font-size: 13px !important; text-align: center !important;">Diff</th>
+            </tr>
+          </thead>
+          <tbody id="diffTable">
+            <tr><td colspan="8" style="text-align: center; padding: 40px;">No records</td></tr>
+          </tbody>
+          <tfoot>
+            <tr id="diffTotalRow" style="background: #2d2d2d !important; border-top: 2px solid #d4af37;">
+              <td colspan="7" style="text-align:right;font-weight:bold;font-size:16px;">Total Diff:</td>
+              <td style="font-weight:bold;font-size:18px;">0 LAK</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </section>
+
+    <section id="reports" class="section">
+      <div style="margin-bottom: 30px;">
+        <h2 style="font-family: 'Cormorant Garamond', serif; font-size: 36px; color: var(--gold-primary);">Wealth (Daily Gold Summary)</h2>
+      </div>
+      
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr style="background: #2d2d2d !important; border-bottom: 2px solid #d4af37 !important;">
+              <th style="background: #2d2d2d !important; color: #d4af37 !important; border: 1px solid rgba(212, 175, 55, 0.5) !important; text-transform: uppercase !important; font-weight: 700 !important; padding: 14px 8px !important; font-size: 13px !important; text-align: center !important;">วันที่</th>
+              <th style="background: #2d2d2d !important; color: #d4af37 !important; border: 1px solid rgba(212, 175, 55, 0.5) !important; text-transform: uppercase !important; font-weight: 700 !important; padding: 14px 8px !important; font-size: 13px !important; text-align: center !important;">ยอดทองยกมา (g)</th>
+              <th style="background: #2d2d2d !important; color: #d4af37 !important; border: 1px solid rgba(212, 175, 55, 0.5) !important; text-transform: uppercase !important; font-weight: 700 !important; padding: 14px 8px !important; font-size: 13px !important; text-align: center !important;">ยอดทองสุทธิ (g)</th>
+              <th style="background: #2d2d2d !important; color: #d4af37 !important; border: 1px solid rgba(212, 175, 55, 0.5) !important; text-transform: uppercase !important; font-weight: 700 !important; padding: 14px 8px !important; font-size: 13px !important; text-align: center !important;">ส่วนต่าง (g)</th>
+            </tr>
+          </thead>
+          <tbody id="reportsTable">
+            <tr>
+              <td colspan="4" style="text-align: center; padding: 40px;">Loading...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="stockold" class="section">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
+        <h2 style="font-family: 'Cormorant Garamond', serif; font-size: 36px; color: var(--gold-primary);">Stock (OLD)</h2>
+        <div style="display: flex; gap: 10px; align-items: center;">
+          <input type="date" id="stockOldDateFrom" class="form-input" style="width:150px;">
+          <span>to</span>
+          <input type="date" id="stockOldDateTo" class="form-input" style="width:150px;">
+          <button class="btn-secondary" onclick="resetStockOldFilter()">Today</button>
+          <button id="transferOldBtn" class="btn-primary manager-only" onclick="openTransferModal()">Transfer OLD → NEW</button>
+          <button id="stockOutOldBtn" class="btn-primary manager-only" onclick="openStockOutModal()">Stock Out</button>
+        </div>
+      </div>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>SKU</th>
+              <th>Product</th>
+              <th>ทองตั้งต้น</th>
+              <th>Quantity (IN)</th>
+              <th>Quantity (OUT)</th>
+              <th>Balance</th>
+            </tr>
+          </thead>
+          <tbody id="stockOldSummaryTable"><tr><td colspan="6" style="text-align: center; padding: 40px;">Loading...</td></tr></tbody>
+        </table>
+      </div>
+      <div class="dashboard-stats" style="margin: 30px 0;">
+        <div class="stat-card" style="border: 2px solid var(--gold-primary);">
+          <div class="card-header"><div class="card-title">GOLD (g)</div><div class="card-icon">⚖</div></div>
+          <div class="stat-value" id="stockOldGoldG">0</div>
+        </div>
+        <div class="stat-card" style="border: 2px solid var(--gold-primary);">
+          <div class="card-header"><div class="card-title">มูลค่าต้นทุนที่ขายออก (ล่าสุด)</div><div class="card-icon">₭</div></div>
+          <div class="stat-value" id="stockOldCostValue">0</div>
+        </div>
+      </div>
+      <h3 style="margin: 20px 0 10px 0; color: var(--gold-primary); font-size: 20px;">📋 การเคลื่อนไหว (OLD Gold)</h3>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Transaction ID</th>
+              <th>Type</th>
+              <th>GOLD(g) IN</th>
+              <th>GOLD(g) OUT</th>
+              <th>WEIGHT</th>
+              <th>PRICE (IN)</th>
+              <th>PRICE (OUT)</th>
+              <th>ต้นทุน</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="stockOldMovementTable"><tr><td colspan="9" style="text-align: center; padding: 40px;">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="stocknew" class="section">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
+        <h2 style="font-family: 'Cormorant Garamond', serif; font-size: 36px; color: var(--gold-primary);">Stock (NEW)</h2>
+        <div style="display: flex; gap: 10px; align-items: center;">
+          <input type="date" id="stockNewDateFrom" class="form-input" style="width:150px;">
+          <span>to</span>
+          <input type="date" id="stockNewDateTo" class="form-input" style="width:150px;">
+          <button class="btn-secondary" onclick="resetStockNewFilter()">Today</button>
+          <button id="stockInNewBtn" class="btn-primary manager-only" onclick="openStockInNewModal()">Stock In</button>
+        </div>
+      </div>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>SKU</th>
+              <th>Product</th>
+              <th>ทองตั้งต้น</th>
+              <th>Quantity (IN)</th>
+              <th>Quantity (OUT)</th>
+              <th>Balance</th>
+            </tr>
+          </thead>
+          <tbody id="stockNewSummaryTable"><tr><td colspan="6" style="text-align: center; padding: 40px;">Loading...</td></tr></tbody>
+        </table>
+      </div>
+      <div class="dashboard-stats" style="margin: 30px 0;">
+        <div class="stat-card" style="border: 2px solid var(--gold-primary);">
+          <div class="card-header"><div class="card-title">GOLD (g)</div><div class="card-icon">⚖</div></div>
+          <div class="stat-value" id="stockNewGoldG">0</div>
+        </div>
+        <div class="stat-card" style="border: 2px solid var(--gold-primary);">
+          <div class="card-header"><div class="card-title">มูลค่าต้นทุนที่ขายออก (ล่าสุด)</div><div class="card-icon">₭</div></div>
+          <div class="stat-value" id="stockNewCostValue">0</div>
+        </div>
+      </div>
+      <h3 style="margin: 20px 0 10px 0; color: var(--gold-primary); font-size: 20px;">📋 การเคลื่อนไหว (NEW Gold)</h3>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Transaction ID</th>
+              <th>Type</th>
+              <th>GOLD(g) IN</th>
+              <th>GOLD(g) OUT</th>
+              <th>WEIGHT</th>
+              <th>PRICE (IN)</th>
+              <th>PRICE (OUT)</th>
+              <th>ต้นทุน</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="stockNewMovementTable"><tr><td colspan="9" style="text-align: center; padding: 40px;">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="wac" class="section">
+      <div style="margin-bottom: 30px;">
+        <h2 style="font-family: 'Cormorant Garamond', serif; font-size: 36px; color: var(--gold-primary);">WAC (Weighted Average Cost)</h2>
+      </div>
+      <h3 style="margin: 20px 0 10px 0; color: var(--gold-primary); font-size: 20px;">📊 GOLD(g) & มูลค่าต้นทุนที่ขายออก</h3>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Source</th>
+              <th>GOLD (g)</th>
+              <th>มูลค่าต้นทุนที่ขายออก (LAK)</th>
+            </tr>
+          </thead>
+          <tbody id="wacSummaryTable"><tr><td colspan="3" style="text-align: center; padding: 40px;">Loading...</td></tr></tbody>
+        </table>
+      </div>
+      <h3 style="margin: 30px 0 10px 0; color: var(--gold-primary); font-size: 20px;">📈 WAC Calculation</h3>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Description</th>
+              <th>Value (LAK)</th>
+            </tr>
+          </thead>
+          <tbody id="wacCalcTable"><tr><td colspan="2" style="text-align: center; padding: 40px;">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="usersetting" class="section">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
+        <h2 style="font-family: 'Cormorant Garamond', serif; font-size: 36px; color: var(--gold-primary);">User Setting</h2>
+        <button class="btn-primary" onclick="openAddUserModal()">+ Add User</button>
+      </div>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Role</th>
+              <th>Name</th>
+              <th>Username</th>
+              <th>Password</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="userSettingTable">
+            <tr><td colspan="5" style="text-align:center;padding:40px;">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <div id="addUserModal" class="modal">
+      <div class="modal-content" style="max-width:450px;">
+        <div class="modal-header">
+          <h2 class="modal-title" id="addUserModalTitle">Add User</h2>
+          <span class="close" onclick="closeModal('addUserModal')">&times;</span>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">Role</label>
+            <select id="userFormRole" class="form-input">
+              <option value="Admin">Admin</option>
+              <option value="Manager">Manager</option>
+              <option value="Sales" selected>Sales</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Name</label>
+            <input type="text" id="userFormName" class="form-input" placeholder="Display name">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Username</label>
+            <input type="text" id="userFormUsername" class="form-input" placeholder="Login username">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Password</label>
+            <input type="text" id="userFormPass" class="form-input" placeholder="Password">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-secondary" onclick="closeModal('addUserModal')">Cancel</button>
+          <button class="btn-primary" onclick="saveUser()">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="openShiftModal" class="modal" onclick="event.stopImmediatePropagation();">
+    <div class="modal-content" style="max-width:420px;">
+      <div class="modal-header">
+        <h2 class="modal-title">🔓 เปิดกะ</h2>
+      </div>
+      <div class="modal-body">
+        <p style="color:var(--text-secondary);margin-bottom:15px;">กรุณากรอกยอดเงิน LAK ที่ดึงจากร้านค้าเพื่อเตรียมเป็นเงินทอน</p>
+        <div class="form-group">
+          <label class="form-label">จำนวนเงิน (LAK)</label>
+          <input type="number" id="openShiftAmount" class="form-input" placeholder="0" min="0" step="1000">
+        </div>
+      </div>
+      <div class="modal-footer" style="display:flex;gap:10px;">
+        <button class="btn-secondary" onclick="logout()" style="flex:1;">Log out</button>
+        <button class="btn-primary" onclick="confirmOpenShift()" style="flex:1;">ยืนยันเปิดกะ</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="pricingModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title">Set Base Pricing</h2>
+      </div>
+      <div class="form-group">
+        <label class="form-label">SELL 1 BAHT Price (LAK)</label>
+        <input type="number" class="form-input" id="sell1BahtPrice" placeholder="0" step="1000">
+        <p style="color: var(--text-secondary); font-size: 12px; margin-top: 5px;">This will calculate all product prices automatically</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('pricingModal')">Cancel</button>
+        <button class="btn-primary" onclick="updatePricing()">Update Pricing</button>
+      </div>
+    </div>
+  </div>
+
+
+  <div id="sellModal" class="modal">
+    <div class="modal-content modal-large">
+      <div class="modal-header">
+        <h2 class="modal-title">New Sell</h2>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Phone Number</label>
+        <input type="text" class="form-input" id="sellPhone" placeholder="Enter phone number">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Products</label>
+        <div id="sellProducts"></div>
+        <button class="btn-secondary" style="margin-top: 10px;" onclick="addSellProduct()">+ Add Product</button>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Total Price (LAK)</label>
+        <input type="text" class="form-input" id="sellPrice" placeholder="0" readonly style="font-weight:bold;font-size:18px;color:var(--gold-primary);">
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('sellModal')">Cancel</button>
+        <button class="btn-primary" onclick="submitSell()">Create Sell</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="tradeinModal" class="modal">
+    <div class="modal-content modal-large">
+      <div class="modal-header">
+        <h2 class="modal-title">New Trade-in</h2>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Phone Number</label>
+        <input type="text" class="form-input" id="tradeinPhone" placeholder="Enter phone number">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Old Gold</label>
+        <div id="tradeinOldGold"></div>
+        <button class="btn-secondary" style="margin-top: 10px;" onclick="addTradeinOldGold()">+ Add Old Gold</button>
+      </div>
+      <div class="form-group">
+        <label class="form-label">New Gold</label>
+        <div id="tradeinNewGold"></div>
+        <button class="btn-secondary" style="margin-top: 10px;" onclick="addTradeinNewGold()">+ Add New Gold</button>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Total Price (LAK)</label>
+        <input type="text" class="form-input" id="tradeinPrice" placeholder="0" readonly style="font-weight:bold;font-size:18px;color:var(--gold-primary);">
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('tradeinModal')">Cancel</button>
+        <button class="btn-primary" onclick="calculateTradein()">Create Trade-in</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="tradeinResultModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title">Trade-in Summary</h2>
+      </div>
+      <div id="tradeinResult"></div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('tradeinResultModal')">Cancel</button>
+        <button class="btn-secondary" onclick="backToTradein()">Back</button>
+        <button class="btn-primary" onclick="submitTradein()">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="tradeinPaymentModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title">Trade-in Payment</h2>
+      </div>
+      
+      <div class="summary-box" style="margin-bottom: 20px;">
+        <div class="summary-row">
+          <span class="summary-label">Transaction ID:</span>
+          <span class="summary-value" id="tradeinPaymentId">-</span>
+        </div>
+        <div class="summary-row">
+          <span class="summary-label">Customer:</span>
+          <span class="summary-value" id="tradeinPaymentPhone">-</span>
+        </div>
+        <div class="summary-row">
+          <span class="summary-label">Old Gold:</span>
+          <span class="summary-value" id="tradeinPaymentOldGold" style="white-space: pre-line;">-</span>
+        </div>
+        <div class="summary-row">
+          <span class="summary-label">New Gold:</span>
+          <span class="summary-value" id="tradeinPaymentNewGold" style="white-space: pre-line;">-</span>
+        </div>
+        <div class="summary-row" style="border-top: 2px solid var(--gold-primary); padding-top: 10px; margin-top: 10px;">
+          <span class="summary-label" style="font-size: 18px; font-weight: 600;">Total:</span>
+          <span class="summary-value" style="font-size: 20px; font-weight: 600; color: var(--gold-primary);" id="tradeinPaymentTotal">0 LAK</span>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Payment Method</label>
+        <select class="form-select" id="tradeinPaymentMethod" onchange="toggleTradeinPaymentBank()">
+          <option value="Cash">Cash</option>
+          <option value="Bank">Bank Transfer</option>
+        </select>
+      </div>
+
+      <div class="form-group" id="tradeinPaymentBankGroup" style="display: none;">
+        <label class="form-label">Bank</label>
+        <select class="form-select" id="tradeinPaymentBank">
+          <option value="BCEL">BCEL</option>
+          <option value="LDB">LDB</option>
+          <option value="OTHER">อื่น ๆ</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Currency</label>
+        <select class="form-select" id="tradeinPaymentCurrency" onchange="calculateTradeinPayment()">
+          <option value="LAK">LAK</option>
+          <option value="THB">THB</option>
+          <option value="USD">USD</option>
+        </select>
+      </div>
+
+      <div class="form-group" id="tradeinPaymentRateGroup" style="display: none;">
+        <label class="form-label">Exchange Rate</label>
+        <input type="text" class="form-input" id="tradeinPaymentExchangeRate" readonly>
+        <input type="hidden" id="tradeinPaymentRateTHB">
+        <input type="hidden" id="tradeinPaymentRateUSD">
+      </div>
+
+      <div class="form-group" style="background: rgba(212, 175, 55, 0.15); padding: 15px; border-radius: 8px; border: 2px solid var(--gold-primary);">
+        <label class="form-label" style="color: var(--gold-primary); font-weight: bold; font-size: 16px;">💰 AMOUNT TO PAY</label>
+        <input type="text" class="form-input" id="tradeinPaymentAmount" readonly style="font-size: 24px; font-weight: bold; text-align: center; color: var(--gold-primary);">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Amount to Pay (LAK)</label>
+        <input type="text" class="form-input" id="tradeinPaymentAmountLAK" readonly>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="tradeinPaymentReceived">Received Amount (LAK)</label>
+        <input type="number" class="form-input" id="tradeinPaymentReceived" placeholder="0" step="1000" oninput="calculateTradeinChange()">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Change (LAK)</label>
+        <input type="text" class="form-input" id="tradeinPaymentChange" readonly>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('tradeinPaymentModal')">Cancel</button>
+        <button class="btn-primary" onclick="confirmTradeinPayment()">Confirm Payment</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="exchangeModal" class="modal">
+    <div class="modal-content" style="max-width:750px;max-height:90vh;overflow-y:auto;">
+      <div class="modal-header">
+        <h2 class="modal-title">New Exchange</h2>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Phone Number</label>
+        <input type="text" class="form-input" id="exchangePhone" placeholder="Enter phone number">
+      </div>
+
+      <div style="background:var(--bg-card);border:1px solid #4caf50;border-radius:8px;padding:12px;margin-bottom:12px;">
+        <label class="form-label" style="color:#4caf50;font-size:15px;">▶ NEW GOLD (ทองใหม่ที่ลูกค้าอยากได้)</label>
+        <div id="exNewGold"></div>
+        <button class="btn-secondary" style="margin-top:8px;" onclick="addExRow('exNewGold')">+ Add</button>
+      </div>
+
+      <div style="background:var(--bg-card);border:1px solid #2196f3;border-radius:8px;padding:12px;margin-bottom:12px;">
+        <label class="form-label" style="color:#2196f3;font-size:15px;">◀ EXCHANGE — OLD GOLD (ทองเก่า)</label>
+        <div id="exOldExchange"></div>
+        <button class="btn-secondary" style="margin-top:8px;" onclick="addExRow('exOldExchange')">+ Add</button>
+      </div>
+
+      <div style="background:var(--bg-card);border:1px solid #ff9800;border-radius:8px;padding:12px;margin-bottom:12px;">
+        <label class="form-label" style="color:#ff9800;font-size:15px;">◀ SWITCH — OLD GOLD (ทองเก่า)</label>
+        <div id="exOldSwitch"></div>
+        <button class="btn-secondary" style="margin-top:8px;" onclick="addExRow('exOldSwitch')">+ Add</button>
+      </div>
+
+      <div style="background:var(--bg-card);border:1px solid #9c27b0;border-radius:8px;padding:12px;margin-bottom:12px;">
+        <label class="form-label" style="color:#9c27b0;font-size:15px;">◀ FREE EXCHANGE — OLD GOLD (ทองเก่า)</label>
+        <div class="form-group" style="margin-bottom:8px;">
+          <label class="form-label" style="font-size:12px;">รหัสบิลเก่า</label>
+          <div style="display:flex;gap:8px;">
+            <input type="text" class="form-input" id="exFreeExBillId" placeholder="เช่น SE00001" style="flex:1;" oninput="onFreeExChanged()">
+            <button class="btn-secondary" onclick="verifyFreeExBill()" id="exVerifyBtn">ตรวจสอบ</button>
+          </div>
+          <div style="margin-top:4px;font-size:11px;color:#9c27b0;">* บิลเก่าต้องไม่เกิน 1 เดือน</div>
+          <div id="exFreeExStatus" style="margin-top:5px;font-size:12px;"></div>
+        </div>
+        <div id="exOldFreeEx"></div>
+        <button class="btn-secondary" style="margin-top:8px;" onclick="addExRow('exOldFreeEx');onFreeExChanged()">+ Add</button>
+      </div>
+
+      <div id="exTotalDisplay" style="background:#1a1a2e;border:2px solid var(--gold-primary);border-radius:8px;padding:15px;margin-bottom:12px;text-align:center;">
+        <span style="color:var(--text-secondary);font-size:13px;">Total ที่ลูกค้าต้องจ่าย</span>
+        <div id="exTotalValue" style="font-size:28px;font-weight:bold;color:var(--gold-primary);margin-top:4px;">0 LAK</div>
+        <div id="exTotalBreakdown" style="font-size:11px;color:var(--text-secondary);margin-top:4px;"></div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('exchangeModal')">Cancel</button>
+        <button class="btn-primary" onclick="calculateExchangeNew()">Create Exchange</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="exchangeResultModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title">Exchange Summary</h2>
+      </div>
+      <div id="exchangeResult"></div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('exchangeResultModal')">Cancel</button>
+        <button class="btn-secondary" onclick="backToExchange()">Back</button>
+        <button class="btn-primary" onclick="submitExchange()">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="exchangePaymentModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title">Exchange Payment</h2>
+      </div>
+      
+      <div class="summary-box" style="margin-bottom: 20px;">
+        <div class="summary-row">
+          <span class="summary-label">Transaction ID:</span>
+          <span class="summary-value" id="exchangePaymentId">-</span>
+        </div>
+        <div class="summary-row">
+          <span class="summary-label">Customer:</span>
+          <span class="summary-value" id="exchangePaymentPhone">-</span>
+        </div>
+        <div class="summary-row">
+          <span class="summary-label">Old Gold:</span>
+          <span class="summary-value" id="exchangePaymentOldGold" style="white-space: pre-line;">-</span>
+        </div>
+        <div class="summary-row">
+          <span class="summary-label">New Gold:</span>
+          <span class="summary-value" id="exchangePaymentNewGold" style="white-space: pre-line;">-</span>
+        </div>
+        <div class="summary-row" style="border-top: 2px solid var(--gold-primary); padding-top: 10px; margin-top: 10px;">
+          <span class="summary-label" style="font-size: 18px; font-weight: 600;">Total:</span>
+          <span class="summary-value" style="font-size: 20px; font-weight: 600; color: var(--gold-primary);" id="exchangePaymentTotal">0 LAK</span>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Payment Method</label>
+        <select class="form-select" id="exchangePaymentMethod" onchange="toggleExchangePaymentBank()">
+          <option value="Cash">Cash</option>
+          <option value="Bank">Bank Transfer</option>
+        </select>
+      </div>
+
+      <div class="form-group" id="exchangePaymentBankGroup" style="display: none;">
+        <label class="form-label">Bank</label>
+        <select class="form-select" id="exchangePaymentBank">
+          <option value="BCEL">BCEL</option>
+          <option value="LDB">LDB</option>
+          <option value="OTHER">อื่น ๆ</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Currency</label>
+        <select class="form-select" id="exchangePaymentCurrency" onchange="calculateExchangePayment()">
+          <option value="LAK">LAK</option>
+          <option value="THB">THB</option>
+          <option value="USD">USD</option>
+        </select>
+      </div>
+
+      <div class="form-group" id="exchangePaymentRateGroup" style="display: none;">
+        <label class="form-label">Exchange Rate</label>
+        <input type="text" class="form-input" id="exchangePaymentExchangeRate" readonly>
+        <input type="hidden" id="exchangePaymentRateTHB">
+        <input type="hidden" id="exchangePaymentRateUSD">
+      </div>
+
+      <div class="form-group" style="background: rgba(212, 175, 55, 0.15); padding: 15px; border-radius: 8px; border: 2px solid var(--gold-primary);">
+        <label class="form-label" style="color: var(--gold-primary); font-weight: bold; font-size: 16px;">💰 AMOUNT TO PAY</label>
+        <input type="text" class="form-input" id="exchangePaymentAmount" readonly style="font-size: 24px; font-weight: bold; text-align: center; color: var(--gold-primary);">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Amount to Pay (LAK)</label>
+        <input type="text" class="form-input" id="exchangePaymentAmountLAK" readonly>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="exchangePaymentReceived">Received Amount (LAK)</label>
+        <input type="number" class="form-input" id="exchangePaymentReceived" placeholder="0" step="1000" oninput="calculateExchangeChange()">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Change (LAK)</label>
+        <input type="text" class="form-input" id="exchangePaymentChange" readonly>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('exchangePaymentModal')">Cancel</button>
+        <button class="btn-primary" onclick="confirmExchangePayment()">Confirm Payment</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="buybackModal" class="modal">
+    <div class="modal-content modal-large">
+      <div class="modal-header">
+        <h2 class="modal-title">New Buyback</h2>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Phone Number</label>
+        <input type="text" class="form-input" id="buybackPhone" placeholder="Enter phone number">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Products</label>
+        <div id="buybackProducts"></div>
+        <button class="btn-secondary" style="margin-top: 10px;" onclick="addBuybackProduct()">+ Add Product</button>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Total Price (LAK)</label>
+        <input type="text" class="form-input" id="buybackPrice" placeholder="0" readonly style="font-weight:bold;font-size:18px;color:var(--gold-primary);">
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('buybackModal')">Cancel</button>
+        <button class="btn-primary" onclick="calculateBuyback()">Create Buyback</button>
+      </div>
+    </div>
+  </div>
+
+
+  <div id="approvalModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title">ตรวจสอบรายการ</h2>
+      </div>
+      <div id="approvalDetails" style="margin-bottom: 20px;"></div>
+      <div class="form-group">
+        <label class="form-label">เหตุผล (ถ้าไม่อนุมัติ)</label>
+        <input type="text" class="form-input" id="approvalReason" placeholder="Enter reason">
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('approvalModal')">Cancel</button>
+        <button class="btn-primary" style="background: var(--danger);" onclick="rejectItem()">ไม่อนุมัติ</button>
+        <button class="btn-primary" onclick="approveItem()">อนุมัติ</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="withdrawModal" class="modal">
+    <div class="modal-content modal-large">
+      <div class="modal-header">
+        <h2 class="modal-title">New Withdraw</h2>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Phone Number</label>
+        <input type="text" class="form-input" id="withdrawPhone" placeholder="Enter phone number">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Products</label>
+        <div id="withdrawProducts"></div>
+        <button class="btn-secondary" style="margin-top: 10px;" onclick="addWithdrawProduct()">+ Add Product</button>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Total Price (LAK)</label>
+        <input type="text" class="form-input" id="withdrawPremium" placeholder="0" readonly style="font-weight:bold;font-size:18px;color:var(--gold-primary);">
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('withdrawModal')">Cancel</button>
+        <button class="btn-primary" onclick="calculateWithdraw()">Create Withdraw</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="withdrawPaymentModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title">Withdraw Payment</h2>
+      </div>
+      
+      <div class="summary-box" style="margin-bottom: 20px;">
+        <div class="summary-row">
+          <span class="summary-label">Transaction ID:</span>
+          <span class="summary-value" id="withdrawPaymentId">-</span>
+        </div>
+        <div class="summary-row">
+          <span class="summary-label">Customer:</span>
+          <span class="summary-value" id="withdrawPaymentPhone">-</span>
+        </div>
+        <div class="summary-row">
+          <span class="summary-label">Items:</span>
+          <span class="summary-value" id="withdrawPaymentItems" style="white-space: pre-line;">-</span>
+        </div>
+        <div class="summary-row">
+          <span class="summary-label">Premium:</span>
+          <span class="summary-value" id="withdrawPaymentPremium">0 LAK</span>
+        </div>
+        <div class="summary-row" style="border-top: 2px solid var(--gold-primary); padding-top: 10px; margin-top: 10px;">
+          <span class="summary-label" style="font-size: 18px; font-weight: 600;">Total:</span>
+          <span class="summary-value" style="font-size: 20px; font-weight: 600; color: var(--gold-primary);" id="withdrawPaymentTotal">0 LAK</span>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Payment Method</label>
+        <select class="form-select" id="withdrawPaymentMethod" onchange="toggleWithdrawPaymentBank()">
+          <option value="Cash">Cash</option>
+          <option value="Bank">Bank Transfer</option>
+        </select>
+      </div>
+
+      <div class="form-group" id="withdrawPaymentBankGroup" style="display: none;">
+        <label class="form-label">Bank</label>
+        <select class="form-select" id="withdrawPaymentBank">
+          <option value="BCEL">BCEL</option>
+          <option value="LDB">LDB</option>
+          <option value="OTHER">อื่น ๆ</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Currency</label>
+        <select class="form-select" id="withdrawPaymentCurrency" onchange="calculateWithdrawPayment()">
+          <option value="LAK">LAK</option>
+          <option value="THB">THB</option>
+          <option value="USD">USD</option>
+        </select>
+      </div>
+
+      <div class="form-group" id="withdrawPaymentRateGroup" style="display: none;">
+        <label class="form-label">Exchange Rate</label>
+        <input type="text" class="form-input" id="withdrawPaymentExchangeRate" readonly>
+        <input type="hidden" id="withdrawPaymentRateTHB">
+        <input type="hidden" id="withdrawPaymentRateUSD">
+      </div>
+
+      <div class="form-group" style="background: rgba(212, 175, 55, 0.15); padding: 15px; border-radius: 8px; border: 2px solid var(--gold-primary);">
+        <label class="form-label" style="color: var(--gold-primary); font-weight: bold; font-size: 16px;">💰 AMOUNT TO PAY</label>
+        <input type="text" class="form-input" id="withdrawPaymentAmount" readonly style="font-size: 24px; font-weight: bold; text-align: center; color: var(--gold-primary);">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Amount to Pay (LAK)</label>
+        <input type="text" class="form-input" id="withdrawPaymentAmountLAK" readonly>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Customer Paid</label>
+        <input type="number" class="form-input" id="withdrawPaymentCustomerPaid" placeholder="0" step="0.01" oninput="calculateWithdrawPayment()">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Change (LAK)</label>
+        <input type="text" class="form-input" id="withdrawPaymentChange" readonly>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('withdrawPaymentModal')">Cancel</button>
+        <button class="btn-primary" onclick="confirmWithdrawPayment()">Confirm Payment</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="transferModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Transfer OLD → NEW Gold</h2>
+        <span class="close" onclick="closeModal('transferModal')">&times;</span>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Current OLD Stock</label>
+        <div class="table-container">
+          <table style="font-size: 14px;">
+            <thead>
+              <tr>
+                <th>SKU</th>
+                <th>PRODUCT</th>
+                <th>QUANTITY</th>
+              </tr>
+            </thead>
+            <tbody id="stockSummaryInModal">
+              <tr>
+                <td colspan="3" style="text-align: center; padding: 20px;">Loading...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Products to Transfer</label>
+        <div id="transferOldProducts"></div>
+        <button class="btn-secondary" onclick="addTransferProduct()" style="margin-top: 10px;">+ Add Product</button>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('transferModal')">Cancel</button>
+        <button class="btn-primary" onclick="confirmTransfer()">Confirm Transfer</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="stockInModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Stock In</h2>
+        <span class="close" onclick="closeModal('stockInModal')">&times;</span>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Products</label>
+        <div id="stockInProducts"></div>
+        <button class="btn-secondary" onclick="addStockInProduct()" style="margin-top: 10px;">+ Add Product</button>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Note</label>
+        <textarea class="form-input" id="stockInNote" rows="3" placeholder="เช่น: ซื้อจากซัพพลายเออร์ A"></textarea>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('stockInModal')">Cancel</button>
+        <button class="btn-primary" onclick="confirmStockIn()">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="stockOutModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Stock Out</h2>
+        <span class="close" onclick="closeModal('stockOutModal')">&times;</span>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Products</label>
+        <div id="stockOutProducts"></div>
+        <button class="btn-secondary" onclick="addStockOutProduct()" style="margin-top: 10px;">+ Add Product</button>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Note</label>
+        <textarea class="form-input" id="stockOutNote" rows="3" placeholder="เช่น: สูญหาย, เสียหาย"></textarea>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('stockOutModal')">Cancel</button>
+        <button class="btn-primary" onclick="confirmStockOut()">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Cash Modal -->
+  <div id="cashModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title">Cash Transaction</h2>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Transaction Type</label>
+        <select class="form-select" id="cashType">
+          <option value="IN">เอาเงินเข้าร้าน (Cash In)</option>
+          <option value="OUT">เอาเงินออกจากร้าน (Cash Out)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Amount</label>
+        <input type="number" class="form-input" id="cashAmount" placeholder="Amount" step="1000">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Currency</label>
+        <select class="form-select" id="cashCurrency">
+          <option value="LAK">LAK</option>
+          <option value="THB">THB</option>
+          <option value="USD">USD</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Note</label>
+        <input type="text" class="form-input" id="cashNote" placeholder="Optional note">
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('cashModal')">Cancel</button>
+        <button class="btn-primary" onclick="submitCash()">Submit</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bank Modal -->
+  <div id="bankModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title">Bank Transaction</h2>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Transaction Type</label>
+        <select class="form-select" id="bankType">
+          <option value="DEPOSIT">ฝากเงิน (Deposit)</option>
+          <option value="WITHDRAW">ถอนเงิน (Withdraw)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Bank</label>
+        <select class="form-select" id="bankName">
+          <option value="BCEL">BCEL Bank</option>
+          <option value="LDB">LDB Bank</option>
+          <option value="OTHER">อื่น ๆ</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Amount</label>
+        <input type="number" class="form-input" id="bankAmount" placeholder="Amount" step="1000">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Currency</label>
+        <select class="form-select" id="bankCurrency">
+          <option value="LAK">LAK</option>
+          <option value="THB">THB</option>
+          <option value="USD">USD</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Note</label>
+        <input type="text" class="form-input" id="bankNote" placeholder="Optional note">
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('bankModal')">Cancel</button>
+        <button class="btn-primary" onclick="submitBank()">Submit</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Other Income Modal -->
+  <div id="otherIncomeModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title">Other Income</h2>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Method</label>
+        <select class="form-select" id="otherIncomeMethod" onchange="toggleOtherIncomeBank()">
+          <option value="CASH">Cash</option>
+          <option value="BANK">Bank</option>
+        </select>
+      </div>
+      <div class="form-group" id="otherIncomeBankGroup" style="display: none;">
+        <label class="form-label">Bank</label>
+        <select class="form-select" id="otherIncomeBank">
+          <option value="BCEL">BCEL Bank</option>
+          <option value="LDB">LDB Bank</option>
+          <option value="OTHER">อื่น ๆ</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Amount</label>
+        <input type="number" class="form-input" id="otherIncomeAmount" placeholder="Amount" step="1000">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Currency</label>
+        <select class="form-select" id="otherIncomeCurrency">
+          <option value="LAK">LAK</option>
+          <option value="THB">THB</option>
+          <option value="USD">USD</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Note</label>
+        <input type="text" class="form-input" id="otherIncomeNote" placeholder="Optional note">
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('otherIncomeModal')">Cancel</button>
+        <button class="btn-primary" onclick="submitOtherIncome()">Submit</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Other Expense Modal -->
+  <div id="otherExpenseModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title">Other Expense</h2>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Method</label>
+        <select class="form-select" id="otherExpenseMethod" onchange="toggleOtherExpenseBank()">
+          <option value="CASH">Cash</option>
+          <option value="BANK">Bank</option>
+        </select>
+      </div>
+      <div class="form-group" id="otherExpenseBankGroup" style="display: none;">
+        <label class="form-label">Bank</label>
+        <select class="form-select" id="otherExpenseBank">
+          <option value="BCEL">BCEL Bank</option>
+          <option value="LDB">LDB Bank</option>
+          <option value="OTHER">อื่น ๆ</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Amount</label>
+        <input type="number" class="form-input" id="otherExpenseAmount" placeholder="Amount" step="1000">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Currency</label>
+        <select class="form-select" id="otherExpenseCurrency">
+          <option value="LAK">LAK</option>
+          <option value="THB">THB</option>
+          <option value="USD">USD</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Note</label>
+        <input type="text" class="form-input" id="otherExpenseNote" placeholder="Optional note">
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('otherExpenseModal')">Cancel</button>
+        <button class="btn-primary" onclick="submitOtherExpense()">Submit</button>
+      </div>
+    </div>
+  </div>
+      </div>
+    </div>
+  </div>
+
+
+  <div id="reconcileModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title" id="reconcileModalTitle">Reconcile</h2>
+      </div>
+      <div id="reconcileModalContent">
+        <div class="form-group">
+          <label class="form-label">System Value</label>
+          <input type="text" class="form-input" id="reconcileSystemValue" readonly>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Actual Value (Manual Count)</label>
+          <input type="number" class="form-input" id="reconcileActualValue" placeholder="Enter actual value" step="0.01">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Difference</label>
+          <input type="text" class="form-input" id="reconcileDifference" readonly>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('reconcileModal')">Cancel</button>
+        <button class="btn-primary" onclick="submitReconcile()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="priceRateModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title">Update Price Rate</h2>
+      </div>
+      
+      <!-- SELL RATES -->
+      <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid #10b981; border-radius: 8px; padding: 15px; margin-bottom: 20px;">
+        <h3 style="color: #10b981; margin: 0 0 15px 0; font-size: 16px;">📈 Sell Rates (ขาย)</h3>
+        <div class="form-group">
+          <label class="form-label">THB/LAK</label>
+          <input type="number" class="form-input" id="rateTHBSellInput" placeholder="0" step="0.01">
+        </div>
+        <div class="form-group">
+          <label class="form-label">USD/LAK</label>
+          <input type="number" class="form-input" id="rateUSDSellInput" placeholder="0" step="0.01">
+        </div>
+      </div>
+      
+      <!-- BUYBACK RATES -->
+      <div style="background: rgba(245, 158, 11, 0.1); border: 1px solid #f59e0b; border-radius: 8px; padding: 15px; margin-bottom: 20px;">
+        <h3 style="color: #f59e0b; margin: 0 0 15px 0; font-size: 16px;">📉 Buyback Rates (รับซื้อคืน)</h3>
+        <div class="form-group">
+          <label class="form-label">LAK/THB</label>
+          <input type="number" class="form-input" id="rateTHBBuyInput" placeholder="0" step="0.01">
+        </div>
+        <div class="form-group">
+          <label class="form-label">LAK/USD</label>
+          <input type="number" class="form-input" id="rateUSDBuyInput" placeholder="0" step="0.01">
+        </div>
+      </div>
+      
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('priceRateModal')">Cancel</button>
+        <button class="btn-primary" onclick="submitPriceRate()">Update</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="paymentModal" class="modal">
+    <div class="modal-content modal-large">
+      <div class="modal-header">
+        <h2 class="modal-title">Payment Confirmation</h2>
+      </div>
+      <div id="paymentDetails" style="margin-bottom: 20px;"></div>
+      <div class="form-group">
+        <label class="form-label">Payment Method</label>
+        <select class="form-select" id="paymentMethod" onchange="updatePaymentMethod()">
+          <option value="CASH">Cash</option>
+          <option value="BANK">Bank Transfer</option>
+        </select>
+      </div>
+      <div class="form-group" id="bankSelectionGroup" style="display: none;">
+        <label class="form-label">Select Bank</label>
+        <select class="form-select" id="bankSelection">
+          <option value="LDB">LDB Bank</option>
+          <option value="OTHER">อื่น ๆ</option>
+          <option value="BCEL">BCEL Bank</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Currency</label>
+        <select class="form-select" id="paymentCurrency" onchange="calculatePayment()">
+          <option value="LAK">LAK</option>
+          <option value="THB">THB</option>
+          <option value="USD">USD</option>
+        </select>
+      </div>
+      <div class="form-group" id="exchangeRateGroup" style="display: none;">
+        <label class="form-label">Exchange Rate</label>
+        <input type="text" class="form-input" id="paymentExchangeRate" readonly>
+      </div>
+      <div class="form-group" style="background: rgba(212, 175, 55, 0.15); padding: 15px; border-radius: 8px; border: 2px solid var(--gold-primary);">
+        <label class="form-label" style="color: var(--gold-primary); font-weight: bold; font-size: 16px;">💰 AMOUNT TO PAY</label>
+        <input type="text" class="form-input" id="paymentAmount" readonly style="font-size: 24px; font-weight: bold; text-align: center; color: var(--gold-primary);">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Amount in LAK</label>
+        <input type="text" class="form-input" id="paymentAmountLAK" readonly>
+      </div>
+      <div class="form-group" id="receivedGroup">
+        <label class="form-label" id="receivedAmountLabel">Received Amount</label>
+        <input type="number" class="form-input" id="paymentReceived" placeholder="0" step="0.01" oninput="calculateChange()">
+      </div>
+      <div class="form-group" id="changeGroup">
+        <label class="form-label">Change (LAK only)</label>
+        <input type="text" class="form-input" id="paymentChange" readonly>
+        <p style="color: var(--warning); font-size: 12px; margin-top: 5px;">Note: Change will be given in LAK only</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('paymentModal')">Cancel</button>
+        <button class="btn-primary" onclick="confirmPayment()">Confirm Payment</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Close Work Modal -->
+  <div id="transferCashModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title">💰 ย้ายเงินเข้าร้าน</h2>
+      </div>
+      <div id="transferCashBalanceAll" style="margin-bottom:15px;padding:12px;background:var(--bg-light);border-radius:8px;"></div>
+      <div id="transferCashRows"></div>
+      <button class="btn-secondary" style="margin-top:8px;" onclick="addTransferCashRow()">+ Add</button>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('transferCashModal')">Cancel</button>
+        <button class="btn-primary" onclick="confirmTransferCashMulti()">ยืนยันย้ายเงิน</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="closeWorkModal" class="modal">
+    <div class="modal-content modal-large">
+      <div class="modal-header">
+        <h2 class="modal-title" style="color: #c62828;">🔴 Close Work - End of Day Summary</h2>
+      </div>
+      <div id="closeWorkSummary" style="padding: 20px;">
+        <p style="color: var(--text-secondary); text-align: center;">Loading summary...</p>
+      </div>
+      <div class="modal-footer">
+        <button id="closeWorkCancelBtn" class="btn-secondary" onclick="closeModal('closeWorkModal')">Cancel</button>
+        <button id="closeWorkSubmitBtn" class="btn-primary" style="background: #c62828;" onclick="submitCloseWork()">Submit Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Review Close Modal (Manager) -->
+  <div id="reviewCloseModal" class="modal">
+    <div class="modal-content modal-large">
+      <div class="modal-header">
+        <h2 class="modal-title" style="color: #ff9800;">📋 Review Close Requests</h2>
+      </div>
+      <div id="reviewCloseList" style="padding: 20px;">
+        <p style="color: var(--text-secondary); text-align: center;">Loading...</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('reviewCloseModal')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Close Detail Modal (Manager) -->
+  <div id="closeDetailModal" class="modal">
+    <div class="modal-content" style="max-width:900px;width:95%;">
+      <div class="modal-header">
+        <h2 class="modal-title">Close Detail</h2>
+        <span class="close" onclick="closeModal('closeDetailModal')">&times;</span>
+      </div>
+      <div id="closeDetailContent" style="padding: 20px;">
+        <p style="color: var(--text-secondary); text-align: center;">Loading...</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('closeDetailModal'); openModal('reviewCloseModal');">Back</button>
+        <button class="btn-danger" onclick="rejectClose()">✗ Reject</button>
+        <button class="btn-primary" style="background: #4caf50;" id="approveCloseBtn" onclick="approveClose()">✓ Approve</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Multi Payment Modal -->
+  <div id="multiPaymentModal" class="modal">
+    <div class="modal-content" style="max-width: 550px;">
+      <div class="modal-header">
+        <h2 id="multiPaymentTitle">Receive Confirmation</h2>
+        <span class="close" onclick="closeModal('multiPaymentModal')">&times;</span>
+      </div>
+      
+      <div class="summary-box" style="margin: 20px; padding: 15px; background: var(--bg-light); border-radius: 8px;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+          <div><strong>Transaction ID:</strong> <span id="multiPaymentId">-</span></div>
+          <div><strong>Phone:</strong> <span id="multiPaymentPhone">-</span></div>
+        </div>
+        <div id="multiPaymentDetails" style="margin-top: 10px;"></div>
+        <div style="margin-top: 15px; padding-top: 15px; border-top: 2px solid var(--gold-primary); text-align: center;">
+          <span style="font-size: 14px; color: var(--text-secondary);">Total Amount</span>
+          <div style="font-size: 28px; font-weight: bold; color: var(--gold-primary);" id="multiPaymentTotal">0 LAK</div>
+        </div>
+      </div>
+      
+      <div id="multiPaymentFeeGroup" style="margin: 0 20px; padding: 15px; background: rgba(255, 152, 0, 0.1); border-radius: 8px; border: 1px solid #ff9800; margin-bottom: 15px; display: none;">
+        <label style="color: #ff9800; font-weight: bold; margin-bottom: 8px; display: block;">💰 ค่าธรรมเนียม (Fee)</label>
+        <input type="number" class="form-input" id="multiPaymentFeeInput" placeholder="0" value="0" oninput="onBuybackFeeChange()">
+      </div>
+      
+      <div style="margin: 20px;">
+        <!-- Cash Section -->
+        <div style="background: rgba(76, 175, 80, 0.1); padding: 15px; border-radius: 8px; border: 1px solid #4caf50; margin-bottom: 15px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+            <h3 style="color: #4caf50; margin: 0;">💵 Cash</h3>
+            <button class="btn-primary" style="padding: 5px 15px; background: #4caf50;" onclick="addCashPayment()">+ Add</button>
+          </div>
+          <div id="cashPaymentsList"></div>
+        </div>
+        
+        <!-- Bank Section -->
+        <div style="background: rgba(33, 150, 243, 0.1); padding: 15px; border-radius: 8px; border: 1px solid #2196f3;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+            <h3 style="color: #2196f3; margin: 0;">🏦 Bank Transfer</h3>
+            <button class="btn-primary" style="padding: 5px 15px; background: #2196f3;" onclick="addBankPayment()">+ Add</button>
+          </div>
+          <div id="bankPaymentsList"></div>
+        </div>
+      </div>
+      
+      <div style="margin: 20px; padding: 15px; background: var(--bg-dark); border-radius: 8px;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; text-align: center;">
+          <div>
+            <div style="font-size: 12px; color: var(--text-secondary);">Total Paid</div>
+            <div style="font-size: 20px; font-weight: bold; color: var(--gold-primary);" id="multiPaymentPaidTotal">0 LAK</div>
+          </div>
+          <div>
+            <div style="font-size: 12px; color: var(--text-secondary);">Remaining</div>
+            <div style="font-size: 20px; font-weight: bold;" id="multiPaymentRemaining">0 LAK</div>
+          </div>
+        </div>
+      </div>
+      
+      <div id="multiPaymentFeeSummary" style="display:none; margin: 0 20px 15px 20px; padding: 15px; background: rgba(255, 152, 0, 0.15); border-radius: 8px; border: 2px solid #ff9800; text-align: center;"></div>
+      
+      <div id="multiPaymentChangeBox" style="margin: 0 20px 20px 20px; padding: 15px; background: rgba(76, 175, 80, 0.15); border-radius: 8px; border: 2px solid #4caf50; text-align: center;">
+        <div id="multiPaymentChangeLabel" style="font-size: 14px; color: #4caf50; margin-bottom: 5px;">💰 Change (เงินทอน)</div>
+        <div style="font-size: 24px; font-weight: bold; color: #4caf50;" id="multiPaymentChange">0 LAK</div>
+        <div id="multiPaymentChangeNote" style="display:none; font-size: 12px; color: #f44336; margin-top: 8px; font-weight: bold;"></div>
+      </div>
+      
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('multiPaymentModal')">Cancel</button>
+        <button class="btn-primary" onclick="confirmMultiPayment()">✓ Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Review Decision Modal -->
+  <div id="reviewDecisionModal" class="modal">
+    <div class="modal-content" style="max-width: 500px;">
+      <div class="modal-header">
+        <h2>Review Transaction</h2>
+        <span class="close" onclick="closeModal('reviewDecisionModal')">&times;</span>
+      </div>
+      <div style="padding: 20px;">
+        <div style="text-align: center; margin-bottom: 20px;">
+          <p style="font-size: 18px; color: var(--gold-primary);" id="reviewDecisionTitle">-</p>
+          <p style="color: var(--text-secondary);" id="reviewDecisionId">-</p>
+        </div>
+        
+        <div id="reviewDecisionItems" style="background: var(--bg-light); padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Note (Optional)</label>
+          <textarea class="form-input" id="reviewDecisionNote" rows="3" placeholder="Enter note..."></textarea>
+        </div>
+      </div>
+      <div class="modal-footer" style="display: flex; gap: 10px;">
+        <button class="btn-secondary" onclick="closeModal('reviewDecisionModal')">Cancel</button>
+        <button class="btn-primary" style="background: #f44336; flex: 1;" onclick="submitReviewDecision('REJECT')">✗ Reject</button>
+        <button class="btn-primary" style="background: #4caf50; flex: 1;" onclick="submitReviewDecision('APPROVE')">✓ Approve</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      const cb = localStorage.getItem('cacheBuster') || Date.now();
+      if (!localStorage.getItem('cacheBuster')) {
+        localStorage.setItem('cacheBuster', cb);
+      }
+      const link = document.querySelector('link[href*="style.css"]');
+      if (link) link.href = `style.css?v=${cb}`;
+    })();
+  </script>
+  
+  <div id="loader" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 9999; align-items: center; justify-content: center;">
+    <div style="text-align: center; color: white;">
+      <div style="border: 4px solid #f3f3f3; border-top: 4px solid var(--gold-primary); border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; margin: 0 auto 15px;"></div>
+      <div style="font-size: 16px;">Loading...</div>
+    </div>
+  </div>
+  
+  <style>
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+  
+  <script defer src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="js/config.js?v=120"></script>
+  <script src="js/utils.js?v=120"></script>
+  <script src="js/api.js?v=120"></script>
+  <script src="js/ui.js?v=120"></script>
+  <script src="js/dashboard.js?v=120"></script>
+  <script src="js/products.js?v=120"></script>
+  <script src="js/pricerate.js?v=120"></script>
+  <script src="js/sell.js?v=120"></script>
+  <script src="js/payment.js?v=120"></script>
+  <script src="js/tradein.js?v=120"></script>
+  <script src="js/buyback.js?v=120"></script>
+  <script src="js/exchange.js?v=120"></script>
+  <script src="js/exchange.js?v=120"></script>
+  <script src="js/withdraw.js?v=120"></script>
+  <script src="js/historysell.js?v=120"></script>
+  <script src="js/cashbank.js?v=120"></script>
+  <script src="js/accounting.js?v=120"></script>
+  <script src="js/diff.js?v=120"></script>
+  <script src="js/reports.js?v=120"></script>
+  <script src="js/usersetting.js?v=120"></script>
+  <script src="js/stockold.js?v=120"></script>
+  <script src="js/stocknew.js?v=120"></script>
+  <script src="js/wac.js?v=120"></script>
+  <script src="js/close.js?v=120"></script>
+  <script src="js/review.js?v=120"></script>
+  <script src="js/notification.js?v=120"></script>
+  <script src="js/auth.js?v=120"></script>
+  
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/th.js"></script>
+  
+  <script>
+  document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('.modal').forEach(modal => {
+      const modalContent = modal.querySelector('.modal-content');
+      
+      if (modalContent) {
+        modalContent.addEventListener('click', function(e) {
+          e.stopPropagation();
+        });
+      }
+      
+      modal.addEventListener('click', function(e) {
+        if (e.target === modal && modal.id !== 'openShiftModal' && !(modal.id === 'closeWorkModal' && (_closePollingInterval || _closeWorkLocked))) {
+          modal.classList.remove('active');
+        }
+      });
+    });
+    
+    const dateInputs = document.querySelectorAll('input[type="date"]');
+    dateInputs.forEach(input => {
+      flatpickr(input, {
+        locale: 'th',
+        dateFormat: 'Y-m-d',
+        defaultDate: new Date(),
+        onChange: function(selectedDates, dateStr, instance) {
+          const event = new Event('change', { bubbles: true });
+          input.dispatchEvent(event);
+        }
+      });
+    });
+  });
+  </script>
+
+  <div id="stockInNewModal" class="modal">
+    <div class="modal-content" style="max-width:600px;">
+      <div class="modal-header">
+        <h2>Stock In (NEW)</h2>
+        <span class="close" onclick="closeModal('stockInNewModal')">&times;</span>
+      </div>
+      <div class="form-group" style="margin:0 20px;">
+        <label class="form-label">Products</label>
+        <div id="stockInNewProducts"></div>
+        <button class="btn-secondary" onclick="addStockNewProduct('stockInNewProducts')" style="margin-top:10px;">+ Add Product</button>
+      </div>
+
+      <div style="margin:10px 20px;padding:12px;background:rgba(212,175,55,0.08);border-radius:8px;border:1px solid rgba(212,175,55,0.2);display:flex;justify-content:space-between;align-items:center;">
+        <span style="font-size:13px;color:var(--text-secondary);">น้ำหนักรวม</span>
+        <span style="font-size:18px;font-weight:bold;color:var(--gold-primary);" id="stockInTotalWeight">0.00 g</span>
+      </div>
+
+      <div class="form-group" style="margin:10px 20px 0 20px;">
+        <label class="form-label">ต้นทุนรวม (LAK)</label>
+        <input type="text" class="form-input" id="stockInCostInput" placeholder="กรอกต้นทุน" oninput="onStockInCostInput(this)" style="font-size:18px;font-weight:bold;text-align:right;">
+      </div>
+
+      <div style="margin: 15px 20px;">
+        <div style="background: rgba(76, 175, 80, 0.1); padding: 15px; border-radius: 8px; border: 1px solid #4caf50; margin-bottom: 15px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+            <h3 style="color: #4caf50; margin: 0;">💵 Cash</h3>
+            <button class="btn-primary" style="padding: 5px 15px; background: #4caf50;" onclick="addStockInCash()">+ Add</button>
+          </div>
+          <div id="stockInCashList"></div>
+        </div>
+
+        <div style="background: rgba(33, 150, 243, 0.1); padding: 15px; border-radius: 8px; border: 1px solid #2196f3;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+            <h3 style="color: #2196f3; margin: 0;">🏦 Bank Transfer</h3>
+            <button class="btn-primary" style="padding: 5px 15px; background: #2196f3;" onclick="addStockInBank()">+ Add</button>
+          </div>
+          <div id="stockInBankList"></div>
+        </div>
+      </div>
+
+      <div style="margin: 0 20px 15px 20px; padding: 15px; background: var(--bg-dark); border-radius: 8px; text-align: center;">
+        <div style="font-size: 12px; color: var(--text-secondary);">Remain (ยอดที่ยังจ่ายไม่ครบ)</div>
+        <div style="font-size: 22px; font-weight: bold;" id="stockInRemain">0 LAK</div>
+      </div>
+
+      <div class="form-group" style="margin:0 20px 15px 20px;">
+        <label class="form-label">Note</label>
+        <textarea class="form-input" id="stockInNewNote" rows="2" placeholder="เช่น: รับทองจากซัพพลายเออร์"></textarea>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('stockInNewModal')">Cancel</button>
+        <button class="btn-primary" onclick="confirmStockInNew()">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

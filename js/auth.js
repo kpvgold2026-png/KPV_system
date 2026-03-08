@@ -141,7 +141,7 @@ function applyRoleUI() {
   if (isManager()) { setupManagerUI(); }
 }
 
-function enterApp() {
+async function enterApp() {
   document.getElementById('loginScreen').classList.remove('active');
   document.getElementById('mainHeader').style.display = 'block';
   document.getElementById('mainContainer').style.display = 'block';
@@ -152,11 +152,9 @@ function enterApp() {
 
   applyRoleUI();
 
-  fetchExchangeRates();
-  checkPendingClose();
+  await fetchExchangeRates();
   if (typeof checkAndResumePendingClose === 'function') checkAndResumePendingClose();
   callAppsScript('INIT_STOCK').catch(function(){});
-  startAutoRefresh();
   startNotificationPolling();
   startInactivityWatch();
 }
@@ -178,7 +176,7 @@ async function login() {
     currentUser = { username: username, password: USERS[username].password, role: USERS[username].role, nickname: USERS[username].nickname, sheetRole: USERS[username].sheetRole };
     localStorage.setItem('currentUser', JSON.stringify(currentUser));
 
-    enterApp();
+    await enterApp();
 
     if (currentUser.role === 'User') {
       showSection('sell');
@@ -258,7 +256,6 @@ async function confirmOpenShift() {
 
 function logout() {
   stopInactivityWatch();
-  stopAutoRefresh();
   stopNotificationPolling();
   currentUser = null;
 
@@ -279,7 +276,7 @@ function logout() {
   }, 100);
 }
 
-(function checkSession() {
+(async function checkSession() {
   var savedUser = localStorage.getItem('currentUser');
   if (!savedUser) return;
 
@@ -292,16 +289,14 @@ function logout() {
   try {
     currentUser = JSON.parse(savedUser);
 
-    enterApp();
+    await enterApp();
 
-    setTimeout(function() {
-      if (currentUser.role === 'User') {
-        showSection('sell');
-        checkOpenShift();
-      } else {
-        loadDashboard();
-      }
-    }, 100);
+    if (currentUser.role === 'User') {
+      showSection('sell');
+      checkOpenShift();
+    } else {
+      loadDashboard();
+    }
   } catch (error) {
     console.error('Session restore error:', error);
     localStorage.removeItem('currentUser');

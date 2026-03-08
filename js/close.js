@@ -501,6 +501,56 @@ async function submitCloseWork() {
         submitBtn.disabled = true;
       }
 
+      var refreshCloseBtn = document.getElementById('closeRefreshBtn');
+      if (!refreshCloseBtn) {
+        refreshCloseBtn = document.createElement('button');
+        refreshCloseBtn.id = 'closeRefreshBtn';
+        refreshCloseBtn.className = 'btn-secondary';
+        refreshCloseBtn.style.cssText = 'margin-left:10px;padding:8px 16px;font-size:14px;';
+        refreshCloseBtn.textContent = '↻ รีเฟรช';
+        if (submitBtn && submitBtn.parentNode) submitBtn.parentNode.insertBefore(refreshCloseBtn, submitBtn.nextSibling);
+      }
+      refreshCloseBtn.style.display = 'inline-block';
+      refreshCloseBtn.onclick = async function() {
+        refreshCloseBtn.textContent = '↻ กำลังเช็ค...';
+        refreshCloseBtn.disabled = true;
+        _sheetCache = {};
+        try {
+          var closeData = await fetchSheetData('Close!A:K');
+          var userName = currentUser.nickname;
+          var today = new Date();
+          var todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+          var todayEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
+          var myClose = closeData.slice(1).find(function(row) {
+            var d = parseSheetDate(row[2]);
+            return d && d >= todayStart && d <= todayEnd && row[1] === userName;
+          });
+          if (myClose && myClose[8] === 'APPROVED') {
+            if (_closePollingInterval) { clearInterval(_closePollingInterval); _closePollingInterval = null; }
+            var cBtn = document.getElementById('closeWorkCancelBtn');
+            if (cBtn) cBtn.style.display = 'none';
+            refreshCloseBtn.style.display = 'none';
+            if (submitBtn) {
+              submitBtn.style.background = '#4caf50';
+              submitBtn.style.color = '#fff';
+              submitBtn.textContent = '✅ ตกลง';
+              submitBtn.disabled = false;
+              submitBtn.onclick = function() {
+                _closeWorkLocked = false;
+                var modal = document.getElementById('closeWorkModal');
+                if (modal) modal.onclick = null;
+                closeModal('closeWorkModal');
+                logout();
+              };
+            }
+          } else {
+            showToast('⏳ ยังไม่ได้รับการอนุมัติ');
+          }
+        } catch(e) {}
+        refreshCloseBtn.textContent = '↻ รีเฟรช';
+        refreshCloseBtn.disabled = false;
+      };
+
       var modal = document.getElementById('closeWorkModal');
       if (modal) modal.onclick = function(e) { e.stopImmediatePropagation(); };
 

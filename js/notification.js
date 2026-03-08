@@ -5,12 +5,18 @@ var _markedReadIds = {};
 
 function startNotificationPolling() {
   if (_notifInterval) clearInterval(_notifInterval);
-  pollNotifications();
-  _notifInterval = setInterval(pollNotifications, 15000);
+  pollAll();
+  _notifInterval = setInterval(pollAll, 30000);
 }
 
 function stopNotificationPolling() {
   if (_notifInterval) { clearInterval(_notifInterval); _notifInterval = null; }
+}
+
+async function pollAll() {
+  await pollNotifications();
+  if (typeof checkPendingClose === 'function') checkPendingClose();
+  if (typeof loadPendingTransferCount === 'function') loadPendingTransferCount();
 }
 
 async function pollNotifications() {
@@ -220,8 +226,11 @@ async function markAllRead() {
 
 async function refreshPage() {
   var btn = document.getElementById('refreshBtn');
+  var icon = document.getElementById('refreshIcon');
+  if (icon) {
+    icon.style.animation = 'spin 0.8s linear infinite';
+  }
   if (btn) {
-    btn.style.animation = 'spin 0.8s linear infinite';
     btn.style.pointerEvents = 'none';
   }
 
@@ -236,12 +245,13 @@ async function refreshPage() {
   try {
     _sheetCache = {};
     await showSection(tabName);
-    await pollNotifications();
-    if (typeof checkPendingClose === 'function') await checkPendingClose();
+    await pollAll();
   } catch(e) {}
 
+  if (icon) {
+    icon.style.animation = '';
+  }
   if (btn) {
-    btn.style.animation = '';
     btn.style.pointerEvents = '';
   }
 }

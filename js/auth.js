@@ -31,17 +31,17 @@ function setupManagerUI() {
   var bbTitle = document.getElementById('buybackTitle');
   if (bbTitle) bbTitle.textContent = 'History Buyback';
 
-  ['buybackDateFrom', 'buybackDateTo', 'historySellDateFrom', 'historySellDateTo'].forEach(function(id) {
-    var el = document.getElementById(id);
-    if (el) el.style.display = 'none';
-  });
-  document.querySelectorAll('#buyback .date-filter, #historysell .date-filter').forEach(function(el) {
-    el.style.display = 'none';
-  });
-  var hsFilters = document.querySelector('.historysell-filters');
-  if (hsFilters) hsFilters.style.display = 'none';
-
   if (currentUser && currentUser.role === 'Manager') {
+    ['buybackDateFrom', 'buybackDateTo', 'historySellDateFrom', 'historySellDateTo'].forEach(function(id) {
+      var el = document.getElementById(id);
+      if (el) el.style.display = 'none';
+    });
+    document.querySelectorAll('#buyback .date-filter, #historysell .date-filter').forEach(function(el) {
+      el.style.display = 'none';
+    });
+    var hsFilters = document.querySelector('.historysell-filters');
+    if (hsFilters) hsFilters.style.display = 'none';
+
     ['addCashBankBtn', 'addOtherDepositBtn', 'addOtherIncomeBtn'].forEach(function(id) {
       var el = document.getElementById(id);
       if (el) el.style.display = 'none';

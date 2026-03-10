@@ -316,7 +316,13 @@ function updateStockInCashRate(id, value) {
   var item = _stockInPayments.cash.find(function(i) { return i.id === id; });
   if (!item) return;
   item.rate = parseFloat(value) || 0;
-  renderStockInCash();
+  var lakAmount = item.amount * item.rate;
+  var container = document.querySelector('#stockInCashList .payment-item[data-id="' + id + '"]');
+  if (container) {
+    var lakSpan = container.querySelector('.lak-display');
+    if (lakSpan) lakSpan.textContent = '= ' + formatNumber(lakAmount) + ' LAK';
+  }
+  updateStockInRemain();
 }
 
 function updateStockInCashAmount(id, value) {
@@ -349,7 +355,13 @@ function updateStockInBankRate(id, value) {
   var item = _stockInPayments.bank.find(function(i) { return i.id === id; });
   if (!item) return;
   item.rate = parseFloat(value) || 0;
-  renderStockInBank();
+  var lakAmount = item.amount * item.rate;
+  var container = document.querySelector('#stockInBankList .payment-item[data-id="' + id + '"]');
+  if (container) {
+    var lakSpan = container.querySelector('.lak-display');
+    if (lakSpan) lakSpan.textContent = '= ' + formatNumber(lakAmount) + ' LAK';
+  }
+  updateStockInRemain();
 }
 
 function updateStockInBankAmount(id, value) {
@@ -416,13 +428,13 @@ async function confirmStockInNew() {
     var totalFee = 0;
     _stockInPayments.cash.forEach(function(c) {
       if (c.amount > 0) {
-        payments.push({ method: 'Cash', bank: '', currency: c.currency, amount: c.amount });
+        payments.push({ method: 'Cash', bank: '', currency: c.currency, amount: c.amount, rate: c.rate || 1 });
         totalPaid += c.amount * c.rate;
       }
     });
     _stockInPayments.bank.forEach(function(b) {
       if (b.amount > 0) {
-        payments.push({ method: 'Bank', bank: b.bank, currency: b.currency, amount: b.amount, fee: b.fee || 0 });
+        payments.push({ method: 'Bank', bank: b.bank, currency: b.currency, amount: b.amount, fee: b.fee || 0, rate: b.rate || 1 });
         totalPaid += b.amount * b.rate;
         totalFee += b.fee || 0;
       }

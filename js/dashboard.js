@@ -83,8 +83,13 @@ async function loadDashDB(ids) {
           if (date && date >= dayStart && date <= dayEnd && row[1] === 'OTHER_EXPENSE') {
             var amt = parseFloat(row[2]) || 0;
             var cur = row[3];
-            if (cur === 'THB') amt = amt * (currentExchangeRates?.THB_Sell || 0);
-            else if (cur === 'USD') amt = amt * (currentExchangeRates?.USD_Sell || 0);
+            if (cur === 'THB' || cur === 'USD' || cur === 'LAK') {
+              var noteStr = String(r[6] || '');
+              var lakMatch = noteStr.match(/\|LAK:(\d+)/);
+              if (lakMatch) { amt = parseFloat(lakMatch[1]) || 0; }
+              else if (cur === 'THB') { amt = amt * (currentExchangeRates?.THB_Sell || 0); }
+              else if (cur === 'USD') { amt = amt * (currentExchangeRates?.USD_Sell || 0); }
+            }
             otherExpenseLAK += Math.abs(amt);
           }
         });

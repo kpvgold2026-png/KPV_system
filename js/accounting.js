@@ -141,7 +141,7 @@ async function loadAccounting() {
     cashbankData.slice(1).forEach(function(row) {
       var date = parseSheetDate(row[7]);
       if (date && date >= dayStart && date <= dayEnd) {
-        if (row[1] === 'OTHER_EXPENSE') { var amt = parseFloat(row[2]) || 0; var cur = row[3]; if (cur === 'THB') amt = amt * (currentExchangeRates?.THB_Sell || 0); else if (cur === 'USD') amt = amt * (currentExchangeRates?.USD_Sell || 0); otherExpenseLAK += Math.abs(amt); }
+        if (row[1] === 'OTHER_EXPENSE') { var amt = parseFloat(row[2]) || 0; var cur = row[3]; var noteStr = String(row[6] || ''); var lakMatch = noteStr.match(/\|LAK:(\d+)/); if (lakMatch) { otherExpenseLAK += parseFloat(lakMatch[1]) || 0; } else { if (cur === 'THB') amt = amt * (currentExchangeRates?.THB_Sell || 0); else if (cur === 'USD') amt = amt * (currentExchangeRates?.USD_Sell || 0); otherExpenseLAK += Math.abs(amt); } }
       }
     });
 

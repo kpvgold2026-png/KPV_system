@@ -93,9 +93,7 @@ async function loadAccounting() {
       if (date && date >= dayStart && date <= dayEnd) {
         if (row[10] === 'COMPLETED') {
           sell.txCount++;
-          var totalLAK = parseFloat(row[3]) || 0;
-          var changeLAK = parseFloat(row[8]) || 0;
-          sell.received += totalLAK + changeLAK;
+          sell.received += parseFloat(row[3]) || 0;
           try { JSON.parse(row[2]).forEach(function(item) { sell.newGoldG += getGoldWeight(item.productId) * item.qty; }); } catch(e) {}
         }
         else if (row[10] !== 'REJECTED') { var m = parseFloat(row[3]) || 0; var g = calcGold(row[2]); incomplete.money += m; incomplete.gold += g; incSell.money += m; incSell.gold += g; incSell.count++; }
@@ -106,7 +104,7 @@ async function loadAccounting() {
       var date = parseSheetDate(row[11]);
       if (date && date >= dayStart && date <= dayEnd) {
         if (row[12] === 'COMPLETED') {
-          tradein.txCount++; tradein.moneyNoP += (parseFloat(row[4]) || 0) + (parseFloat(row[5]) || 0);
+          tradein.txCount++; tradein.moneyNoP += parseFloat(row[6]) || 0;
           try { JSON.parse(row[2]).forEach(function(item) { tradein.oldGoldG += getGoldWeight(item.productId) * item.qty; }); JSON.parse(row[3]).forEach(function(item) { tradein.newGoldG += getGoldWeight(item.productId) * item.qty; }); } catch(e) {}
         } else if (row[12] !== 'REJECTED') { var m = (parseFloat(row[4]) || 0) + (parseFloat(row[5]) || 0) + (parseFloat(row[6]) || 0); var g = calcGold(row[3]); incomplete.money += m; incomplete.gold += g; incTradein.money += m; incTradein.gold += g; incTradein.count++; }
       }

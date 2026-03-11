@@ -1,7 +1,5 @@
 const CONFIG = {
-  API_KEY: 'AIzaSyAyxKT4en6ITOeLxxeHMC5MZdkPVBN4rpI',
-  SHEET_ID: '1SHbMQ9kMHvhh8mAW4Ax7UDWlEkEewQyZwrq1mTDWkkg',
-  SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbzBzwdETz3zjWV_zc2KA7NqKUzTBAtUk19z4bW_H1_drEUrf1QRGAOlpMDNdexp3VKQ/exec'
+  SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbziDXIkJa_VIXVJpRnwv5aYDq425OU5O1vkDvMXEDmzj5KAzg80PJQFtN5DKOmlv0qp/exec'
 };
 
 let USERS = {};

@@ -1,8 +1,5 @@
 var _sheetCache = {};
 var _cacheTTL = 30000;
-var _batchPending = null;
-var _batchRanges = [];
-var _batchTimer = null;
 
 var ALL_RANGES = [
   '_database!A1:M31',
@@ -19,24 +16,16 @@ var ALL_RANGES = [
 ];
 
 async function batchFetchAll() {
-  var ranges = ALL_RANGES.map(function(r) { return 'ranges=' + encodeURIComponent(r); }).join('&');
-  var url = 'https://sheets.googleapis.com/v4/spreadsheets/' + CONFIG.SHEET_ID + '/values:batchGet?' + ranges + '&key=' + CONFIG.API_KEY;
   try {
-    var response = await fetch(url);
-    if (response.status === 429) return;
-    var data = await response.json();
-    if (!data.valueRanges) return;
-    var now = Date.now();
-    data.valueRanges.forEach(function(vr) {
-      var range = vr.range || '';
-      var matchedRange = ALL_RANGES.find(function(r) {
-        var sheetName = r.split('!')[0];
-        return range.indexOf(sheetName) >= 0;
-      });
-      if (matchedRange) {
-        _sheetCache[matchedRange] = { data: vr.values || [], time: now };
+    var url = CONFIG.SCRIPT_URL + '?action=BATCH_READ&ranges=' + encodeURIComponent(JSON.stringify(ALL_RANGES));
+    var response = await fetch(url, { method: 'GET', redirect: 'follow' });
+    var result = await response.json();
+    if (result.success && result.data) {
+      var now = Date.now();
+      for (var range in result.data) {
+        _sheetCache[range] = { data: result.data[range] || [], time: now };
       }
-    });
+    }
   } catch(e) {}
 }
 
@@ -45,15 +34,17 @@ async function fetchSheetData(range) {
   if (_sheetCache[range] && (now - _sheetCache[range].time) < _cacheTTL) {
     return _sheetCache[range].data;
   }
-  var url = 'https://sheets.googleapis.com/v4/spreadsheets/' + CONFIG.SHEET_ID + '/values/' + encodeURIComponent(range) + '?key=' + CONFIG.API_KEY;
-  var response = await fetch(url);
-  if (response.status === 429) {
-    return _sheetCache[range] ? _sheetCache[range].data : [];
-  }
-  var data = await response.json();
-  var result = data.values || [];
-  _sheetCache[range] = { data: result, time: now };
-  return result;
+  try {
+    var url = CONFIG.SCRIPT_URL + '?action=READ_SHEET&range=' + encodeURIComponent(range);
+    var response = await fetch(url, { method: 'GET', redirect: 'follow' });
+    var result = await response.json();
+    if (result.success) {
+      var data = result.data || [];
+      _sheetCache[range] = { data: data, time: now };
+      return data;
+    }
+  } catch(e) {}
+  return _sheetCache[range] ? _sheetCache[range].data : [];
 }
 
 function invalidateCache() {

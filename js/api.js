@@ -422,6 +422,8 @@ async function fetchSupabaseData(range) {
   if (table === 'stock_move_new') return await buildStockMoveSheet('stock_move_new');
   if (table === 'log_cashbank') return await buildLogCashbankSheet();
   if (table === 'reports') return await buildReportsSheet();
+  if (table === 'stock_summary_old') return await buildStockSummarySheet('OLD');
+  if (table === 'stock_summary_new') return await buildStockSummarySheet('NEW');
 
   var rows = await sbSelect(table, { order: ['id', 'desc'] });
   return [['header']].concat(rows.map(function(r) { return Object.values(r); }));
@@ -544,6 +546,17 @@ async function buildReportsSheet() {
   var header = ['Date','CarryForward','NetTotal'];
   return [header].concat(rows.map(function(r) {
     return [r.date, r.carry_forward_g, r.net_total_g];
+  }));
+}
+
+async function buildStockSummarySheet(oldNew) {
+  var rows = await sbSelect('stock_summary', {
+    eq: [['old_new', oldNew]],
+    order: ['date', 'asc']
+  });
+  var header = ['Date','Carry','QtyIn','QtyOut'];
+  return [header].concat(rows.map(function(r) {
+    return [r.date, JSON.stringify(r.qty_in || {}), JSON.stringify(r.qty_in || {}), JSON.stringify(r.qty_out || {})];
   }));
 }
 

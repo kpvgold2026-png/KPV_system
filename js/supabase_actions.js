@@ -804,6 +804,26 @@ async function getWACValues() {
   return { perG: wac.per_g || 0, perBaht: wac.per_baht || 0 };
 }
 
+async function actionConfirmSwitchPayment(params) {
+  return await actionConfirmExchangePayment({
+    exchangeId: params.switchId || params.exchangeId,
+    payments: params.payments,
+    totalPaid: params.totalPaid,
+    change: params.change,
+    user: params.user
+  });
+}
+
+async function actionConfirmFreeExchangePayment(params) {
+  return await actionConfirmExchangePayment({
+    exchangeId: params.freeExId || params.exchangeId,
+    payments: params.payments,
+    totalPaid: params.totalPaid,
+    change: params.change,
+    user: params.user
+  });
+}
+
 var ACTION_MAP = {
   'ADD_SELL': actionAddSell,
   'REVIEW_SELL': actionReviewSell,
@@ -814,6 +834,8 @@ var ACTION_MAP = {
   'ADD_EXCHANGE': actionAddExchange,
   'REVIEW_EXCHANGE': actionReviewExchange,
   'CONFIRM_EXCHANGE_PAYMENT': actionConfirmExchangePayment,
+  'CONFIRM_SWITCH_PAYMENT': actionConfirmSwitchPayment,
+  'CONFIRM_FREE_EXCHANGE_PAYMENT': actionConfirmFreeExchangePayment,
   'ADD_BUYBACK': actionAddBuyback,
   'CONFIRM_BUYBACK_PAYMENT': actionConfirmBuybackPayment,
   'ADD_WITHDRAW': actionAddWithdraw,

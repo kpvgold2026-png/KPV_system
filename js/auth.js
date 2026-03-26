@@ -52,6 +52,17 @@ function setupManagerUI() {
         btn.style.display = 'none';
       }
     });
+
+    var managerHideTabs = ["'accounting'", "'diff'", "'reports'", "'wac'"];
+    document.querySelectorAll('.nav-btn').forEach(function(btn) {
+      var oc = (btn.getAttribute('onclick') || '') + '';
+      for (var i = 0; i < managerHideTabs.length; i++) {
+        if (oc.indexOf(managerHideTabs[i]) !== -1) {
+          btn.style.display = 'none';
+          break;
+        }
+      }
+    });
   }
 }
 
@@ -90,18 +101,17 @@ function isSessionExpired() {
 
 async function fetchUsersFromSheet() {
   try {
-    var data = await fetchSheetData('_database!A33:D100');
+    var users = await sbSelect('users', { eq: [['active', true]] });
     USERS = {};
-    if (data.length > 1) {
-      for (var i = 1; i < data.length; i++) {
-        var role = String(data[i][0] || '').trim();
-        var name = String(data[i][1] || '').trim();
-        var username = String(data[i][2] || '').trim();
-        var pass = String(data[i][3] || '').trim();
-        if (username && pass && role) {
-          USERS[username] = { password: pass, role: mapRole(role), nickname: name || role, sheetRole: role };
-        }
-      }
+    for (var i = 0; i < users.length; i++) {
+      var u = users[i];
+      var role = mapRole(u.role);
+      USERS[u.username] = {
+        password: u.password,
+        role: role,
+        nickname: u.nickname || u.role,
+        sheetRole: u.role
+      };
     }
     return true;
   } catch(e) {
@@ -114,6 +124,8 @@ function applyRoleUI() {
   if (currentUser.role === 'Admin') {
     var navUS = document.getElementById('navUserSetting');
     if (navUS) navUS.style.display = '';
+    var navDL = document.getElementById('navDeletedList');
+    if (navDL) navDL.style.display = '';
   }
 
   if (currentUser.role === 'Accountant') {
@@ -154,8 +166,8 @@ async function enterApp() {
 
   await batchFetchAll();
   await fetchExchangeRates();
+  await fetchCurrentPricing();
   if (typeof checkAndResumePendingClose === 'function') checkAndResumePendingClose();
-  callAppsScript('INIT_STOCK').catch(function(){});
   startNotificationPolling();
   startInactivityWatch();
 }
@@ -193,30 +205,29 @@ async function login() {
 async function checkOpenShift() {
   if (!currentUser || currentUser.role !== 'User') return;
   try {
-    var closeData = await fetchSheetData('Close!A:I');
-    if (closeData && closeData.length > 1) {
-      var today = getTodayLocalStr();
-      for (var ci = 1; ci < closeData.length; ci++) {
-        var closeUser = String(closeData[ci][1] || '').trim();
-        var status = String(closeData[ci][8] || '').trim();
-        if (closeUser !== currentUser.nickname) continue;
-        if (status !== 'PENDING' && status !== 'APPROVED' && status !== 'COMPLETED') continue;
-        var rawDate = closeData[ci][2];
-        var closeDate = '';
-        try {
-          var d = new Date(rawDate);
-          var local = new Date(d.getTime() + 7 * 60 * 60000);
-          closeDate = local.toISOString().split('T')[0];
-        } catch(e2) {}
-        if (closeDate === today) {
-          return;
-        }
-      }
+    var today = getTodayLocalStr();
+    var userName = currentUser.nickname;
+
+    var closeRows = await sbSelect('close_shifts', {
+      eq: [['username', userName]],
+      order: ['date', 'desc'],
+      limit: 10
+    });
+
+    for (var ci = 0; ci < closeRows.length; ci++) {
+      var status = closeRows[ci].status;
+      if (status !== 'PENDING' && status !== 'APPROVED' && status !== 'COMPLETED') continue;
+      var closeDate = closeRows[ci].date ? closeRows[ci].date.split('T')[0] : '';
+      if (closeDate === today) return;
     }
 
-    var sheetName = currentUser.nickname;
-    var data = await fetchSheetData(sheetName + '!A2:A2');
-    if (!data || data.length === 0 || !data[0] || !data[0][0] || String(data[0][0]).trim() === '') {
+    var openShifts = await sbSelect('open_shifts', {
+      eq: [['username', userName], ['status', 'OPEN']],
+      order: ['date', 'desc'],
+      limit: 1
+    });
+
+    if (openShifts.length === 0) {
       document.getElementById('openShiftAmount').value = '';
       _shiftCompleted = false;
       openModal('openShiftModal');
@@ -269,8 +280,6 @@ function logout() {
   document.getElementById('loginUsername').value = '';
   document.getElementById('loginPassword').value = '';
   document.body.className = '';
-
-  localStorage.setItem('cacheBuster', Date.now());
 
   setTimeout(function() {
     window.location.reload();

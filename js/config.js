@@ -1,5 +1,6 @@
-const CONFIG = {
-  SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbziDXIkJa_VIXVJpRnwv5aYDq425OU5O1vkDvMXEDmzj5KAzg80PJQFtN5DKOmlv0qp/exec'
+var CONFIG = {
+  SUPABASE_URL: 'https://sypuplecctmdrjpdmkzc.supabase.co',
+  SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN5cHVwbGVjY3RtZHJqcGRta3pjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ1MTQzNjgsImV4cCI6MjA5MDA5MDM2OH0._VLh_p-Py6wloYt653ZjMvbXSq2s2I1ce3TiyTQabu0'
 };
 
 let USERS = {};
@@ -15,11 +16,11 @@ const FIXED_PRODUCTS = [
 ];
 
 const GOLD_WEIGHTS = {
-  'G01': 10, 
-  'G02': 5, 
-  'G03': 2, 
+  'G01': 10,
+  'G02': 5,
+  'G03': 2,
   'G04': 1,
-  'G05': 0.5, 
+  'G05': 0.5,
   'G06': 0.25,
   'G07': 1/15
 };

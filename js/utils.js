@@ -321,7 +321,7 @@ function calculateSellPrice(productId, sell1Baht) {
     case 'G04': price = sell1Baht; break;
     case 'G05': price = (sell1Baht / 2); break;
     case 'G06': price = (sell1Baht / 4); break;
-    case 'G07': price = (sell1Baht / 15) + 120000; break;
+    case 'G07': return Math.ceil(((sell1Baht / 15) + 120000) / 1000) * 1000;
   }
   return Math.round(price / 1000) * 1000;
 }
@@ -337,7 +337,7 @@ function calculateBuybackPrice(productId, sell1Baht) {
     case 'G04': price = buyback1B; break;
     case 'G05': price = buyback1B / 2; break;
     case 'G06': price = buyback1B / 4; break;
-    case 'G07': price = buyback1B / 15; break;
+    case 'G07': return Math.floor((buyback1B / 15) / 1000) * 1000;
   }
   return Math.round(price / 1000) * 1000;
 }
@@ -466,9 +466,9 @@ async function viewTransactionDetail(type, jsonData) {
       var payments = [];
       var salesNames = [];
       try {
-        var userData = await fetchSheetData('_database!A33:D100');
-        if (userData && userData.length > 1) {
-          for (var ui = 1; ui < userData.length; ui++) {
+        var userData = await fetchSheetData('_database!A1:M100');
+        if (userData && userData.length > 33) {
+          for (var ui = 33; ui < userData.length; ui++) {
             if (String(userData[ui][0] || '').trim() === 'Sales') {
               var sName = String(userData[ui][1] || '').trim();
               if (sName) salesNames.push(sName);
@@ -490,6 +490,20 @@ async function viewTransactionDetail(type, jsonData) {
             }
           }
         } catch(e2) {}
+      }
+
+      if (payments.length === 0) {
+        try {
+          var logCB = await fetchSheetData('_log_cashbank!A:I');
+          if (logCB && logCB.length > 1) {
+            var logFound = logCB.slice(1).filter(function(r) {
+              return r[6] && String(r[6]).indexOf(txId) !== -1;
+            });
+            if (logFound.length > 0) {
+              payments = payments.concat(logFound);
+            }
+          }
+        } catch(e4) {}
       }
 
       if (payments.length === 0) {
@@ -616,4 +630,144 @@ function printBill(encodedData, type) {
     '</body></html>');
   printWin.document.close();
   setTimeout(function() { printWin.print(); }, 300);
+}
+
+var _deletedDateFrom = null;
+var _deletedDateTo = null;
+
+async function loadDeletedList() {
+  try {
+    var tbody = document.getElementById('deletedListTable');
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:30px;"><div style="display:inline-block;width:24px;height:24px;border:3px solid var(--border-color);border-top:3px solid var(--gold-primary);border-radius:50%;animation:spin 0.8s linear infinite;"></div></td></tr>';
+    
+    if (!_deletedDateFrom || !_deletedDateTo) {
+      var td = getTodayDateString();
+      _deletedDateFrom = td;
+      _deletedDateTo = td;
+    }
+    document.getElementById('deletedDateFrom').value = _deletedDateFrom;
+    document.getElementById('deletedDateTo').value = _deletedDateTo;
+    
+    var fromParts = _deletedDateFrom.split('-');
+    var toParts = _deletedDateTo.split('-');
+    var dayStart = new Date(parseInt(fromParts[0]), parseInt(fromParts[1])-1, parseInt(fromParts[2]), 0, 0, 0);
+    var dayEnd = new Date(parseInt(toParts[0]), parseInt(toParts[1])-1, parseInt(toParts[2]), 23, 59, 59);
+    
+    var data = await fetchSheetData('_log!A:G');
+    if (!data || data.length <= 1) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:40px;">No deleted records</td></tr>';
+      return;
+    }
+    var rows = data.slice(1).filter(function(r) {
+      if (String(r[1] || '').toUpperCase() !== 'DELETE') return false;
+      var d = parseSheetDate(r[0]);
+      return d && d >= dayStart && d <= dayEnd;
+    });
+    rows.sort(function(a, b) { return new Date(b[0]) - new Date(a[0]); });
+    if (rows.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:40px;">No deleted records</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map(function(r) {
+      var type = String(r[3] || '');
+      var rawData = [];
+      try {
+        var cellVal = r[5];
+        if (Array.isArray(cellVal)) {
+          rawData = cellVal;
+        } else {
+          var rawStr = String(cellVal || '');
+          try {
+            rawData = JSON.parse(rawStr);
+          } catch(e1) {
+            var _ph = '___DQ___';
+            var cleaned = rawStr.replace(/\\\\"/g, _ph).replace(/\\"/g, _ph);
+            try {
+              var tempArr = JSON.parse(cleaned);
+              rawData = tempArr.map(function(v) { return typeof v === 'string' ? v.replace(/___DQ___/g, '"') : v; });
+            } catch(e2) {
+              cleaned = rawStr.replace(/\\\\/g, '');
+              try { rawData = JSON.parse(cleaned); } catch(e3) {}
+            }
+          }
+        }
+      } catch(e) {}
+      var safeFmt = function(val) {
+        if (!val) return '-';
+        var str = String(val);
+        str = str.replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+        try { var parsed = JSON.parse(str); return formatItemsForTable(JSON.stringify(parsed)); } catch(e) {}
+        try { return formatItemsForTable(str); } catch(e2) {}
+        return str;
+      };
+      var detail = '';
+      if (type === 'SELL' && rawData.length > 0) {
+        detail = '<b>Phone:</b> ' + (rawData[1] || '-') +
+          '<br><b>Items:</b> ' + safeFmt(rawData[2]) +
+          '<br><b>Total:</b> ' + formatNumber(rawData[3]) + ' LAK' +
+          '<br><b>Status:</b> ' + (rawData[10] || '-') +
+          '<br><b>Sale:</b> ' + (rawData[11] || '-');
+      } else if ((type === 'TRADEIN' || type === 'TRADE-IN') && rawData.length > 0) {
+        detail = '<b>Phone:</b> ' + (rawData[1] || '-') +
+          '<br><b>Old Gold:</b> ' + safeFmt(rawData[2]) +
+          '<br><b>New Gold:</b> ' + safeFmt(rawData[3]) +
+          '<br><b>Diff:</b> ' + formatNumber(rawData[4]) + ' | <b>Premium:</b> ' + formatNumber(rawData[5]) +
+          '<br><b>Total:</b> ' + formatNumber(rawData[6]) + ' LAK' +
+          '<br><b>Status:</b> ' + (rawData[12] || '-') +
+          '<br><b>Sale:</b> ' + (rawData[13] || '-');
+      } else if (type === 'EXCHANGE' && rawData.length > 0) {
+        detail = '<b>Phone:</b> ' + (rawData[1] || '-') +
+          '<br><b>Old Gold:</b> ' + safeFmt(rawData[2]) +
+          '<br><b>New Gold:</b> ' + safeFmt(rawData[3]) +
+          '<br><b>Ex Fee:</b> ' + formatNumber(rawData[4]) + ' | <b>Premium:</b> ' + formatNumber(rawData[5]) +
+          '<br><b>Total:</b> ' + formatNumber(rawData[6]) + ' LAK' +
+          '<br><b>Status:</b> ' + (rawData[12] || '-') +
+          '<br><b>Sale:</b> ' + (rawData[13] || '-');
+      } else if (type === 'BUYBACK' && rawData.length > 0) {
+        detail = '<b>Phone:</b> ' + (rawData[1] || '-') +
+          '<br><b>Items:</b> ' + safeFmt(rawData[2]) +
+          '<br><b>Price:</b> ' + formatNumber(rawData[3]) + ' | <b>Fee:</b> ' + formatNumber(rawData[5]) +
+          '<br><b>Total:</b> ' + formatNumber(rawData[6]) + ' LAK' +
+          '<br><b>Paid:</b> ' + formatNumber(rawData[7]) + ' | <b>Balance:</b> ' + formatNumber(rawData[8]) +
+          '<br><b>Status:</b> ' + (rawData[10] || '-') +
+          '<br><b>Sale:</b> ' + (rawData[11] || '-');
+      } else if (type === 'WITHDRAW' && rawData.length > 0) {
+        detail = '<b>Phone:</b> ' + (rawData[1] || '-') +
+          '<br><b>Items:</b> ' + safeFmt(rawData[2]) +
+          '<br><b>Premium:</b> ' + formatNumber(rawData[3]) +
+          '<br><b>Total:</b> ' + formatNumber(rawData[4]) + ' LAK' +
+          '<br><b>Status:</b> ' + (rawData[7] || '-') +
+          '<br><b>Sale:</b> ' + (rawData[8] || '-');
+      } else {
+        var dataStr = String(r[5] || '');
+        if (dataStr.length > 100) dataStr = dataStr.substring(0, 100) + '...';
+        detail = dataStr;
+      }
+      var typeColors = { 'SELL': '#4caf50', 'TRADEIN': '#2196f3', 'TRADE-IN': '#2196f3', 'EXCHANGE': '#ff9800', 'BUYBACK': '#9c27b0', 'WITHDRAW': '#f44336' };
+      var tColor = typeColors[type] || '#888';
+      return '<tr>' +
+        '<td style="font-size:11px;white-space:nowrap;">' + (r[0] || '') + '</td>' +
+        '<td style="font-weight:bold;">' + (r[2] || '') + '</td>' +
+        '<td><span style="background:' + tColor + ';color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;">' + type + '</span></td>' +
+        '<td>' + (r[4] || '') + '</td>' +
+        '<td style="font-size:12px;line-height:1.6;">' + detail + '</td>' +
+        '<td>' + (r[6] || '') + '</td>' +
+        '</tr>';
+    }).join('');
+  } catch(e) {}
+}
+
+function filterDeletedList() {
+  _deletedDateFrom = document.getElementById('deletedDateFrom').value;
+  _deletedDateTo = document.getElementById('deletedDateTo').value;
+  if (_deletedDateFrom && !_deletedDateTo) { _deletedDateTo = _deletedDateFrom; document.getElementById('deletedDateTo').value = _deletedDateTo; }
+  if (!_deletedDateFrom && _deletedDateTo) { _deletedDateFrom = _deletedDateTo; document.getElementById('deletedDateFrom').value = _deletedDateFrom; }
+  if (_deletedDateFrom && _deletedDateTo) loadDeletedList();
+}
+
+function resetDeletedDateFilter() {
+  var td = getTodayDateString();
+  _deletedDateFrom = td;
+  _deletedDateTo = td;
+  loadDeletedList();
 }

@@ -55,6 +55,7 @@ async function loadExchanges() {
         }
         return '<tr>' +
           '<td>' + row[0] + '</td>' +
+          '<td style="font-size:11px;white-space:nowrap;">' + (row[11] || '') + '</td>' +
           '<td>' + row[1] + '</td>' +
           '<td>' + oldGold + '</td>' +
           '<td>' + newGold + '</td>' +
@@ -247,8 +248,8 @@ async function verifyFreeExBill() {
 
 async function calculateExchangeNew() {
   if (_isSubmitting) return;
-  var phone = document.getElementById('exchangePhone').value.trim();
-  if (!phone) { alert('กรุณากรอกเบอร์โทร'); return; }
+  var phone = document.getElementById('exchangePhone').value.replace(/\D/g, '');
+  if (!phone || phone.length !== 10) { alert('กรุณากรอกเบอร์โทร 10 หลัก'); return; }
 
   var newGold = getItemsFromContainer('exNewGold');
   var oldExchange = getItemsFromContainer('exOldExchange');
@@ -294,7 +295,13 @@ async function calculateExchangeNew() {
   var allOldGold = oldExchange.concat(oldSwitch).concat(oldFreeEx);
 
   var freeExBillId = '';
-  if (oldFreeEx.length > 0 && _exFreeExBillData) freeExBillId = _exFreeExBillData.billId;
+  var freeExBillSheet = '';
+  if (oldFreeEx.length > 0) {
+    freeExBillId = document.getElementById('exFreeExBillId').value.trim();
+    if (_exFreeExBillData) {
+      freeExBillSheet = _exFreeExBillData.sheet;
+    }
+  }
 
   try {
     _isSubmitting = true;
@@ -311,7 +318,8 @@ async function calculateExchangeNew() {
       freeExOldGold: JSON.stringify(mergeItems(oldFreeEx)),
       freeExBillId: freeExBillId,
       freeExPremiumDeduct: freeExPremiumDeduct,
-      freeExBillSheet: _exFreeExBillData ? _exFreeExBillData.sheet : '',
+      freeExBillSheet: freeExBillSheet,
+      sell1Baht: currentPricing.sell1Baht,
       user: currentUser.nickname
     });
     if (result.success) {
@@ -377,8 +385,16 @@ document.addEventListener('DOMContentLoaded', function() {
   var fromInput = document.getElementById('exchangeDateFrom');
   var toInput = document.getElementById('exchangeDateTo');
   if (fromInput && toInput) {
-    fromInput.addEventListener('change', function() { exchangeDateFrom = this.value; if (exchangeDateFrom && exchangeDateTo) loadExchanges(); });
-    toInput.addEventListener('change', function() { exchangeDateTo = this.value; if (exchangeDateFrom && exchangeDateTo) loadExchanges(); });
+    fromInput.addEventListener('change', function() {
+      exchangeDateFrom = this.value;
+      if (exchangeDateFrom && !exchangeDateTo) { exchangeDateTo = exchangeDateFrom; toInput.value = exchangeDateTo; }
+      if (exchangeDateFrom && exchangeDateTo) loadExchanges();
+    });
+    toInput.addEventListener('change', function() {
+      exchangeDateTo = this.value;
+      if (exchangeDateTo && !exchangeDateFrom) { exchangeDateFrom = exchangeDateTo; fromInput.value = exchangeDateFrom; }
+      if (exchangeDateFrom && exchangeDateTo) loadExchanges();
+    });
   }
 });
 

@@ -43,7 +43,7 @@ async function loadReports() {
       return;
     }
     
-    const reports = updatedData.slice(1).reverse();
+    const reports = updatedData.slice(1).reverse().slice(0, 30);
     
     tbody.innerHTML = reports.map(row => {
       var carry = parseFloat(row[1] || 0);

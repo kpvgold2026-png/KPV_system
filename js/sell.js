@@ -54,6 +54,7 @@ async function loadSells() {
         return `
           <tr>
             <td>${row[0]}</td>
+            <td style="font-size:11px;white-space:nowrap;">${row[9] || ''}</td>
             <td>${row[1]}</td>
             <td>${items}</td>
             <td>${formatNumber(premium)}</td>
@@ -100,9 +101,9 @@ function removeSellProduct(id) {
 
 async function submitSell() {
   if (_isSubmitting) return;
-  var phone = document.getElementById('sellPhone').value;
-  if (!phone) {
-    alert('กรุณากรอกเบอร์โทร');
+  var phone = document.getElementById('sellPhone').value.replace(/\D/g, '');
+  if (!phone || phone.length !== 10) {
+    alert('กรุณากรอกเบอร์โทร 10 หลัก');
     return;
   }
 
@@ -140,7 +141,8 @@ async function submitSell() {
     var result = await callAppsScript('ADD_SELL', {
       phone: phone,
       items: JSON.stringify(mergeItems(items)),
-      total: totalPrice
+      total: totalPrice,
+      sell1Baht: currentPricing.sell1Baht
     });
 
     if (result.success) {
@@ -282,16 +284,14 @@ document.addEventListener('DOMContentLoaded', function() {
   if (fromInput && toInput) {
     fromInput.addEventListener('change', function() {
       sellDateFrom = this.value;
-      if (sellDateFrom && sellDateTo) {
-        loadSells();
-      }
+      if (sellDateFrom && !sellDateTo) { sellDateTo = sellDateFrom; toInput.value = sellDateTo; }
+      if (sellDateFrom && sellDateTo) loadSells();
     });
     
     toInput.addEventListener('change', function() {
       sellDateTo = this.value;
-      if (sellDateFrom && sellDateTo) {
-        loadSells();
-      }
+      if (sellDateTo && !sellDateFrom) { sellDateFrom = sellDateTo; fromInput.value = sellDateFrom; }
+      if (sellDateFrom && sellDateTo) loadSells();
     });
   }
 });

@@ -65,7 +65,7 @@
         </div>
         <button id="reviewCloseBtn" class="btn-secondary manager-only" style="background: #ff9800; color: #000; margin-right: 10px; display: none;" onclick="openReviewCloseModal()">📋 Review Close</button>
         <button id="transferCashBtn" class="btn-secondary" style="background: #2196f3; color: #fff; margin-right: 10px; display: none;" onclick="openTransferCashModal()">💰 ย้ายเงินเข้าร้าน</button>
-        <button id="closeWorkBtn" class="btn-secondary" style="background: #c62828; color: #fff; margin-right: 15px; display: none;" onclick="openCloseWorkModal()">🔴 CLOSE</button>
+        <button id="closeWorkBtn" class="btn-secondary" style="background: #c62828; color: #fff; margin-right: 15px; display: none;" onclick="openCloseWorkModal()">🔴 EOD</button>
         <div class="user-avatar" id="userAvatar">U</div>
         <div class="user-details">
           <div class="user-name" id="userName">User</div>
@@ -95,12 +95,21 @@
       <button class="nav-btn" onclick="showSection('stocknew')">◘ Stock (NEW)</button>
       <button class="nav-btn" onclick="showSection('wac')">◙ WAC</button>
       <button id="navUserSetting" class="nav-btn" onclick="showSection('usersetting')" style="display:none;">⚙ User Setting</button>
+      <button id="navDeletedList" class="nav-btn" onclick="showSection('deletedlist')" style="display:none;">🗑️ Deleted List</button>
     </nav>
 
     <section id="dashboard" class="section active">
-      <div style="margin-bottom: 20px;">
-        <h2 style="font-family: 'Cormorant Garamond', serif; font-size: 36px; color: var(--gold-primary);">Dashboard</h2>
-        <p style="color: var(--text-secondary); margin-top: 5px;">Daily Report: <span id="dashboardDate"></span></p>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+        <div>
+          <h2 style="font-family: 'Cormorant Garamond', serif; font-size: 36px; color: var(--gold-primary);">Dashboard</h2>
+          <p style="color: var(--text-secondary); margin-top: 5px;">Daily Report: <span id="dashboardDate"></span></p>
+        </div>
+        <div class="date-filter" style="display:flex;gap:10px;align-items:center;">
+          <input type="date" id="dashDateFrom" class="form-input" style="width:auto;" onchange="filterDashboard()">
+          <span>to</span>
+          <input type="date" id="dashDateTo" class="form-input" style="width:auto;" onchange="filterDashboard()">
+          <button class="btn-secondary" onclick="resetDashDateFilter()">Reset</button>
+        </div>
       </div>
       <div id="dashboardContent">
         <h3 style="color: var(--gold-primary); margin-bottom: 15px; font-family: 'Cormorant Garamond', serif;">Today's Transactions</h3>
@@ -279,6 +288,7 @@
           <thead>
             <tr>
               <th>Transaction ID</th>
+              <th>Date</th>
               <th>PHONE NO.</th>
               <th>Withdraw Code</th>
               <th>Items</th>
@@ -291,7 +301,7 @@
           </thead>
           <tbody id="withdrawTable">
             <tr>
-              <td colspan="9" style="text-align: center; padding: 40px;">Loading...</td>
+              <td colspan="10" style="text-align: center; padding: 40px;">Loading...</td>
             </tr>
           </tbody>
         </table>
@@ -314,6 +324,7 @@
           <thead>
             <tr>
               <th>Transaction ID</th>
+              <th>Date</th>
               <th>PHONE NO.</th>
               <th>Items</th>
               <th>Premium (LAK)</th>
@@ -325,7 +336,7 @@
           </thead>
           <tbody id="sellTable">
             <tr>
-              <td colspan="8" style="text-align: center; padding: 40px;">Loading...</td>
+              <td colspan="9" style="text-align: center; padding: 40px;">Loading...</td>
             </tr>
           </tbody>
         </table>
@@ -348,6 +359,7 @@
           <thead>
             <tr>
               <th>Transaction ID</th>
+              <th>Date</th>
               <th>PHONE NO.</th>
               <th>Old Gold</th>
               <th>New Gold</th>
@@ -361,7 +373,7 @@
           </thead>
           <tbody id="tradeinTable">
             <tr>
-              <td colspan="10" style="text-align: center; padding: 40px;">Loading...</td>
+              <td colspan="11" style="text-align: center; padding: 40px;">Loading...</td>
             </tr>
           </tbody>
         </table>
@@ -384,6 +396,7 @@
           <thead>
             <tr>
               <th>Transaction ID</th>
+              <th>Date</th>
               <th>PHONE NO.</th>
               <th>Old Gold</th>
               <th>New Gold</th>
@@ -398,7 +411,7 @@
           </thead>
           <tbody id="exchangeTable">
             <tr>
-              <td colspan="11" style="text-align: center; padding: 40px;">Loading...</td>
+              <td colspan="12" style="text-align: center; padding: 40px;">Loading...</td>
             </tr>
           </tbody>
         </table>
@@ -420,6 +433,7 @@
           <thead>
             <tr>
               <th>Transaction ID</th>
+              <th>Date</th>
               <th>Phone</th>
               <th>Type</th>
               <th>Old Gold</th>
@@ -435,7 +449,7 @@
             </tr>
           </thead>
           <tbody id="historySellTable">
-            <tr><td colspan="13" style="text-align: center; padding: 40px;">Loading...</td></tr>
+            <tr><td colspan="14" style="text-align: center; padding: 40px;">Loading...</td></tr>
           </tbody>
         </table>
       </div>
@@ -457,6 +471,7 @@
           <thead>
             <tr>
               <th>Transaction ID</th>
+              <th>Date</th>
               <th>PHONE NO.</th>
               <th>Items</th>
               <th>Price</th>
@@ -471,7 +486,7 @@
           </thead>
           <tbody id="buybackTable">
             <tr>
-              <td colspan="10" style="text-align: center; padding: 40px;">Loading...</td>
+              <td colspan="11" style="text-align: center; padding: 40px;">Loading...</td>
             </tr>
           </tbody>
         </table>
@@ -863,6 +878,35 @@
       </div>
     </section>
 
+    <section id="deletedlist" class="section">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
+        <h2 style="font-family: 'Cormorant Garamond', serif; font-size: 36px; color: var(--gold-primary);">🗑️ Deleted List</h2>
+        <div class="date-filter" style="display:flex;gap:10px;align-items:center;">
+          <input type="date" id="deletedDateFrom" class="form-input" style="width:auto;" onchange="filterDeletedList()">
+          <span>to</span>
+          <input type="date" id="deletedDateTo" class="form-input" style="width:auto;" onchange="filterDeletedList()">
+          <button class="btn-secondary" onclick="resetDeletedDateFilter()">Reset</button>
+        </div>
+      </div>
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Ref ID</th>
+              <th>Type</th>
+              <th>Sheet</th>
+              <th>Data</th>
+              <th>User</th>
+            </tr>
+          </thead>
+          <tbody id="deletedListTable">
+            <tr><td colspan="6" style="text-align: center; padding: 40px;">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
     <section id="usersetting" class="section">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
         <h2 style="font-family: 'Cormorant Garamond', serif; font-size: 36px; color: var(--gold-primary);">User Setting</h2>
@@ -966,7 +1010,7 @@
       </div>
       <div class="form-group">
         <label class="form-label">Phone Number</label>
-        <input type="text" class="form-input" id="sellPhone" placeholder="Enter phone number">
+        <input type="text" class="form-input" id="sellPhone" placeholder="Enter phone number" maxlength="10" inputmode="numeric">
       </div>
       <div class="form-group">
         <label class="form-label">Products</label>
@@ -991,7 +1035,7 @@
       </div>
       <div class="form-group">
         <label class="form-label">Phone Number</label>
-        <input type="text" class="form-input" id="tradeinPhone" placeholder="Enter phone number">
+        <input type="text" class="form-input" id="tradeinPhone" placeholder="Enter phone number" maxlength="10" inputmode="numeric">
       </div>
       <div class="form-group">
         <label class="form-label">Old Gold</label>
@@ -1124,7 +1168,7 @@
       </div>
       <div class="form-group">
         <label class="form-label">Phone Number</label>
-        <input type="text" class="form-input" id="exchangePhone" placeholder="Enter phone number">
+        <input type="text" class="form-input" id="exchangePhone" placeholder="Enter phone number" maxlength="10" inputmode="numeric">
       </div>
 
       <div style="background:var(--bg-card);border:1px solid #4caf50;border-radius:8px;padding:12px;margin-bottom:12px;">
@@ -1282,7 +1326,7 @@
       </div>
       <div class="form-group">
         <label class="form-label">Phone Number</label>
-        <input type="text" class="form-input" id="buybackPhone" placeholder="Enter phone number">
+        <input type="text" class="form-input" id="buybackPhone" placeholder="Enter phone number" maxlength="10" inputmode="numeric">
       </div>
       <div class="form-group">
         <label class="form-label">Products</label>
@@ -1326,7 +1370,7 @@
       </div>
       <div class="form-group">
         <label class="form-label">Phone Number</label>
-        <input type="text" class="form-input" id="withdrawPhone" placeholder="Enter phone number">
+        <input type="text" class="form-input" id="withdrawPhone" placeholder="Enter phone number" maxlength="10" inputmode="numeric">
       </div>
       <div class="form-group">
         <label class="form-label">Withdraw Code (รหัสถอน)</label>

@@ -6,7 +6,7 @@ var _markedReadIds = {};
 function startNotificationPolling() {
   if (_notifInterval) clearInterval(_notifInterval);
   pollAll();
-  _notifInterval = setInterval(pollAll, 30000);
+  _notifInterval = setInterval(pollAll, 60000);
 }
 
 function stopNotificationPolling() {
@@ -246,6 +246,8 @@ async function refreshPage() {
   try {
     _sheetCache = {};
     await batchFetchAll();
+    await fetchExchangeRates();
+    await fetchCurrentPricing();
     await showSection(tabName);
     await pollAll();
   } catch(e) {}

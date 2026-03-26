@@ -39,7 +39,8 @@ function showSection(sectionId) {
     'stockold': 'loadStockOld',
     'stocknew': 'loadStockNew',
     'wac': 'loadWAC',
-    'usersetting': 'loadUserSetting'
+    'usersetting': 'loadUserSetting',
+    'deletedlist': 'loadDeletedList'
   };
   const fn = loaderMap[sectionId];
   if (fn && typeof window[fn] === 'function') window[fn]();

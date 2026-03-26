@@ -167,8 +167,8 @@ document.addEventListener('DOMContentLoaded', function() {
   var f = document.getElementById('stockOldDateFrom');
   var t = document.getElementById('stockOldDateTo');
   if (f && t) {
-    f.addEventListener('change', function() { stockOldDateFrom = this.value; if (stockOldDateFrom && stockOldDateTo) loadStockOld(); });
-    t.addEventListener('change', function() { stockOldDateTo = this.value; if (stockOldDateFrom && stockOldDateTo) loadStockOld(); });
+    f.addEventListener('change', function() { stockOldDateFrom = this.value; if (stockOldDateFrom && !stockOldDateTo) { stockOldDateTo = stockOldDateFrom; t.value = stockOldDateTo; } if (stockOldDateFrom && stockOldDateTo) loadStockOld(); });
+    t.addEventListener('change', function() { stockOldDateTo = this.value; if (stockOldDateTo && !stockOldDateFrom) { stockOldDateFrom = stockOldDateTo; f.value = stockOldDateFrom; } if (stockOldDateFrom && stockOldDateTo) loadStockOld(); });
   }
 });
 
@@ -185,22 +185,53 @@ async function viewBillDetail(id, type) {
     else if (type === 'SELL') sheetRange = 'Sells!A:L';
     else if (type === 'WITHDRAW') sheetRange = 'Withdraws!A:J';
 
-    var fetches = [];
-    fetches.push(callAppsScript('GET_STOCK_MOVES', { sheet: 'StockMove_Old' }));
-    fetches.push(callAppsScript('GET_STOCK_MOVES', { sheet: 'StockMove_New' }));
+    var fetches = [
+      fetchSheetData('StockMove_Old!A:K'),
+      fetchSheetData('StockMove_New!A:K')
+    ];
     if (sheetRange) fetches.push(fetchSheetData(sheetRange));
     var results = await Promise.all(fetches);
 
-    var allMoves = [];
-    if (results[0].data && results[0].data.moves) allMoves = allMoves.concat(results[0].data.moves);
-    if (results[1].data && results[1].data.moves) allMoves = allMoves.concat(results[1].data.moves);
     var moveRow = null;
-    for (var i = allMoves.length - 1; i >= 0; i--) {
-      if (allMoves[i].id === id) { moveRow = allMoves[i]; break; }
+    for (var si = 0; si < 2; si++) {
+      var sData = results[si];
+      if (sData && sData.length > 1) {
+        for (var mi = sData.length - 1; mi >= 1; mi--) {
+          if (String(sData[mi][1] || '') === id) {
+            moveRow = {
+              id: sData[mi][1],
+              type: sData[mi][2],
+              items: sData[mi][3],
+              goldG: parseFloat(sData[mi][4]) || 0,
+              dir: String(sData[mi][5] || ''),
+              price: parseFloat(sData[mi][6]) || 0,
+              user: sData[mi][7],
+              wacG: parseFloat(sData[mi][8]) || 0,
+              wacB: parseFloat(sData[mi][9]) || 0
+            };
+            break;
+          }
+        }
+        if (moveRow) break;
+      }
     }
 
     var txData = results.length > 2 ? results[2] : [];
     var row = txData.length > 1 ? txData.slice(1).find(function(r) { return r[0] === id; }) : null;
+    
+    var stockNote = '';
+    try {
+      var stockData = await fetchSheetData('Stock!A:H');
+      if (stockData && stockData.length > 1) {
+        for (var sn = stockData.length - 1; sn >= 1; sn--) {
+          if (String(stockData[sn][3] || '') === id) {
+            stockNote = String(stockData[sn][5] || '');
+            break;
+          }
+        }
+      }
+    } catch(e) {}
+    
     hideLoading();
 
     var fmtItems = function(json) {
@@ -266,6 +297,13 @@ async function viewBillDetail(id, type) {
         html += '<div><span style="color:var(--text-secondary);font-size:11px;">WAC/บาท</span><br><span style="font-weight:bold;">' + formatNumber(wB) + ' LAK</span></div>';
         html += '</div></div>';
       }
+    }
+
+    if (stockNote) {
+      html += '<div style="margin-top:15px;padding:12px;background:rgba(255,255,255,0.05);border-radius:8px;border:1px solid var(--border-color);">';
+      html += '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:4px;">📝 Note</div>';
+      html += '<div style="font-size:13px;">' + stockNote + '</div>';
+      html += '</div>';
     }
 
     showBillModal(id, type, html);

@@ -248,6 +248,8 @@ async function openCloseWorkModal() {
   try {
     showLoading();
 
+    delete _sheetCache['Close!A:K'];
+
     var today = new Date();
     var todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
     var todayEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);

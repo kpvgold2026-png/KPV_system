@@ -157,8 +157,8 @@ document.addEventListener('DOMContentLoaded', function() {
   var f = document.getElementById('stockNewDateFrom');
   var t = document.getElementById('stockNewDateTo');
   if (f && t) {
-    f.addEventListener('change', function() { stockNewDateFrom = this.value; if (stockNewDateFrom && stockNewDateTo) loadStockNew(); });
-    t.addEventListener('change', function() { stockNewDateTo = this.value; if (stockNewDateFrom && stockNewDateTo) loadStockNew(); });
+    f.addEventListener('change', function() { stockNewDateFrom = this.value; if (stockNewDateFrom && !stockNewDateTo) { stockNewDateTo = stockNewDateFrom; t.value = stockNewDateTo; } if (stockNewDateFrom && stockNewDateTo) loadStockNew(); });
+    t.addEventListener('change', function() { stockNewDateTo = this.value; if (stockNewDateTo && !stockNewDateFrom) { stockNewDateFrom = stockNewDateTo; f.value = stockNewDateFrom; } if (stockNewDateFrom && stockNewDateTo) loadStockNew(); });
   }
 });
 

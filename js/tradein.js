@@ -56,6 +56,7 @@ async function loadTradeins() {
         return `
           <tr>
             <td>${row[0]}</td>
+            <td style="font-size:11px;white-space:nowrap;">${row[11] || ''}</td>
             <td>${row[1]}</td>
             <td>${oldGold}</td>
             <td>${newGold}</td>
@@ -149,9 +150,9 @@ function updateTradeinTotal() {
 
 async function calculateTradein() {
   if (_isSubmitting) return;
-  const phone = document.getElementById('tradeinPhone').value;
-  if (!phone) {
-    alert('กรุณากรอกเบอร์โทร');
+  const phone = document.getElementById('tradeinPhone').value.replace(/\D/g, '');
+  if (!phone || phone.length !== 10) {
+    alert('กรุณากรอกเบอร์โทร 10 หลัก');
     return;
   }
 
@@ -230,6 +231,7 @@ async function calculateTradein() {
       difference,
       premium,
       total,
+      sell1Baht: currentPricing.sell1Baht,
       user: currentUser.nickname
     });
     
@@ -304,16 +306,14 @@ document.addEventListener('DOMContentLoaded', function() {
   if (fromInput && toInput) {
     fromInput.addEventListener('change', function() {
       tradeinDateFrom = this.value;
-      if (tradeinDateFrom && tradeinDateTo) {
-        loadTradeins();
-      }
+      if (tradeinDateFrom && !tradeinDateTo) { tradeinDateTo = tradeinDateFrom; toInput.value = tradeinDateTo; }
+      if (tradeinDateFrom && tradeinDateTo) loadTradeins();
     });
     
     toInput.addEventListener('change', function() {
       tradeinDateTo = this.value;
-      if (tradeinDateFrom && tradeinDateTo) {
-        loadTradeins();
-      }
+      if (tradeinDateTo && !tradeinDateFrom) { tradeinDateFrom = tradeinDateTo; fromInput.value = tradeinDateFrom; }
+      if (tradeinDateFrom && tradeinDateTo) loadTradeins();
     });
   }
 });

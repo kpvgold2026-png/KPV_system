@@ -72,6 +72,7 @@ async function loadBuybacks() {
         
         return '<tr>' +
             '<td>' + row[0] + '</td>' +
+            '<td style="font-size:11px;white-space:nowrap;">' + (row[cDate] || '') + '</td>' +
             '<td>' + row[1] + '</td>' +
             '<td>' + items + '</td>' +
             '<td>' + formatNumber(price) + '</td>' +
@@ -140,9 +141,9 @@ function calculateBuybackTotal() {
 
 async function calculateBuyback() {
   if (_isSubmitting) return;
-  const phone = document.getElementById('buybackPhone').value;
-  if (!phone) {
-    alert('กรุณากรอกเบอร์โทร');
+  const phone = document.getElementById('buybackPhone').value.replace(/\D/g, '');
+  if (!phone || phone.length !== 10) {
+    alert('กรุณากรอกเบอร์โทร 10 หลัก');
     return;
   }
 
@@ -171,6 +172,7 @@ async function calculateBuyback() {
       products: JSON.stringify(mergeItems(products)),
       price,
       fee,
+      sell1Baht: currentPricing.sell1Baht,
       user: currentUser.nickname
     });
     
@@ -246,16 +248,14 @@ document.addEventListener('DOMContentLoaded', function() {
   if (fromInput && toInput) {
     fromInput.addEventListener('change', function() {
       buybackDateFrom = this.value;
-      if (buybackDateFrom && buybackDateTo) {
-        loadBuybacks();
-      }
+      if (buybackDateFrom && !buybackDateTo) { buybackDateTo = buybackDateFrom; toInput.value = buybackDateTo; }
+      if (buybackDateFrom && buybackDateTo) loadBuybacks();
     });
     
     toInput.addEventListener('change', function() {
       buybackDateTo = this.value;
-      if (buybackDateFrom && buybackDateTo) {
-        loadBuybacks();
-      }
+      if (buybackDateTo && !buybackDateFrom) { buybackDateFrom = buybackDateTo; fromInput.value = buybackDateFrom; }
+      if (buybackDateFrom && buybackDateTo) loadBuybacks();
     });
   }
 });

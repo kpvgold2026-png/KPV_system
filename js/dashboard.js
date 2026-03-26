@@ -1,4 +1,6 @@
 var _dashReportInterval = null;
+var _dashDateFrom = null;
+var _dashDateTo = null;
 
 function calcItemsGrams(itemsJson) {
   try {
@@ -39,9 +41,20 @@ function setBoxLoading(ids) {
 }
 
 async function loadDashboard() {
-  var today = new Date();
-  var todayStr = formatDateOnly(today);
-  document.getElementById('dashboardDate').textContent = todayStr;
+  if (!_dashDateFrom || !_dashDateTo) {
+    var td = getTodayDateString();
+    _dashDateFrom = td;
+    _dashDateTo = td;
+  }
+  document.getElementById('dashDateFrom').value = _dashDateFrom;
+  document.getElementById('dashDateTo').value = _dashDateTo;
+  
+  var fromParts = _dashDateFrom.split('-');
+  var toParts = _dashDateTo.split('-');
+  var dashDayStart = new Date(parseInt(fromParts[0]), parseInt(fromParts[1])-1, parseInt(fromParts[2]), 0, 0, 0);
+  var dashDayEnd = new Date(parseInt(toParts[0]), parseInt(toParts[1])-1, parseInt(toParts[2]), 23, 59, 59);
+  
+  document.getElementById('dashboardDate').textContent = _dashDateFrom === _dashDateTo ? formatDateOnly(dashDayStart) : _dashDateFrom + ' ~ ' + _dashDateTo;
 
   var salesIds = ['dashSalesBox', 'dashBuybackBox', 'dashWithdrawBox', 'dashNetSellBox'];
   var dbIds = ['dashPLBox', 'dashWACBox', 'dashNewStockBox', 'dashOldStockBox', 'dashCashBox', 'dashBankBox', 'dashTotalGoldBox', 'dashTotalCashBox'];
@@ -51,18 +64,44 @@ async function loadDashboard() {
   setBoxLoading(dbIds);
   setBoxLoading(reportIds);
 
-  loadDashDB(dbIds);
-  loadDashSales(salesIds);
+  var plRow = document.getElementById('dashWACBox').parentElement;
+  if (currentUser && currentUser.role === 'Manager') {
+    document.getElementById('dashWACBox').style.display = 'none';
+    document.getElementById('dashReportBox').style.display = 'none';
+    plRow.style.gridTemplateColumns = '1fr';
+    document.getElementById('dashPLBox').style.textAlign = 'center';
+    document.getElementById('dashPLBox').style.gridColumn = '';
+  } else {
+    document.getElementById('dashWACBox').style.display = '';
+    document.getElementById('dashReportBox').style.display = '';
+    plRow.style.gridTemplateColumns = 'repeat(3, 1fr)';
+    document.getElementById('dashPLBox').style.textAlign = '';
+    document.getElementById('dashPLBox').style.gridColumn = '';
+  }
+
+  loadDashDB(dbIds, dashDayStart, dashDayEnd);
+  loadDashSales(salesIds, dashDayStart, dashDayEnd);
   loadDashReport();
 }
 
-async function loadDashDB(ids) {
-  try {
-    var dbData = await fetchSheetData('_database!A1:M31');
+function filterDashboard() {
+  _dashDateFrom = document.getElementById('dashDateFrom').value;
+  _dashDateTo = document.getElementById('dashDateTo').value;
+  if (_dashDateFrom && !_dashDateTo) { _dashDateTo = _dashDateFrom; document.getElementById('dashDateTo').value = _dashDateTo; }
+  if (!_dashDateFrom && _dashDateTo) { _dashDateFrom = _dashDateTo; document.getElementById('dashDateFrom').value = _dashDateFrom; }
+  if (_dashDateFrom && _dashDateTo) loadDashboard();
+}
 
-    var today = new Date();
-    var dayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    var dayEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
+function resetDashDateFilter() {
+  var td = getTodayDateString();
+  _dashDateFrom = td;
+  _dashDateTo = td;
+  loadDashboard();
+}
+
+async function loadDashDB(ids, dayStart, dayEnd) {
+  try {
+    var dbData = await fetchSheetData('_database!A1:M100');
 
     var gpDiff = 0;
     var otherExpenseLAK = 0;
@@ -84,7 +123,7 @@ async function loadDashDB(ids) {
             var amt = parseFloat(row[2]) || 0;
             var cur = row[3];
             if (cur === 'THB' || cur === 'USD' || cur === 'LAK') {
-              var noteStr = String(r[6] || '');
+              var noteStr = String(row[6] || '');
               var lakMatch = noteStr.match(/\|LAK:(\d+)/);
               if (lakMatch) { amt = parseFloat(lakMatch[1]) || 0; }
               else if (cur === 'THB') { amt = amt * (currentExchangeRates?.THB_Sell || 0); }
@@ -201,7 +240,7 @@ async function loadDashDB(ids) {
   }
 }
 
-async function loadDashSales(ids) {
+async function loadDashSales(ids, dayStart, dayEnd) {
   try {
     var txResults = await Promise.all([
       fetchSheetData('Sells!A:L'),
@@ -211,11 +250,16 @@ async function loadDashSales(ids) {
       fetchSheetData('Withdraws!A:J')
     ]);
 
-    var sellRows = txResults[0].slice(1).filter(function(r) { return isTodayRow(r[9]) && (r[10] === 'COMPLETED' || r[10] === 'PAID'); });
-    var tradeinRows = txResults[1].slice(1).filter(function(r) { return isTodayRow(r[11]) && (r[12] === 'COMPLETED' || r[12] === 'PAID'); });
-    var exchangeRows = txResults[2].slice(1).filter(function(r) { return isTodayRow(r[11]) && (r[12] === 'COMPLETED' || r[12] === 'PAID'); });
-    var buybackRows = txResults[3].slice(1).filter(function(r) { return isTodayRow(r[9]) && (r[10] === 'COMPLETED' || r[10] === 'PAID'); });
-    var withdrawRows = txResults[4].slice(1).filter(function(r) { return isTodayRow(r[6]) && (r[7] === 'COMPLETED' || r[7] === 'PAID'); });
+    function inRange(dateVal) {
+      var d = parseSheetDate(dateVal);
+      return d && d >= dayStart && d <= dayEnd;
+    }
+
+    var sellRows = txResults[0].slice(1).filter(function(r) { return inRange(r[9]) && (r[10] === 'COMPLETED' || r[10] === 'PAID'); });
+    var tradeinRows = txResults[1].slice(1).filter(function(r) { return inRange(r[11]) && (r[12] === 'COMPLETED' || r[12] === 'PAID'); });
+    var exchangeRows = txResults[2].slice(1).filter(function(r) { return inRange(r[11]) && (r[12] === 'COMPLETED' || r[12] === 'PAID'); });
+    var buybackRows = txResults[3].slice(1).filter(function(r) { return inRange(r[9]) && (r[10] === 'COMPLETED' || r[10] === 'PAID'); });
+    var withdrawRows = txResults[4].slice(1).filter(function(r) { return inRange(r[6]) && (r[7] === 'COMPLETED' || r[7] === 'PAID'); });
 
     var sellMoney = 0; sellRows.forEach(function(r) { sellMoney += parseFloat(r[3]) || 0; });
     var tradeinMoney = 0; tradeinRows.forEach(function(r) { tradeinMoney += parseFloat(r[6]) || 0; });

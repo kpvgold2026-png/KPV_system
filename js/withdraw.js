@@ -47,13 +47,14 @@ async function loadWithdraws() {
           }
         } else {
           var wdPaid = parseFloat(row[5]) || 0;
-          var detail = encodeURIComponent(JSON.stringify([['Transaction ID', row[0]], ['Phone', row[1]], ['Items', items], ['Premium', formatNumber(premium) + ' LAK'], ['Total', formatNumber(total) + ' LAK'], ['Customer Paid', wdPaid > 0 ? formatNumber(wdPaid) + ' LAK' : '-'], ['Date', formatDateTime(row[6])], ['Status', status], ['Sale', saleName]]));
+          var detail = encodeURIComponent(JSON.stringify([['Transaction ID', row[0]], ['Phone', row[1]], ['Withdraw Code', row[11] || '-'], ['Items', items], ['Premium', formatNumber(premium) + ' LAK'], ['Total', formatNumber(total) + ' LAK'], ['Customer Paid', wdPaid > 0 ? formatNumber(wdPaid) + ' LAK' : '-'], ['Note', row[9] || '-'], ['Date', formatDateTime(row[6])], ['Status', status], ['Sale', saleName]]));
           actions = '<button class="btn-action" onclick="viewTransactionDetail(\'Withdraw\',\'' + detail + '\')" style="background:#555;">👁 View</button>';
         }
         
         return `
           <tr>
             <td>${row[0]}</td>
+            <td style="font-size:11px;white-space:nowrap;">${row[6] || ''}</td>
             <td>${row[1]}</td>
             <td>${row[11] || ''}</td>
             <td>${items}</td>
@@ -113,10 +114,10 @@ function calculateWithdrawPremium() {
 
 async function calculateWithdraw() {
   if (_isSubmitting) return;
-  const phone = document.getElementById('withdrawPhone').value;
+  const phone = document.getElementById('withdrawPhone').value.replace(/\D/g, '');
   const withdrawCode = document.getElementById('withdrawCode').value.trim();
-  if (!phone) {
-    alert('กรุณากรอกเบอร์โทร');
+  if (!phone || phone.length !== 10) {
+    alert('กรุณากรอกเบอร์โทร 10 หลัก');
     return;
   }
 
@@ -151,6 +152,7 @@ async function calculateWithdraw() {
       items: JSON.stringify(mergeItems(products)),
       premium,
       total,
+      sell1Baht: currentPricing.sell1Baht,
       user: currentUser.nickname,
       withdrawCode: withdrawCode
     });
@@ -226,16 +228,14 @@ document.addEventListener('DOMContentLoaded', function() {
   if (fromInput && toInput) {
     fromInput.addEventListener('change', function() {
       withdrawDateFrom = this.value;
-      if (withdrawDateFrom && withdrawDateTo) {
-        loadWithdraws();
-      }
+      if (withdrawDateFrom && !withdrawDateTo) { withdrawDateTo = withdrawDateFrom; toInput.value = withdrawDateTo; }
+      if (withdrawDateFrom && withdrawDateTo) loadWithdraws();
     });
     
     toInput.addEventListener('change', function() {
       withdrawDateTo = this.value;
-      if (withdrawDateFrom && withdrawDateTo) {
-        loadWithdraws();
-      }
+      if (withdrawDateTo && !withdrawDateFrom) { withdrawDateFrom = withdrawDateTo; fromInput.value = withdrawDateFrom; }
+      if (withdrawDateFrom && withdrawDateTo) loadWithdraws();
     });
   }
 });

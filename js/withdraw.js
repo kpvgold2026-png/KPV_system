@@ -54,6 +54,7 @@ async function loadWithdraws() {
         return `
           <tr>
             <td>${row[0]}</td>
+            <td>${row[12] || '-'}</td>
             <td style="font-size:11px;white-space:nowrap;">${row[6] || ''}</td>
             <td>${row[1]}</td>
             <td>${row[11] || ''}</td>

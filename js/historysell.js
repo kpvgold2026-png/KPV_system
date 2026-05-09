@@ -195,6 +195,7 @@ async function loadHistorySell() {
         var dim = 'style="color:var(--text-secondary);"';
         return '<tr>' +
           '<td style="white-space:nowrap;">' + r.id + '</td>' +
+          '<td>' + (r.billId || '-') + '</td>' +
           '<td style="font-size:11px;white-space:nowrap;">' + (r.date || '') + '</td>' +
           '<td>' + r.phone + '</td>' +
           '<td><span style="background:' + color + ';color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:bold;white-space:nowrap;">' + r.type + '</span></td>' +

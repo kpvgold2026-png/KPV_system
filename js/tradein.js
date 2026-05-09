@@ -60,6 +60,7 @@ async function loadTradeins() {
         return `
           <tr>
             <td>${row[0]}</td>
+            <td>${row[19] || '-'}</td>
             <td style="font-size:11px;white-space:nowrap;">${row[11] || ''}</td>
             <td>${row[1]}</td>
             <td>${oldGold}</td>

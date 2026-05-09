@@ -15,10 +15,10 @@ async function loadPriceRate() {
         usdBuy: parseFloat(latestRate[4]) || 0
       };
       
-      document.getElementById('rateTHBSell').textContent = formatNumber(currentPriceRates.thbSell);
-      document.getElementById('rateUSDSell').textContent = formatNumber(currentPriceRates.usdSell);
-      document.getElementById('rateTHBBuy').textContent = formatNumber(currentPriceRates.thbBuy);
-      document.getElementById('rateUSDBuy').textContent = formatNumber(currentPriceRates.usdBuy);
+      document.getElementById('rateTHBSell').textContent = formatCurrency(currentPriceRates.thbSell,'THB');
+      document.getElementById('rateUSDSell').textContent = formatCurrency(currentPriceRates.usdSell,'USD');
+      document.getElementById('rateTHBBuy').textContent = formatCurrency(currentPriceRates.thbBuy,'THB');
+      document.getElementById('rateUSDBuy').textContent = formatCurrency(currentPriceRates.usdBuy,'USD');
     }
     
     const tbody = document.getElementById('priceRateTable');
@@ -29,10 +29,10 @@ async function loadPriceRate() {
       tbody.innerHTML = rows.map(row => `
         <tr>
           <td>${formatDateTime(row[0])}</td>
-          <td>${formatNumber(row[1])}</td>
-          <td>${formatNumber(row[2])}</td>
-          <td>${formatNumber(row[3])}</td>
-          <td>${formatNumber(row[4])}</td>
+          <td>${formatCurrency(row[1],'THB')}</td>
+          <td>${formatCurrency(row[2],'USD')}</td>
+          <td>${formatCurrency(row[3],'THB')}</td>
+          <td>${formatCurrency(row[4],'USD')}</td>
           <td>${row[5]}</td>
         </tr>
       `).join('');

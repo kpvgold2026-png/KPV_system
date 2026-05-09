@@ -157,8 +157,8 @@ document.addEventListener('DOMContentLoaded', function() {
   var f = document.getElementById('stockNewDateFrom');
   var t = document.getElementById('stockNewDateTo');
   if (f && t) {
-    f.addEventListener('change', function() { stockNewDateFrom = this.value; if (stockNewDateFrom && !stockNewDateTo) { stockNewDateTo = stockNewDateFrom; t.value = stockNewDateTo; } if (stockNewDateFrom && stockNewDateTo) loadStockNew(); });
-    t.addEventListener('change', function() { stockNewDateTo = this.value; if (stockNewDateTo && !stockNewDateFrom) { stockNewDateFrom = stockNewDateTo; f.value = stockNewDateFrom; } if (stockNewDateFrom && stockNewDateTo) loadStockNew(); });
+    f.addEventListener('change', function() { stockNewDateFrom = this.value; stockNewDateTo = t.value || stockNewDateFrom; if (!t.value) t.value = stockNewDateTo; if (stockNewDateFrom && stockNewDateTo) loadStockNew(); });
+    t.addEventListener('change', function() { stockNewDateTo = this.value; stockNewDateFrom = f.value || stockNewDateTo; if (!f.value) f.value = stockNewDateFrom; if (stockNewDateFrom && stockNewDateTo) loadStockNew(); });
   }
 });
 
@@ -295,10 +295,6 @@ function renderStockInBank() {
       '</div>' +
       '<div style="display:flex;gap:10px;align-items:center;">' +
       '<input type="number" class="form-input" placeholder="Amount" value="' + (item.amount || '') + '" style="flex:1;" oninput="updateStockInBankAmount(' + item.id + ',this.value)">' +
-      '</div>' +
-      '<div style="display:flex;gap:10px;align-items:center;margin-top:8px;">' +
-      '<span style="font-size:12px;color:var(--text-secondary);white-space:nowrap;">Fee (LAK)</span>' +
-      '<input type="number" class="form-input" placeholder="0" value="' + (item.fee || '') + '" style="flex:1;" oninput="updateStockInBankFee(' + item.id + ',this.value)">' +
       '</div>' + rateHtml + '</div>';
   }).join('');
   updateStockInRemain();

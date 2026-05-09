@@ -1,5 +1,5 @@
 var _cashbankAllRows = [];
-var _cashbankFilteredTypes = ['CASH_IN', 'CASH_OUT', 'BANK_DEPOSIT', 'BANK_WITHDRAW', 'OTHER_INCOME', 'OTHER_EXPENSE'];
+var _cashbankFilteredTypes = ['CASH_IN', 'CASH_OUT', 'BANK_IN', 'BANK_OUT', 'BANK_DEPOSIT', 'BANK_WITHDRAW', 'OTHER_INCOME', 'OTHER_EXPENSE', 'OPEN_SHIFT'];
 
 async function loadCashBank() {
   try {
@@ -42,20 +42,20 @@ async function loadCashBank() {
     }
 
     document.getElementById('cashLAK').textContent = formatNumber(balances.cash.LAK);
-    document.getElementById('cashTHB').textContent = formatNumber(balances.cash.THB);
-    document.getElementById('cashUSD').textContent = formatNumber(balances.cash.USD);
+    document.getElementById('cashTHB').textContent = formatCurrency(balances.cash.THB,'THB');
+    document.getElementById('cashUSD').textContent = formatCurrency(balances.cash.USD,'USD');
 
     document.getElementById('bcelLAK').textContent = formatNumber(balances.bcel.LAK);
-    document.getElementById('bcelTHB').textContent = formatNumber(balances.bcel.THB);
-    document.getElementById('bcelUSD').textContent = formatNumber(balances.bcel.USD);
+    document.getElementById('bcelTHB').textContent = formatCurrency(balances.bcel.THB,'THB');
+    document.getElementById('bcelUSD').textContent = formatCurrency(balances.bcel.USD,'USD');
 
     document.getElementById('ldbLAK').textContent = formatNumber(balances.ldb.LAK);
-    document.getElementById('ldbTHB').textContent = formatNumber(balances.ldb.THB);
-    document.getElementById('ldbUSD').textContent = formatNumber(balances.ldb.USD);
+    document.getElementById('ldbTHB').textContent = formatCurrency(balances.ldb.THB,'THB');
+    document.getElementById('ldbUSD').textContent = formatCurrency(balances.ldb.USD,'USD');
 
     document.getElementById('otherBankLAK').textContent = formatNumber(balances.other.LAK);
-    document.getElementById('otherBankTHB').textContent = formatNumber(balances.other.THB);
-    document.getElementById('otherBankUSD').textContent = formatNumber(balances.other.USD);
+    document.getElementById('otherBankTHB').textContent = formatCurrency(balances.other.THB,'THB');
+    document.getElementById('otherBankUSD').textContent = formatCurrency(balances.other.USD,'USD');
 
     _cashbankAllRows = [];
     if (cashbankData.length > 1) {
@@ -90,7 +90,7 @@ function renderCashBankTable(rows) {
     return '<tr>' +
       '<td>' + row[0] + '</td>' +
       '<td>' + row[1] + '</td>' +
-      '<td>' + formatNumber(row[2]) + '</td>' +
+      '<td>' + formatCurrency(row[2], row[3]) + '</td>' +
       '<td>' + (row[3] || '-') + '</td>' +
       '<td>' + row[4] + '</td>' +
       '<td>' + (row[5] || '-') + '</td>' +

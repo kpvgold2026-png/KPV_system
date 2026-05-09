@@ -133,24 +133,28 @@ async function loadPriceHistory() {
 }
 
 async function updatePricing() {
-  const sell1Baht = document.getElementById('sell1BahtPrice').value;
-  
+  var sell1Baht = document.getElementById('sell1BahtPrice').value;
+
   if (!sell1Baht) {
     alert('กรุณากรอกราคา 1 บาท');
     return;
   }
-  
+
   try {
     showLoading();
-    const result = await callAppsScript('UPDATE_PRICING', {
-      sell1Baht
+    var result = await callAppsScript('UPDATE_PRICING', {
+      sell1Baht: sell1Baht
     });
-    
+
     if (result.success) {
       showToast('✅ อัพเดตราคาสำเร็จ!');
       closeModal('pricingModal');
       document.getElementById('sell1BahtPrice').value = '';
+      invalidateCache();
+      await batchFetchAll();
+      await fetchCurrentPricing();
       loadProducts();
+      if (typeof loadSalesInfoBar === 'function') loadSalesInfoBar();
     } else {
       alert('❌ Error: ' + result.message);
     }

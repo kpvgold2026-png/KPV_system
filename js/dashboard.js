@@ -66,17 +66,16 @@ async function loadDashboard() {
 
   var plRow = document.getElementById('dashWACBox').parentElement;
   if (currentUser && currentUser.role === 'Manager') {
+    document.getElementById('dashPLBox').style.display = 'none';
     document.getElementById('dashWACBox').style.display = 'none';
     document.getElementById('dashReportBox').style.display = 'none';
-    plRow.style.gridTemplateColumns = '1fr';
-    document.getElementById('dashPLBox').style.textAlign = 'center';
-    document.getElementById('dashPLBox').style.gridColumn = '';
+    plRow.style.display = 'none';
   } else {
+    document.getElementById('dashPLBox').style.display = '';
     document.getElementById('dashWACBox').style.display = '';
     document.getElementById('dashReportBox').style.display = '';
+    plRow.style.display = 'grid';
     plRow.style.gridTemplateColumns = 'repeat(3, 1fr)';
-    document.getElementById('dashPLBox').style.textAlign = '';
-    document.getElementById('dashPLBox').style.gridColumn = '';
   }
 
   loadDashDB(dbIds, dashDayStart, dashDayEnd);
@@ -211,14 +210,14 @@ async function loadDashDB(ids, dayStart, dayEnd) {
     document.getElementById('dashCashBox').innerHTML =
       '<h3 style="color:var(--gold-primary);margin-bottom:10px;">💵 CASH</h3>' +
       '<p style="font-size:16px;margin:3px 0;">' + formatNumber(cash.LAK) + ' <span style="font-size:12px;">LAK</span></p>' +
-      '<p style="font-size:16px;margin:3px 0;">' + formatNumber(cash.THB) + ' <span style="font-size:12px;">THB</span></p>' +
-      '<p style="font-size:16px;margin:3px 0;">' + formatNumber(cash.USD) + ' <span style="font-size:12px;">USD</span></p>';
+      '<p style="font-size:16px;margin:3px 0;">' + formatCurrency(cash.THB,'THB') + ' <span style="font-size:12px;">THB</span></p>' +
+      '<p style="font-size:16px;margin:3px 0;">' + formatCurrency(cash.USD,'USD') + ' <span style="font-size:12px;">USD</span></p>';
 
     document.getElementById('dashBankBox').innerHTML =
       '<h3 style="color:var(--gold-primary);margin-bottom:10px;">🏦 BANK</h3>' +
       '<p style="font-size:16px;margin:3px 0;">' + formatNumber(bank.LAK) + ' <span style="font-size:12px;">LAK</span></p>' +
-      '<p style="font-size:16px;margin:3px 0;">' + formatNumber(bank.THB) + ' <span style="font-size:12px;">THB</span></p>' +
-      '<p style="font-size:16px;margin:3px 0;">' + formatNumber(bank.USD) + ' <span style="font-size:12px;">USD</span></p>';
+      '<p style="font-size:16px;margin:3px 0;">' + formatCurrency(bank.THB,'THB') + ' <span style="font-size:12px;">THB</span></p>' +
+      '<p style="font-size:16px;margin:3px 0;">' + formatCurrency(bank.USD,'USD') + ' <span style="font-size:12px;">USD</span></p>';
 
     var totalGoldG = newStock.goldG + oldStock.goldG;
     var totalCashLAK = cash.LAK + bank.LAK;
@@ -233,8 +232,8 @@ async function loadDashDB(ids, dayStart, dayEnd) {
     document.getElementById('dashTotalCashBox').innerHTML =
       '<h3 style="color:var(--gold-primary);margin-bottom:10px;">TOTAL CASH + BANK</h3>' +
       '<p style="font-size:18px;margin:5px 0;">' + formatNumber(totalCashLAK) + ' <span style="font-size:12px;">LAK</span></p>' +
-      '<p style="font-size:18px;margin:3px 0;">' + formatNumber(totalCashTHB) + ' <span style="font-size:12px;">THB</span></p>' +
-      '<p style="font-size:18px;margin:3px 0;">' + formatNumber(totalCashUSD) + ' <span style="font-size:12px;">USD</span></p>';
+      '<p style="font-size:18px;margin:3px 0;">' + formatCurrency(totalCashTHB,'THB') + ' <span style="font-size:12px;">THB</span></p>' +
+      '<p style="font-size:18px;margin:3px 0;">' + formatCurrency(totalCashUSD,'USD') + ' <span style="font-size:12px;">USD</span></p>';
   } catch(e) {
     console.error('Error loading dashboard DB:', e);
   }
@@ -291,7 +290,7 @@ async function loadDashSales(ids, dayStart, dayEnd) {
     document.getElementById('dashSalesBox').innerHTML =
       '<h3 style="color:var(--gold-primary);margin-bottom:8px;">💰 SALES</h3>' +
       '<p style="font-size:18px;margin:3px 0;font-weight:bold;">Total: ' + formatNumber(Math.round(salesTotal)) + ' <span style="font-size:12px;">LAK</span></p>' +
-      '<p style="font-size:13px;margin:3px 0;">GOLD Amount: <b>' + salesGoldBaht.toFixed(2) + '</b> <span style="font-size:11px;">บาท</span></p>' +
+      '<p style="font-size:13px;margin:3px 0;">GOLD Amount: <b>' + salesGoldBaht.toFixed(3) + '</b> <span style="font-size:11px;">บาท</span></p>' +
       '<p style="font-size:13px;margin:3px 0;">Total/Amount: <b>' + formatNumber(salesTotalPerBaht) + '</b> <span style="font-size:11px;">LAK/บาท</span></p>' +
       '<p style="font-size:11px;color:var(--text-secondary);margin:2px 0;">Tx: <b>' + salesTotalTx + '</b></p>' +
       '<div style="border-top:1px solid var(--border-color);margin:6px 0;padding-top:6px;font-size:11px;color:var(--text-secondary);line-height:1.6;">' +
@@ -311,7 +310,7 @@ async function loadDashSales(ids, dayStart, dayEnd) {
     document.getElementById('dashBuybackBox').innerHTML =
       '<h3 style="color:var(--gold-primary);margin-bottom:8px;">🔄 BUYBACK</h3>' +
       '<p style="font-size:18px;margin:3px 0;font-weight:bold;">Total: ' + formatNumber(Math.round(bbMoney)) + ' <span style="font-size:12px;">LAK</span></p>' +
-      '<p style="font-size:13px;margin:3px 0;">GOLD Amount: <b>' + bbGoldBaht.toFixed(2) + '</b> <span style="font-size:11px;">บาท</span></p>' +
+      '<p style="font-size:13px;margin:3px 0;">GOLD Amount: <b>' + bbGoldBaht.toFixed(3) + '</b> <span style="font-size:11px;">บาท</span></p>' +
       '<p style="font-size:13px;margin:3px 0;">Total/Amount: <b>' + formatNumber(bbTotalPerBaht) + '</b> <span style="font-size:11px;">LAK/บาท</span></p>' +
       '<p style="font-size:11px;color:var(--text-secondary);margin:2px 0;">Tx: <b>' + buybackRows.length + '</b></p>' +
       '<div style="border-top:1px solid var(--border-color);margin:6px 0;padding-top:6px;font-size:12px;">' +
@@ -329,7 +328,7 @@ async function loadDashSales(ids, dayStart, dayEnd) {
     var netColor = netSellBaht >= 0 ? '#4caf50' : '#f44336';
     document.getElementById('dashNetSellBox').innerHTML =
       '<h3 style="color:var(--gold-primary);margin-bottom:8px;">⚖ NET SELL</h3>' +
-      '<p style="font-size:24px;margin:8px 0;font-weight:bold;color:' + netColor + ';">' + netSellBaht.toFixed(2) + ' <span style="font-size:13px;">บาท</span></p>' +
+      '<p style="font-size:24px;margin:8px 0;font-weight:bold;color:' + netColor + ';">' + netSellBaht.toFixed(3) + ' <span style="font-size:13px;">บาท</span></p>' +
       '<div style="border-top:1px solid var(--border-color);margin:6px 0;padding-top:6px;font-size:11px;color:var(--text-secondary);line-height:1.6;">' +
       'New Out ทั้งหมด: ' + totalNewGOut.toFixed(2) + ' g<br>' +
       'Old In ทั้งหมด: ' + totalOldGIn.toFixed(2) + ' g<br>' +

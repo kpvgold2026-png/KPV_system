@@ -2,7 +2,7 @@ async function loadWithdraws() {
   try {
     var tbody = document.getElementById('withdrawTable');
     tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:30px;"><div style="display:inline-block;width:24px;height:24px;border:3px solid var(--border-color);border-top:3px solid var(--gold-primary);border-radius:50%;animation:spin 0.8s linear infinite;"></div></td></tr>';
-    const data = await fetchSheetData('Withdraws!A:L');
+    const data = await fetchSheetData('Withdraws!A:M');
     
     let filteredData = data.slice(1);
     
@@ -47,7 +47,7 @@ async function loadWithdraws() {
           }
         } else {
           var wdPaid = parseFloat(row[5]) || 0;
-          var detail = encodeURIComponent(JSON.stringify([['Transaction ID', row[0]], ['Phone', row[1]], ['Withdraw Code', row[11] || '-'], ['Items', items], ['Premium', formatNumber(premium) + ' LAK'], ['Total', formatNumber(total) + ' LAK'], ['Customer Paid', wdPaid > 0 ? formatNumber(wdPaid) + ' LAK' : '-'], ['Note', row[9] || '-'], ['Date', formatDateTime(row[6])], ['Status', status], ['Sale', saleName]]));
+          var detail = encodeURIComponent(JSON.stringify([['Transaction ID', row[0]], ['BILL ID', row[12] || '-'], ['Phone', row[1]], ['Withdraw Code', row[11] || '-'], ['Items', items], ['Premium', formatNumber(premium) + ' LAK'], ['Total', formatNumber(total) + ' LAK'], ['Customer Paid', wdPaid > 0 ? formatNumber(wdPaid) + ' LAK' : '-'], ['Note', row[9] || '-'], ['Date', formatDateTime(row[6])], ['Status', status], ['Sale', saleName]]));
           actions = '<button class="btn-action" onclick="viewTransactionDetail(\'Withdraw\',\'' + detail + '\')" style="background:#555;">👁 View</button>';
         }
         
@@ -116,8 +116,17 @@ async function calculateWithdraw() {
   if (_isSubmitting) return;
   const phone = document.getElementById('withdrawPhone').value.replace(/\D/g, '');
   const withdrawCode = document.getElementById('withdrawCode').value.trim();
-  if (!phone || phone.length !== 10) {
-    alert('กรุณากรอกเบอร์โทร 10 หลัก');
+  if (!phone || phone.length !== 8) {
+    alert('กรุณากรอกเบอร์โทร 8 หลัก');
+    return;
+  }
+  if (!withdrawCode) {
+    alert('กรุณากรอกรหัสถอน');
+    return;
+  }
+  var billId = document.getElementById('withdrawBillId').value.replace(/\D/g, '');
+  if (!billId || billId.length !== 6) {
+    alert('กรุณากรอก BILL ID ตัวเลข 6 หลัก');
     return;
   }
 
@@ -149,6 +158,7 @@ async function calculateWithdraw() {
     showLoading();
     const result = await callAppsScript('ADD_WITHDRAW', {
       phone,
+      billId: billId,
       items: JSON.stringify(mergeItems(products)),
       premium,
       total,
@@ -163,6 +173,7 @@ async function calculateWithdraw() {
       closeModal('withdrawModal');
       
       document.getElementById('withdrawPhone').value = '';
+      document.getElementById('withdrawBillId').value = '';
       document.getElementById('withdrawCode').value = '';
       document.getElementById('withdrawProducts').innerHTML = '';
       withdrawCounter = 0;

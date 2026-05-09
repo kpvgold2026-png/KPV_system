@@ -35,6 +35,7 @@ function showSection(sectionId) {
     'cashbank': 'loadCashBank',
     'accounting': 'loadAccounting',
     'diff': 'loadDiff',
+    'livereport': 'loadLiveReport',
     'reports': 'loadReports',
     'stockold': 'loadStockOld',
     'stocknew': 'loadStockNew',

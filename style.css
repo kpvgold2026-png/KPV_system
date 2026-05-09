@@ -706,33 +706,339 @@ body.role-a button.manager-only {
 }
 
 @media (max-width: 768px) {
-  .container {
-    padding: 20px;
-  }
-  
   header {
-    padding: 15px 20px;
+    padding: 10px 14px !important;
   }
-  
-  .dashboard-stats {
-    grid-template-columns: 1fr;
+  .header-content {
+    gap: 8px;
   }
-  
-  .grid {
-    grid-template-columns: 1fr;
+  .logo {
+    gap: 8px;
   }
-  
+  .logo .logo-icon {
+    font-size: 22px;
+  }
+  .logo-text h1 {
+    font-size: 16px;
+  }
+  .logo-text p {
+    font-size: 8px;
+    letter-spacing: 1px;
+  }
+  .user-info {
+    gap: 8px;
+  }
+  .user-avatar {
+    width: 30px;
+    height: 30px;
+    font-size: 13px;
+  }
+  .user-name {
+    font-size: 11px;
+  }
+  .user-role {
+    font-size: 9px;
+  }
+  .container {
+    padding: 14px 10px !important;
+  }
   .navigation {
-    overflow-x: auto;
-    flex-wrap: nowrap;
+    gap: 5px;
+    margin-bottom: 16px;
+    flex-wrap: wrap !important;
+    overflow-x: visible !important;
   }
-  
+  .nav-btn {
+    padding: 7px 12px;
+    font-size: 11px;
+    border-radius: 8px;
+    white-space: nowrap;
+  }
+  #salesInfoContent > div[style*="grid-template-columns: repeat(3"],
+  #salesInfoContent > div[style*="grid-template-columns:repeat(3"] {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 8px !important;
+  }
+  #salesInfoContent > div[style*="grid-template-columns: 1fr 1fr"],
+  #salesInfoContent > div[style*="grid-template-columns:1fr 1fr"] {
+    grid-template-columns: 1fr !important;
+  }
+  #dashboard div[style*="grid-template-columns: repeat(4"] {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 10px !important;
+  }
+  #dashboard div[style*="grid-template-columns: repeat(3"] {
+    grid-template-columns: 1fr !important;
+    gap: 10px !important;
+  }
+  #dashboard div[style*="grid-template-columns: repeat(2"] {
+    grid-template-columns: 1fr !important;
+    gap: 10px !important;
+  }
+  #dashboard div[style*="grid-template-columns: 1fr 1fr"] {
+    grid-template-columns: 1fr !important;
+    gap: 10px !important;
+  }
+  .dashboard-stats {
+    grid-template-columns: 1fr !important;
+    gap: 10px;
+  }
+  .grid {
+    grid-template-columns: 1fr !important;
+  }
+  .stat-card {
+    padding: 14px;
+    border-radius: 10px;
+  }
+  .stat-card h3 {
+    font-size: 14px;
+  }
+  .table-container {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+    margin-left: -10px;
+    margin-right: -10px;
+    padding: 0 10px;
+  }
   table {
+    font-size: 11px;
+    min-width: 500px;
+  }
+  th, td {
+    padding: 8px 6px !important;
+    white-space: nowrap;
+  }
+  .modal {
+    padding: 10px;
+  }
+  .modal-content {
+    padding: 18px 14px !important;
+    border-radius: 14px;
+    width: 96% !important;
+    max-width: 96% !important;
+    max-height: 88vh;
+  }
+  .modal-large {
+    max-width: 96% !important;
+    width: 96% !important;
+  }
+  .modal-header {
+    margin-bottom: 14px;
+  }
+  .modal-header h2,
+  .modal-header h3 {
+    font-size: 16px;
+  }
+  .modal-header .close {
+    font-size: 24px;
+    padding: 4px;
+  }
+  .modal-title {
+    font-size: 16px;
+  }
+  .modal-footer {
+    margin-top: 16px;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .modal-footer button {
+    flex: 1;
+    min-width: 0;
+    padding: 10px 12px;
+  }
+  .form-group {
+    margin-bottom: 12px;
+  }
+  .form-label {
+    font-size: 12px;
+    margin-bottom: 4px;
+  }
+  .form-input, .form-select {
+    padding: 10px 12px;
+    font-size: 14px;
+  }
+  .btn-primary, .btn-secondary, .btn-action {
+    padding: 9px 14px;
+    font-size: 12px;
+    border-radius: 8px;
+  }
+  .product-row {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .product-row select {
+    flex: 1 1 55%;
     font-size: 12px;
   }
-  
+  .product-row input {
+    flex: 1 1 25%;
+    font-size: 12px;
+  }
+  .product-row button {
+    padding: 6px 10px;
+    font-size: 12px;
+  }
+  .summary-box {
+    padding: 14px;
+    margin: 14px 0;
+  }
+  .summary-row {
+    margin-bottom: 10px;
+    padding-bottom: 10px;
+    font-size: 13px;
+  }
+  .summary-row:last-child {
+    font-size: 15px;
+  }
+  #historysell {
+    margin-left: -10px !important;
+    margin-right: -10px !important;
+    padding-left: 10px !important;
+    padding-right: 10px !important;
+  }
+  .date-filter {
+    flex-wrap: wrap !important;
+    gap: 6px !important;
+  }
+  .date-filter input[type="date"] {
+    font-size: 12px;
+    padding: 7px 8px;
+    min-width: 0;
+    width: auto;
+    flex: 1;
+  }
+  .date-filter button {
+    padding: 7px 12px;
+    font-size: 11px;
+  }
+  .status-badge {
+    font-size: 10px;
+    padding: 3px 6px;
+  }
+  h2, h3 {
+    font-size: 15px;
+  }
+  div[style*="display: flex"][style*="justify-content: space-between"] {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  div[style*="display: flex"][style*="gap: 10px"] {
+    flex-wrap: wrap;
+    gap: 6px !important;
+  }
+  #livereport div[style*="grid-template-columns"] {
+    grid-template-columns: 1fr !important;
+  }
+  #notifDropdown {
+    width: 280px !important;
+    right: -50px !important;
+  }
+  #lrOldGoldModal > div {
+    width: 95% !important;
+    max-width: 95% !important;
+    padding: 16px !important;
+  }
+  .historysell-filters {
+    flex-wrap: wrap !important;
+    gap: 6px !important;
+  }
+  .historysell-filters select,
+  .historysell-filters input {
+    font-size: 12px;
+    padding: 7px 8px;
+  }
+  #pricerate div[style*="grid-template-columns: 1fr 1fr"] {
+    grid-template-columns: 1fr !important;
+    gap: 14px !important;
+  }
+  #accountingStats div[style*="grid-template-columns: repeat(4"],
+  #accountingStats div[style*="grid-template-columns:repeat(4"] {
+    grid-template-columns: 1fr !important;
+    gap: 10px !important;
+  }
+  #accountingStats div[style*="grid-template-columns: repeat(3"],
+  #accountingStats div[style*="grid-template-columns:repeat(3"] {
+    grid-template-columns: 1fr !important;
+    gap: 10px !important;
+  }
+  #accountingStats div[style*="grid-template-columns: repeat(2"],
+  #accountingStats div[style*="grid-template-columns:repeat(2"] {
+    grid-template-columns: 1fr !important;
+    gap: 10px !important;
+  }
+  #accountingStats div[style*="grid-template-columns:1fr"] {
+    grid-template-columns: 1fr !important;
+  }
+  #accounting div[style*="display: flex"][style*="gap: 10px"] {
+    flex-wrap: wrap;
+  }
+  #accounting .form-input[style*="width: 150px"] {
+    width: auto !important;
+    flex: 1;
+    min-width: 120px;
+  }
+}
+
+@media (max-width: 480px) {
+  header {
+    padding: 8px 10px !important;
+  }
+  .logo-text p {
+    display: none;
+  }
+  .logo-text h1 {
+    font-size: 14px;
+  }
+  .logo .logo-icon {
+    font-size: 18px;
+  }
+  .user-details {
+    display: none;
+  }
+  .container {
+    padding: 10px 6px !important;
+  }
+  .navigation {
+    gap: 3px;
+    margin-bottom: 12px;
+  }
+  .nav-btn {
+    padding: 5px 8px;
+    font-size: 10px;
+    border-radius: 6px;
+  }
+  .modal-content {
+    padding: 14px 10px !important;
+    width: 99% !important;
+    max-width: 99% !important;
+  }
+  .modal-large {
+    width: 99% !important;
+    max-width: 99% !important;
+  }
+  table {
+    font-size: 10px;
+  }
   th, td {
-    padding: 12px 10px;
+    padding: 6px 4px !important;
+  }
+  .stat-card {
+    padding: 10px;
+  }
+  .form-input, .form-select {
+    padding: 8px 10px;
+    font-size: 13px;
+  }
+  .btn-primary, .btn-secondary, .btn-action {
+    padding: 8px 10px;
+    font-size: 11px;
+  }
+  #dashboard div[style*="grid-template-columns: repeat(4"] {
+    grid-template-columns: 1fr !important;
+  }
+  #salesInfoContent > div[style*="grid-template-columns"] {
+    grid-template-columns: 1fr !important;
+    gap: 6px !important;
   }
 }
 

@@ -90,6 +90,7 @@
       <button class="nav-btn" onclick="showSection('cashbank')">◔ Cash/Bank</button>
       <button class="nav-btn" onclick="showSection('accounting')">◕ Accounting</button>
       <button class="nav-btn" onclick="showSection('diff')">◈ Diff</button>
+      <button class="nav-btn" id="navLiveReport" onclick="showSection('livereport')">📊 Report</button>
       <button class="nav-btn" onclick="showSection('reports')">◖ Wealth</button>
       <button class="nav-btn" onclick="showSection('stockold')">◗ Stock (OLD)</button>
       <button class="nav-btn" onclick="showSection('stocknew')">◘ Stock (NEW)</button>
@@ -97,6 +98,42 @@
       <button id="navUserSetting" class="nav-btn" onclick="showSection('usersetting')" style="display:none;">⚙ User Setting</button>
       <button id="navDeletedList" class="nav-btn" onclick="showSection('deletedlist')" style="display:none;">🗑️ Deleted List</button>
     </nav>
+
+    <div id="salesInfoBar" style="display:none;margin-bottom:18px;">
+      <div id="salesInfoSpinner" style="text-align:center;padding:16px;">
+        <div style="display:inline-block;width:24px;height:24px;border:3px solid var(--border-color);border-top:3px solid var(--gold-primary);border-radius:50%;animation:spin 0.8s linear infinite;"></div>
+      </div>
+      <div id="salesInfoContent" style="display:none;">
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:14px;">
+          <div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:10px;padding:16px;text-align:center;display:flex;flex-direction:column;justify-content:center;">
+            <div style="font-size:11px;color:var(--text-secondary);margin-bottom:8px;">📈 ราคาขาย 1 บาท</div>
+            <div id="siSellPrice" style="font-size:20px;font-weight:700;color:#4caf50;">0</div>
+          </div>
+          <div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:10px;padding:16px;text-align:center;display:flex;flex-direction:column;justify-content:center;">
+            <div style="font-size:11px;color:var(--text-secondary);margin-bottom:8px;">📉 รับซื้อ 1 บาท</div>
+            <div id="siBuybackPrice" style="font-size:20px;font-weight:700;color:#f44336;">0</div>
+          </div>
+          <div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:10px;padding:16px;text-align:center;display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            <div>
+              <div style="font-size:10px;color:var(--text-secondary);margin-bottom:4px;">🇹🇭 THB/LAK (Sell)</div>
+              <div id="siThbSell" style="font-size:14px;font-weight:700;color:#2196f3;">0</div>
+            </div>
+            <div>
+              <div style="font-size:10px;color:var(--text-secondary);margin-bottom:4px;">🇹🇭 LAK/THB (Buyback)</div>
+              <div id="siThbBuy" style="font-size:14px;font-weight:700;color:#ff9800;">0</div>
+            </div>
+            <div>
+              <div style="font-size:10px;color:var(--text-secondary);margin-bottom:4px;">🇺🇸 USD/LAK (Sell)</div>
+              <div id="siUsdSell" style="font-size:14px;font-weight:700;color:#2196f3;">0</div>
+            </div>
+            <div>
+              <div style="font-size:10px;color:var(--text-secondary);margin-bottom:4px;">🇺🇸 LAK/USD (Buyback)</div>
+              <div id="siUsdBuy" style="font-size:14px;font-weight:700;color:#ff9800;">0</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <section id="dashboard" class="section active">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
@@ -708,6 +745,25 @@
       </div>
     </section>
 
+    <section id="livereport" class="section">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:10px;">
+        <h2 style="font-family:'Cormorant Garamond',serif;font-size:36px;color:var(--gold-primary);">Live Report</h2>
+        <div style="display:flex;gap:10px;align-items:center;" class="date-filter">
+          <input type="date" id="lrDateFrom" class="form-input" style="width:150px;" onchange="filterLiveReport()">
+          <span>to</span>
+          <input type="date" id="lrDateTo" class="form-input" style="width:150px;" onchange="filterLiveReport()">
+          <button class="btn-secondary" onclick="resetLiveReportFilter()">Today</button>
+          <button class="btn-primary" onclick="printLiveReport()" style="background:#2196f3;">🖨️ Print</button>
+        </div>
+      </div>
+      <div id="lrSalesStatus" style="margin-bottom:25px;"><div style="text-align:center;padding:40px;color:var(--text-secondary);">Loading...</div></div>
+      <div id="lrSummaryBoxes" style="margin-bottom:25px;"></div>
+      <div id="lrSalesPayments"></div>
+      <div id="lrBuybackPayments"></div>
+      <div id="lrStockSummary" style="margin-bottom:20px;"></div>
+      <div id="lrGoldTable"></div>
+    </section>
+
     <section id="reports" class="section">
       <div style="margin-bottom: 30px;">
         <h2 style="font-family: 'Cormorant Garamond', serif; font-size: 36px; color: var(--gold-primary);">Wealth (Daily Gold Summary)</h2>
@@ -1010,7 +1066,11 @@
       </div>
       <div class="form-group">
         <label class="form-label">Phone Number</label>
-        <input type="text" class="form-input" id="sellPhone" placeholder="Enter phone number" maxlength="10" inputmode="numeric">
+        <input type="text" class="form-input" id="sellPhone" placeholder="Enter phone number" maxlength="8" inputmode="numeric">
+      </div>
+      <div class="form-group">
+        <label class="form-label">BILL ID</label>
+        <input type="text" class="form-input" id="sellBillId" placeholder="ตัวเลข 6 หลัก" maxlength="6" inputmode="numeric">
       </div>
       <div class="form-group">
         <label class="form-label">Products</label>
@@ -1035,21 +1095,34 @@
       </div>
       <div class="form-group">
         <label class="form-label">Phone Number</label>
-        <input type="text" class="form-input" id="tradeinPhone" placeholder="Enter phone number" maxlength="10" inputmode="numeric">
+        <input type="text" class="form-input" id="tradeinPhone" placeholder="Enter phone number" maxlength="8" inputmode="numeric">
       </div>
       <div class="form-group">
-        <label class="form-label">Old Gold</label>
+        <label class="form-label">BILL ID</label>
+        <input type="text" class="form-input" id="tradeinBillId" placeholder="ตัวเลข 6 หลัก" maxlength="6" inputmode="numeric">
+      </div>
+      <div class="form-group">
+        <label class="form-label">F.O.C (OLD GOLD)</label>
+        <div style="margin-bottom:8px;">
+          <input type="text" class="form-input" id="tradeinFocBillRef" placeholder="รหัสบิลเก่า" style="font-size:13px;">
+        </div>
+        <div id="tradeinFocGold"></div>
+        <button class="btn-secondary" style="margin-top: 10px;" onclick="addTradeinFocGold()">+ Add F.O.C</button>
+      </div>
+      <div class="form-group">
+        <label class="form-label">OLD GOLD</label>
         <div id="tradeinOldGold"></div>
         <button class="btn-secondary" style="margin-top: 10px;" onclick="addTradeinOldGold()">+ Add Old Gold</button>
       </div>
       <div class="form-group">
-        <label class="form-label">New Gold</label>
+        <label class="form-label">NEW GOLD</label>
         <div id="tradeinNewGold"></div>
         <button class="btn-secondary" style="margin-top: 10px;" onclick="addTradeinNewGold()">+ Add New Gold</button>
       </div>
       <div class="form-group">
         <label class="form-label">Total Price (LAK)</label>
         <input type="text" class="form-input" id="tradeinPrice" placeholder="0" readonly style="font-weight:bold;font-size:18px;color:var(--gold-primary);">
+        <div id="tradeinPriceDetail" style="font-size:11px;color:var(--text-secondary);margin-top:6px;line-height:1.6;"></div>
       </div>
       <div class="modal-footer">
         <button class="btn-secondary" onclick="closeModal('tradeinModal')">Cancel</button>
@@ -1168,7 +1241,11 @@
       </div>
       <div class="form-group">
         <label class="form-label">Phone Number</label>
-        <input type="text" class="form-input" id="exchangePhone" placeholder="Enter phone number" maxlength="10" inputmode="numeric">
+        <input type="text" class="form-input" id="exchangePhone" placeholder="Enter phone number" maxlength="8" inputmode="numeric">
+      </div>
+      <div class="form-group">
+        <label class="form-label">BILL ID</label>
+        <input type="text" class="form-input" id="exchangeBillId" placeholder="ตัวเลข 6 หลัก" maxlength="6" inputmode="numeric">
       </div>
 
       <div style="background:var(--bg-card);border:1px solid #4caf50;border-radius:8px;padding:12px;margin-bottom:12px;">
@@ -1326,7 +1403,11 @@
       </div>
       <div class="form-group">
         <label class="form-label">Phone Number</label>
-        <input type="text" class="form-input" id="buybackPhone" placeholder="Enter phone number" maxlength="10" inputmode="numeric">
+        <input type="text" class="form-input" id="buybackPhone" placeholder="Enter phone number" maxlength="8" inputmode="numeric">
+      </div>
+      <div class="form-group">
+        <label class="form-label">BILL ID</label>
+        <input type="text" class="form-input" id="buybackBillId" placeholder="ตัวเลข 6 หลัก" maxlength="6" inputmode="numeric">
       </div>
       <div class="form-group">
         <label class="form-label">Products</label>
@@ -1370,7 +1451,11 @@
       </div>
       <div class="form-group">
         <label class="form-label">Phone Number</label>
-        <input type="text" class="form-input" id="withdrawPhone" placeholder="Enter phone number" maxlength="10" inputmode="numeric">
+        <input type="text" class="form-input" id="withdrawPhone" placeholder="Enter phone number" maxlength="8" inputmode="numeric">
+      </div>
+      <div class="form-group">
+        <label class="form-label">BILL ID</label>
+        <input type="text" class="form-input" id="withdrawBillId" placeholder="ตัวเลข 6 หลัก" maxlength="6" inputmode="numeric">
       </div>
       <div class="form-group">
         <label class="form-label">Withdraw Code (รหัสถอน)</label>
@@ -2057,34 +2142,34 @@
   </style>
   
   <script defer src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="js/config.js?v=200"></script>
-  <script src="js/utils.js?v=200"></script>
-  <script src="js/api.js?v=200"></script>
-  <script src="js/supabase_actions.js?v=200"></script>
-  <script src="js/ui.js?v=200"></script>
-  <script src="js/dashboard.js?v=200"></script>
-  <script src="js/products.js?v=200"></script>
-  <script src="js/pricerate.js?v=200"></script>
-  <script src="js/sell.js?v=200"></script>
-  <script src="js/payment.js?v=200"></script>
-  <script src="js/tradein.js?v=200"></script>
-  <script src="js/buyback.js?v=200"></script>
-  <script src="js/exchange.js?v=200"></script>
-  <script src="js/withdraw.js?v=200"></script>
-  <script src="js/historysell.js?v=200"></script>
-  <script src="js/cashbank.js?v=200"></script>
-  <script src="js/accounting.js?v=200"></script>
-  <script src="js/diff.js?v=200"></script>
-  <script src="js/reports.js?v=200"></script>
-  <script src="js/usersetting.js?v=200"></script>
-  <script src="js/stockold.js?v=200"></script>
-  <script src="js/stocknew.js?v=200"></script>
-  <script src="js/wac.js?v=200"></script>
-  <script src="js/close.js?v=200"></script>
-  <script src="js/review.js?v=200"></script>
-  <script src="js/notification.js?v=200"></script>
-  <script src="js/auth.js?v=200"></script>
+  <script src="js/config.js?v=120"></script>
+  <script src="js/utils.js?v=120"></script>
+  <script src="js/api.js?v=120"></script>
+  <script src="js/ui.js?v=120"></script>
+  <script src="js/dashboard.js?v=120"></script>
+  <script src="js/products.js?v=120"></script>
+  <script src="js/pricerate.js?v=120"></script>
+  <script src="js/sell.js?v=120"></script>
+  <script src="js/payment.js?v=120"></script>
+  <script src="js/tradein.js?v=120"></script>
+  <script src="js/buyback.js?v=120"></script>
+  <script src="js/exchange.js?v=120"></script>
+  <script src="js/exchange.js?v=120"></script>
+  <script src="js/withdraw.js?v=120"></script>
+  <script src="js/historysell.js?v=120"></script>
+  <script src="js/cashbank.js?v=120"></script>
+  <script src="js/accounting.js?v=120"></script>
+  <script src="js/diff.js?v=120"></script>
+  <script src="js/reports.js?v=120"></script>
+  <script src="js/livereport.js?v=120"></script>
+  <script src="js/usersetting.js?v=120"></script>
+  <script src="js/stockold.js?v=120"></script>
+  <script src="js/stocknew.js?v=120"></script>
+  <script src="js/wac.js?v=120"></script>
+  <script src="js/close.js?v=120"></script>
+  <script src="js/review.js?v=120"></script>
+  <script src="js/notification.js?v=120"></script>
+  <script src="js/auth.js?v=120"></script>
   
   <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
   <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/th.js"></script>
@@ -2179,5 +2264,14 @@
   </div>
 
 <script>document.querySelectorAll('input').forEach(function(el){el.setAttribute('autocomplete','off');});</script>
+  <div id="lrOldGoldModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:9999;align-items:center;justify-content:center;" onclick="if(event.target===this)this.style.display='none'">
+    <div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:12px;padding:24px;max-width:400px;width:90%;max-height:80vh;overflow-y:auto;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+        <h3 id="lrOldGoldTitle" style="color:var(--gold-primary);font-size:16px;">◀ ทองเก่าที่ได้รับ</h3>
+        <button onclick="document.getElementById('lrOldGoldModal').style.display='none'" style="background:none;border:none;color:var(--text-secondary);font-size:20px;cursor:pointer;">✕</button>
+      </div>
+      <div id="lrOldGoldContent"></div>
+    </div>
+  </div>
 </body>
 </html>

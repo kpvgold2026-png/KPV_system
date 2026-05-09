@@ -2,7 +2,7 @@ async function loadBuybacks() {
   try {
     var tbody = document.getElementById('buybackTable');
     tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:30px;"><div style="display:inline-block;width:24px;height:24px;border:3px solid var(--border-color);border-top:3px solid var(--gold-primary);border-radius:50%;animation:spin 0.8s linear infinite;"></div></td></tr>';
-    const data = await fetchSheetData('Buybacks!A:L');
+    const data = await fetchSheetData('Buybacks!A:M');
     
     if (!data || data.length < 2) {
       tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; padding: 40px;">No records</td></tr>';
@@ -66,7 +66,7 @@ async function loadBuybacks() {
             actions += ' <button class="btn-action" onclick="deleteTransaction(\'' + row[0] + '\',\'Buybacks\',\'BUYBACK\')" style="background:#f44336;margin-left:4px;">🗑️</button>';
           }
         } else {
-          var detail = encodeURIComponent(JSON.stringify([['Transaction ID', row[0]], ['Phone', row[1]], ['Items', items], ['Price', formatNumber(price) + ' LAK'], ['Fee', formatNumber(fee) + ' LAK'], ['Total', formatNumber(total) + ' LAK'], ['Paid', formatNumber(paid) + ' LAK'], ['Balance', formatNumber(balance) + ' LAK'], ['Date', formatDateTime(row[cDate])], ['Status', status], ['Sale', saleName]]));
+          var detail = encodeURIComponent(JSON.stringify([['Transaction ID', row[0]], ['BILL ID', row[12] || '-'], ['Phone', row[1]], ['Items', items], ['Price', formatNumber(price) + ' LAK'], ['Fee', formatNumber(fee) + ' LAK'], ['Total', formatNumber(total) + ' LAK'], ['Paid', formatNumber(paid) + ' LAK'], ['Balance', formatNumber(balance) + ' LAK'], ['Date', formatDateTime(row[cDate])], ['Status', status], ['Sale', saleName]]));
           actions = '<button class="btn-action" onclick="viewTransactionDetail(\'Buyback\',\'' + detail + '\')" style="background:#555;">👁 View</button>';
         }
         
@@ -142,8 +142,13 @@ function calculateBuybackTotal() {
 async function calculateBuyback() {
   if (_isSubmitting) return;
   const phone = document.getElementById('buybackPhone').value.replace(/\D/g, '');
-  if (!phone || phone.length !== 10) {
-    alert('กรุณากรอกเบอร์โทร 10 หลัก');
+  if (!phone || phone.length !== 8) {
+    alert('กรุณากรอกเบอร์โทร 8 หลัก');
+    return;
+  }
+  var billId = document.getElementById('buybackBillId').value.replace(/\D/g, '');
+  if (!billId || billId.length !== 6) {
+    alert('กรุณากรอก BILL ID ตัวเลข 6 หลัก');
     return;
   }
 
@@ -169,6 +174,7 @@ async function calculateBuyback() {
     showLoading();
     const result = await callAppsScript('ADD_BUYBACK', {
       phone,
+      billId: billId,
       products: JSON.stringify(mergeItems(products)),
       price,
       fee,
@@ -182,6 +188,7 @@ async function calculateBuyback() {
       closeModal('buybackModal');
       
       document.getElementById('buybackPhone').value = '';
+      document.getElementById('buybackBillId').value = '';
       document.getElementById('buybackProducts').innerHTML = '';
       document.getElementById('buybackPrice').value = '';
       
@@ -248,13 +255,15 @@ document.addEventListener('DOMContentLoaded', function() {
   if (fromInput && toInput) {
     fromInput.addEventListener('change', function() {
       buybackDateFrom = this.value;
-      if (buybackDateFrom && !buybackDateTo) { buybackDateTo = buybackDateFrom; toInput.value = buybackDateTo; }
+      buybackDateTo = toInput.value || buybackDateFrom;
+      if (!toInput.value) toInput.value = buybackDateTo;
       if (buybackDateFrom && buybackDateTo) loadBuybacks();
     });
     
     toInput.addEventListener('change', function() {
       buybackDateTo = this.value;
-      if (buybackDateTo && !buybackDateFrom) { buybackDateFrom = buybackDateTo; fromInput.value = buybackDateFrom; }
+      buybackDateFrom = fromInput.value || buybackDateTo;
+      if (!fromInput.value) fromInput.value = buybackDateFrom;
       if (buybackDateFrom && buybackDateTo) loadBuybacks();
     });
   }

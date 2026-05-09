@@ -6,7 +6,7 @@ var _markedReadIds = {};
 function startNotificationPolling() {
   if (_notifInterval) clearInterval(_notifInterval);
   pollAll();
-  _notifInterval = setInterval(pollAll, 60000);
+  _notifInterval = setInterval(pollAll, 30000);
 }
 
 function stopNotificationPolling() {
@@ -15,9 +15,13 @@ function stopNotificationPolling() {
 
 async function pollAll() {
   await batchFetchAll();
+  await fetchExchangeRates();
+  await fetchCurrentPricing();
   await pollNotifications();
   if (typeof checkPendingClose === 'function') checkPendingClose();
   if (typeof loadPendingTransferCount === 'function') loadPendingTransferCount();
+  if (typeof loadSalesInfoBar === 'function') loadSalesInfoBar();
+  if (typeof checkSession === 'function') checkSession();
 }
 
 async function pollNotifications() {
@@ -248,6 +252,7 @@ async function refreshPage() {
     await batchFetchAll();
     await fetchExchangeRates();
     await fetchCurrentPricing();
+    if (typeof loadSalesInfoBar === 'function') loadSalesInfoBar();
     await showSection(tabName);
     await pollAll();
   } catch(e) {}

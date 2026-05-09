@@ -130,30 +130,39 @@ function renderPriceRateCharts(data) {
 }
 
 async function submitPriceRate() {
-  const thbSell = document.getElementById('rateTHBSellInput').value;
-  const usdSell = document.getElementById('rateUSDSellInput').value;
-  const thbBuy = document.getElementById('rateTHBBuyInput').value;
-  const usdBuy = document.getElementById('rateUSDBuyInput').value;
-  
-  if (!thbSell || !usdSell || !thbBuy || !usdBuy) {
-    alert('Please fill all exchange rates');
+  var thbSell = document.getElementById('rateTHBSellInput').value.trim();
+  var usdSell = document.getElementById('rateUSDSellInput').value.trim();
+  var thbBuy = document.getElementById('rateTHBBuyInput').value.trim();
+  var usdBuy = document.getElementById('rateUSDBuyInput').value.trim();
+
+  if (!thbSell && !usdSell && !thbBuy && !usdBuy) {
+    alert('กรุณากรอกค่าเงินอย่างน้อย 1 ช่อง');
     return;
   }
-  
+
+  var finalThbSell = thbSell || String(currentPriceRates.thbSell || 0);
+  var finalUsdSell = usdSell || String(currentPriceRates.usdSell || 0);
+  var finalThbBuy = thbBuy || String(currentPriceRates.thbBuy || 0);
+  var finalUsdBuy = usdBuy || String(currentPriceRates.usdBuy || 0);
+
   try {
     showLoading();
-    const result = await callAppsScript('ADD_PRICE_RATE', {
-      thbSell, usdSell, thbBuy, usdBuy
+    var result = await callAppsScript('ADD_PRICE_RATE', {
+      thbSell: finalThbSell, usdSell: finalUsdSell, thbBuy: finalThbBuy, usdBuy: finalUsdBuy
     });
-    
+
     if (result.success) {
-      alert('✅ Price rate updated successfully!');
+      showToast('✅ อัพเดตค่าเงินสำเร็จ!');
       closeModal('priceRateModal');
       document.getElementById('rateTHBSellInput').value = '';
       document.getElementById('rateUSDSellInput').value = '';
       document.getElementById('rateTHBBuyInput').value = '';
       document.getElementById('rateUSDBuyInput').value = '';
+      invalidateCache();
+      await batchFetchAll();
+      await fetchExchangeRates();
       loadPriceRate();
+      if (typeof loadSalesInfoBar === 'function') loadSalesInfoBar();
     } else {
       alert('❌ Error: ' + result.message);
     }

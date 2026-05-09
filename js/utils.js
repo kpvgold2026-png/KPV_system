@@ -31,6 +31,16 @@ function formatNumber(num) {
   return new Intl.NumberFormat('en-US').format(Math.round(n));
 }
 
+function formatCurrency(amount, currency) {
+  var n = typeof amount === 'string' ? parseFloat(amount.replace(/,/g, '')) : amount;
+  if (isNaN(n)) n = 0;
+  var cur = String(currency || '').trim().toUpperCase();
+  if (cur === 'THB' || cur === 'USD') {
+    return new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
+  }
+  return new Intl.NumberFormat('en-US').format(Math.round(n));
+}
+
 function formatWeight(num) {
   return new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(num);
 }
@@ -166,6 +176,24 @@ function formatDateTime(dateInput) {
 }
 
 const formatDate = formatDateTime;
+
+function subtractItems(allJson, focJson) {
+  try {
+    var all = typeof allJson === 'string' ? JSON.parse(allJson) : allJson;
+    var foc = typeof focJson === 'string' ? JSON.parse(focJson) : focJson;
+    if (!Array.isArray(all)) return allJson;
+    if (!Array.isArray(foc) || foc.length === 0) return JSON.stringify(all);
+    var focMap = {};
+    foc.forEach(function(f) { focMap[f.productId] = (focMap[f.productId] || 0) + f.qty; });
+    var result = [];
+    all.forEach(function(item) {
+      var remain = item.qty - (focMap[item.productId] || 0);
+      if (remain > 0) result.push({ productId: item.productId, qty: remain });
+      if (focMap[item.productId]) focMap[item.productId] = Math.max(0, focMap[item.productId] - item.qty);
+    });
+    return JSON.stringify(result);
+  } catch(e) { return allJson; }
+}
 
 function formatItemsForTable(itemsJson) {
   try {
@@ -552,7 +580,7 @@ async function viewTransactionDetail(type, jsonData) {
         var sign = amt < 0 ? '' : '+';
         payHtml += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.05);">';
         payHtml += '<span style="font-size:13px;">' + icon + ' ' + label + '</span>';
-        payHtml += '<span style="font-size:13px;font-weight:bold;color:' + color + ';">' + sign + formatNumber(amt) + ' ' + cur + '</span>';
+        payHtml += '<span style="font-size:13px;font-weight:bold;color:' + color + ';">' + sign + formatCurrency(amt, cur) + ' ' + cur + '</span>';
         payHtml += '</div>';
       });
 

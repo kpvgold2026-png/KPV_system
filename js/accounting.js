@@ -177,7 +177,7 @@ async function loadAccounting() {
     document.getElementById('accountingStats').innerHTML =
       '<div class="stat-card" style="margin-bottom:20px;text-align:center;border:2px solid var(--gold-primary);">' +
       '<h3 style="color:var(--gold-primary);margin-bottom:8px;">⚖ ขายสุทธิ / บาท</h3>' +
-      '<p style="font-size:36px;margin:10px 0;font-weight:bold;color:' + netColor + ';">' + netResult.netBaht.toFixed(2) + ' <span style="font-size:16px;">บาท</span></p>' +
+      '<p style="font-size:36px;margin:10px 0;font-weight:bold;color:' + netColor + ';">' + netResult.netBaht.toFixed(3) + ' <span style="font-size:16px;">บาท</span></p>' +
       '<div style="font-size:12px;color:var(--text-secondary);line-height:1.8;">' +
       'New Out ทั้งหมด: ' + netResult.totalNewGOut.toFixed(2) + ' g | Old In ทั้งหมด: ' + netResult.totalOldGIn.toFixed(2) + ' g | Net: ' + (netResult.totalNewGOut - netResult.totalOldGIn).toFixed(2) + ' g ÷ 15</div></div>' +
       '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:15px;margin-bottom:15px;">' +

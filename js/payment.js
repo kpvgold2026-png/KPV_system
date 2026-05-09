@@ -83,14 +83,6 @@ function renderBankPayments() {
   container.innerHTML = paymentItems.bank.map((item, idx) => {
     const lakAmount = item.amount * item.rate;
     var feeHtml = '';
-    if (isBuyback) {
-      feeHtml = `
-        <div style="display: flex; gap: 10px; align-items: center; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border-color);">
-          <span style="font-size: 12px; color: #ff9800; white-space: nowrap;">💰 Fee (LAK):</span>
-          <input type="number" class="form-input" placeholder="0" value="${item.fee || ''}"
-                 style="flex: 1;" oninput="updateBankFee(${item.id}, this.value)">
-        </div>`;
-    }
     return `
     <div class="payment-item" data-id="${item.id}" style="margin-bottom: 10px; padding: 12px; background: var(--bg-light); border-radius: 8px;">
       <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 8px;">
@@ -219,13 +211,7 @@ function updatePaymentSummary() {
 
   if (isBuyback) {
     changeBox.style.display = 'none';
-    var totalFee = 0;
-    paymentItems.bank.forEach(function(item) { totalFee += item.fee || 0; });
-    if (feeBox) {
-      feeBox.style.display = 'block';
-      feeBox.innerHTML = '<div style="font-size: 14px; color: #ff9800; margin-bottom: 5px;">💰 Total Fee (ค่าธรรมเนียม)</div>' +
-        '<div style="font-size: 24px; font-weight: bold; color: #ff9800;">' + formatNumber(totalFee) + ' LAK</div>';
-    }
+    if (feeBox) feeBox.style.display = 'none';
   } else {
     changeBox.style.display = '';
     if (feeBox) feeBox.style.display = 'none';
@@ -248,6 +234,7 @@ function updatePaymentSummary() {
 
     if (!isBuyback) {
       var ch = Math.max(0, change);
+      if (ch < 1000) ch = 0;
       changeEl.textContent = formatNumber(ch) + ' LAK';
 
       var overLimit = false;
@@ -322,6 +309,7 @@ async function confirmMultiPayment() {
   var change = 0;
   if (currentPaymentData.type !== 'BUYBACK') {
     change = Math.max(0, totalPaid - total);
+    if (change < 1000) change = 0;
   }
 
   if (change > 0) {

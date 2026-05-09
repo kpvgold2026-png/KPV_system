@@ -167,8 +167,8 @@ document.addEventListener('DOMContentLoaded', function() {
   var f = document.getElementById('stockOldDateFrom');
   var t = document.getElementById('stockOldDateTo');
   if (f && t) {
-    f.addEventListener('change', function() { stockOldDateFrom = this.value; if (stockOldDateFrom && !stockOldDateTo) { stockOldDateTo = stockOldDateFrom; t.value = stockOldDateTo; } if (stockOldDateFrom && stockOldDateTo) loadStockOld(); });
-    t.addEventListener('change', function() { stockOldDateTo = this.value; if (stockOldDateTo && !stockOldDateFrom) { stockOldDateFrom = stockOldDateTo; f.value = stockOldDateFrom; } if (stockOldDateFrom && stockOldDateTo) loadStockOld(); });
+    f.addEventListener('change', function() { stockOldDateFrom = this.value; stockOldDateTo = t.value || stockOldDateFrom; if (!t.value) t.value = stockOldDateTo; if (stockOldDateFrom && stockOldDateTo) loadStockOld(); });
+    t.addEventListener('change', function() { stockOldDateTo = this.value; stockOldDateFrom = f.value || stockOldDateTo; if (!f.value) f.value = stockOldDateFrom; if (stockOldDateFrom && stockOldDateTo) loadStockOld(); });
   }
 });
 
@@ -282,6 +282,46 @@ async function viewBillDetail(id, type) {
       html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">';
       html += '<div class="stat-card" style="padding:10px;"><div style="color:var(--text-secondary);font-size:11px;">น้ำหนัก</div><div style="font-weight:bold;">' + formatWeight(moveRow.goldG || 0) + ' g</div></div>';
       html += '<div class="stat-card" style="padding:10px;"><div style="color:var(--text-secondary);font-size:11px;">มูลค่า</div><div style="font-weight:bold;color:var(--gold-primary);">' + formatNumber(moveRow.price) + ' LAK</div></div></div>';
+
+      var priceVal = parseFloat(moveRow.price) || 0;
+      var goldGVal = parseFloat(moveRow.goldG) || 0;
+      var perG = goldGVal > 0 ? priceVal / goldGVal : 0;
+      var perBaht = perG * 15;
+      html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;">';
+      html += '<div class="stat-card" style="padding:10px;"><div style="color:var(--text-secondary);font-size:11px;">มูลค่า/g</div><div style="font-weight:bold;color:#2196f3;">' + formatNumber(Math.round(perG)) + ' LAK</div></div>';
+      html += '<div class="stat-card" style="padding:10px;"><div style="color:var(--text-secondary);font-size:11px;">มูลค่า/บาท</div><div style="font-weight:bold;color:#2196f3;">' + formatNumber(Math.round(perBaht)) + ' LAK</div></div></div>';
+
+      if (moveRow.type === 'STOCK-IN' && moveRow.dir === 'IN') {
+        try {
+          var cbData = await fetchSheetData('CashBank!A:I');
+          if (cbData && cbData.length > 1) {
+            var rateHtml = '<div style="margin-top:12px;padding:12px;background:rgba(33,150,243,0.08);border-radius:8px;border:1px solid rgba(33,150,243,0.2);">';
+            rateHtml += '<div style="font-size:12px;color:#2196f3;margin-bottom:8px;font-weight:bold;">💱 ค่าเงินที่กรอกตอนทำรายการ</div>';
+            var foundRate = false;
+            for (var cb = 1; cb < cbData.length; cb++) {
+              var cbNote = String(cbData[cb][6] || '');
+              if (cbNote.indexOf(id) === -1) continue;
+              var cbType = String(cbData[cb][1] || '').trim();
+              if (cbType.indexOf('FEE') !== -1) continue;
+              var lakMatch = cbNote.match(/\|LAK:(\d+)/);
+              if (!lakMatch) continue;
+              var lakVal = parseFloat(lakMatch[1]) || 0;
+              var absAmt = Math.abs(parseFloat(cbData[cb][2]) || 0);
+              var cur = String(cbData[cb][3] || '').trim();
+              if (absAmt > 0 && lakVal > 0) {
+                var rate = cur === 'LAK' ? 1 : Math.round(lakVal / absAmt);
+                var cbMethod = String(cbData[cb][4] || '').trim();
+                var cbBank = String(cbData[cb][5] || '').trim();
+                var methodLabel = cbMethod === 'Bank' ? '🏦 ' + (cbBank || 'Bank') : '💵 Cash';
+                rateHtml += '<div style="font-size:13px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.05);"><span style="color:var(--text-secondary);font-size:11px;">' + methodLabel + '</span><br>' + cur + ': ' + formatCurrency(absAmt, cur) + ' × ' + formatNumber(rate) + ' = ' + formatNumber(Math.round(lakVal)) + ' LAK</div>';
+                foundRate = true;
+              }
+            }
+            rateHtml += '</div>';
+            if (foundRate) html += rateHtml;
+          }
+        } catch(e) {}
+      }
     } else {
       html += '<div></div></div><p style="text-align:center;color:var(--text-secondary);">ไม่พบข้อมูลเพิ่มเติม</p>';
     }
@@ -321,7 +361,7 @@ function showBillModal(id, type, contentHtml) {
     modal.className = 'modal';
     document.body.appendChild(modal);
   }
-  modal.innerHTML = '<div class="modal-content" style="max-width:520px;"><div class="modal-header"><h3>' + type + ' - ' + id + '</h3><span class="close" onclick="closeModal(\'billDetailModal\')">&times;</span></div><div class="modal-body" style="max-height:70vh;overflow-y:auto;">' + contentHtml + '</div><div class="modal-footer"><button class="btn-secondary" onclick="closeModal(\'billDetailModal\')">ปิด</button></div></div>';
+  modal.innerHTML = '<div class="modal-content" style="max-width:520px;max-height:90vh;overflow-y:auto;"><div class="modal-header"><h3>' + type + ' - ' + id + '</h3><span class="close" onclick="closeModal(\'billDetailModal\')">&times;</span></div><div class="modal-body">' + contentHtml + '</div><div class="modal-footer"><button class="btn-secondary" onclick="closeModal(\'billDetailModal\')">ปิด</button></div></div>';
   openModal('billDetailModal');
 }
 

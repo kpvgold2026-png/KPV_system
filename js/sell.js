@@ -2,7 +2,7 @@ async function loadSells() {
   try {
     var tbody = document.getElementById('sellTable');
     tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:30px;"><div style="display:inline-block;width:24px;height:24px;border:3px solid var(--border-color);border-top:3px solid var(--gold-primary);border-radius:50%;animation:spin 0.8s linear infinite;"></div></td></tr>';
-    const data = await fetchSheetData('Sells!A:L');
+    const data = await fetchSheetData('Sells!A:N');
     
     let filteredData = data.slice(1);
     
@@ -47,7 +47,7 @@ async function loadSells() {
           var paid = parseFloat(row[5]) || 0;
           var changeLak = parseFloat(row[8]) || 0;
           var payInfo = paid > 0 ? formatNumber(paid) + ' ' + (row[6] || 'LAK') : '-';
-          var detail = encodeURIComponent(JSON.stringify([['Transaction ID', row[0]], ['Phone', row[1]], ['Items', formatItemsForTable(row[2])], ['Total', formatNumber(row[3]) + ' LAK'], ['Customer Paid', payInfo], ['Change', changeLak > 0 ? formatNumber(changeLak) + ' LAK' : '-'], ['Date', formatDateTime(row[9])], ['Status', status], ['Sale', row[11]]]));
+          var detail = encodeURIComponent(JSON.stringify([['Transaction ID', row[0]], ['BILL ID', row[13] || '-'], ['Phone', row[1]], ['Items', formatItemsForTable(row[2])], ['Total', formatNumber(row[3]) + ' LAK'], ['Customer Paid', payInfo], ['Change', changeLak > 0 ? formatNumber(changeLak) + ' LAK' : '-'], ['Date', formatDateTime(row[9])], ['Status', status], ['Sale', row[11]]]));
           actions = '<button class="btn-action" onclick="viewTransactionDetail(\'Sell\',\'' + detail + '\')" style="background:#555;">👁 View</button>';
         }
         
@@ -102,8 +102,13 @@ function removeSellProduct(id) {
 async function submitSell() {
   if (_isSubmitting) return;
   var phone = document.getElementById('sellPhone').value.replace(/\D/g, '');
-  if (!phone || phone.length !== 10) {
-    alert('กรุณากรอกเบอร์โทร 10 หลัก');
+  if (!phone || phone.length !== 8) {
+    alert('กรุณากรอกเบอร์โทร 8 หลัก');
+    return;
+  }
+  var billId = document.getElementById('sellBillId').value.replace(/\D/g, '');
+  if (!billId || billId.length !== 6) {
+    alert('กรุณากรอก BILL ID ตัวเลข 6 หลัก');
     return;
   }
 
@@ -140,6 +145,7 @@ async function submitSell() {
   try {
     var result = await callAppsScript('ADD_SELL', {
       phone: phone,
+      billId: billId,
       items: JSON.stringify(mergeItems(items)),
       total: totalPrice,
       sell1Baht: currentPricing.sell1Baht
@@ -150,6 +156,7 @@ async function submitSell() {
       showToast('✅ สร้างรายการขายสำเร็จ!');
       closeModal('sellModal');
       document.getElementById('sellPhone').value = '';
+      document.getElementById('sellBillId').value = '';
       document.getElementById('sellProducts').innerHTML = '';
       sellCounter = 0;
       addSellProduct();

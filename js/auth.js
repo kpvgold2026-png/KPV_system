@@ -101,17 +101,18 @@ function isSessionExpired() {
 
 async function fetchUsersFromSheet() {
   try {
-    var users = await sbSelect('users', { eq: [['active', true]] });
+    var data = await fetchSheetData('_database!A33:D100');
     USERS = {};
-    for (var i = 0; i < users.length; i++) {
-      var u = users[i];
-      var role = mapRole(u.role);
-      USERS[u.username] = {
-        password: u.password,
-        role: role,
-        nickname: u.nickname || u.role,
-        sheetRole: u.role
-      };
+    if (data.length > 1) {
+      for (var i = 1; i < data.length; i++) {
+        var role = String(data[i][0] || '').trim();
+        var name = String(data[i][1] || '').trim();
+        var username = String(data[i][2] || '').trim();
+        var pass = String(data[i][3] || '').trim();
+        if (username && pass && role) {
+          USERS[username] = { password: pass, role: mapRole(role), nickname: name || role, sheetRole: role };
+        }
+      }
     }
     return true;
   } catch(e) {
@@ -160,7 +161,8 @@ async function enterApp() {
   document.getElementById('userName').textContent = currentUser.nickname || currentUser.role;
   document.getElementById('userRole').textContent = currentUser.role;
   document.getElementById('userAvatar').textContent = (currentUser.nickname || currentUser.role)[0];
-  document.body.className = 'role-' + currentUser.username;
+  var roleClass = currentUser.role === 'Manager' ? 'role-m' : currentUser.role === 'Admin' ? 'role-a' : 'role-u';
+  document.body.className = roleClass;
 
   applyRoleUI();
 
@@ -168,6 +170,7 @@ async function enterApp() {
   await fetchExchangeRates();
   await fetchCurrentPricing();
   if (typeof checkAndResumePendingClose === 'function') checkAndResumePendingClose();
+  callAppsScript('INIT_STOCK').catch(function(){});
   startNotificationPolling();
   startInactivityWatch();
 }
@@ -187,7 +190,10 @@ async function login() {
 
   if (USERS[username] && USERS[username].password === password) {
     currentUser = { username: username, password: USERS[username].password, role: USERS[username].role, nickname: USERS[username].nickname, sheetRole: USERS[username].sheetRole };
+    var sessionToken = Date.now().toString(36) + Math.random().toString(36).substr(2, 8);
+    currentUser.sessionToken = sessionToken;
     localStorage.setItem('currentUser', JSON.stringify(currentUser));
+    callAppsScript('SET_SESSION', { username: username, token: sessionToken });
 
     await enterApp();
 
@@ -205,29 +211,30 @@ async function login() {
 async function checkOpenShift() {
   if (!currentUser || currentUser.role !== 'User') return;
   try {
-    var today = getTodayLocalStr();
-    var userName = currentUser.nickname;
-
-    var closeRows = await sbSelect('close_shifts', {
-      eq: [['username', userName]],
-      order: ['date', 'desc'],
-      limit: 10
-    });
-
-    for (var ci = 0; ci < closeRows.length; ci++) {
-      var status = closeRows[ci].status;
-      if (status !== 'PENDING' && status !== 'APPROVED' && status !== 'COMPLETED') continue;
-      var closeDate = closeRows[ci].date ? closeRows[ci].date.split('T')[0] : '';
-      if (closeDate === today) return;
+    var closeData = await fetchSheetData('Close!A:I');
+    if (closeData && closeData.length > 1) {
+      var today = getTodayLocalStr();
+      for (var ci = 1; ci < closeData.length; ci++) {
+        var closeUser = String(closeData[ci][1] || '').trim();
+        var status = String(closeData[ci][8] || '').trim();
+        if (closeUser !== currentUser.nickname) continue;
+        if (status !== 'PENDING' && status !== 'APPROVED' && status !== 'COMPLETED') continue;
+        var rawDate = closeData[ci][2];
+        var closeDate = '';
+        try {
+          var d = new Date(rawDate);
+          var local = new Date(d.getTime() + 7 * 60 * 60000);
+          closeDate = local.toISOString().split('T')[0];
+        } catch(e2) {}
+        if (closeDate === today) {
+          return;
+        }
+      }
     }
 
-    var openShifts = await sbSelect('open_shifts', {
-      eq: [['username', userName], ['status', 'OPEN']],
-      order: ['date', 'desc'],
-      limit: 1
-    });
-
-    if (openShifts.length === 0) {
+    var sheetName = currentUser.nickname;
+    var data = await fetchSheetData(sheetName + '!A2:A2');
+    if (!data || data.length === 0 || !data[0] || !data[0][0] || String(data[0][0]).trim() === '') {
       document.getElementById('openShiftAmount').value = '';
       _shiftCompleted = false;
       openModal('openShiftModal');
@@ -266,6 +273,25 @@ async function confirmOpenShift() {
   }
 }
 
+async function checkSession() {
+  if (!currentUser || !currentUser.sessionToken) return;
+  try {
+    var dbData = await fetchSheetData('_database!A1:M100');
+    if (dbData && dbData.length > 33) {
+      for (var i = 33; i < dbData.length; i++) {
+        if (String(dbData[i][2] || '').trim() === currentUser.username) {
+          var storedToken = String(dbData[i][4] || '').trim();
+          if (storedToken && storedToken !== currentUser.sessionToken) {
+            alert('บัญชีนี้ถูกเข้าสู่ระบบที่อื่น คุณจะถูกออกจากระบบ');
+            logout();
+          }
+          return;
+        }
+      }
+    }
+  } catch(e) {}
+}
+
 function logout() {
   stopInactivityWatch();
   stopNotificationPolling();
@@ -280,6 +306,8 @@ function logout() {
   document.getElementById('loginUsername').value = '';
   document.getElementById('loginPassword').value = '';
   document.body.className = '';
+
+  localStorage.setItem('cacheBuster', Date.now());
 
   setTimeout(function() {
     window.location.reload();

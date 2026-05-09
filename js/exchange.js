@@ -6,7 +6,7 @@ async function loadExchanges() {
   try {
     var tbody = document.getElementById('exchangeTable');
     tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:30px;"><div style="display:inline-block;width:24px;height:24px;border:3px solid var(--border-color);border-top:3px solid var(--gold-primary);border-radius:50%;animation:spin 0.8s linear infinite;"></div></td></tr>';
-    var data = await fetchSheetData('Exchanges!A:T');
+    var data = await fetchSheetData('Exchanges!A:V');
     var filteredData = data.slice(1);
     if (currentUser.role === 'User' || isManager()) {
       if (exchangeDateFrom || exchangeDateTo) {
@@ -50,7 +50,10 @@ async function loadExchanges() {
           var exPaid = parseFloat(row[7]) || 0;
           var exChange = parseFloat(row[10]) || 0;
           var exPayInfo = exPaid > 0 ? formatNumber(exPaid) + ' ' + (row[8] || 'LAK') : '-';
-          var detail = encodeURIComponent(JSON.stringify([['Transaction ID', row[0]], ['Phone', row[1]], ['Old Gold (Exchange)', formatItemsForTable(row[2])], ['New Gold', formatItemsForTable(row[3])], ['Exchange Fee', formatNumber(exFee) + ' LAK'], ['Switch Old Gold', formatItemsForTable(row[14] || '')], ['Switch Fee', formatNumber(switchFee) + ' LAK'], ['Free Ex Old Gold', formatItemsForTable(row[16] || '')], ['Free Ex Bill', row[17] || '-'], ['Premium', formatNumber(premium) + ' LAK'], ['Total', formatNumber(total) + ' LAK'], ['Customer Paid', exPayInfo], ['Change', exChange > 0 ? formatNumber(exChange) + ' LAK' : '-'], ['Date', formatDateTime(row[11])], ['Status', status], ['Sale', sale]]));
+          var pureOldGold = row[2];
+          if (row[14]) pureOldGold = subtractItems(pureOldGold, row[14]);
+          if (row[16]) pureOldGold = subtractItems(pureOldGold, row[16]);
+          var detail = encodeURIComponent(JSON.stringify([['Transaction ID', row[0]], ['BILL ID', row[21] || '-'], ['Phone', row[1]], ['New Gold', formatItemsForTable(row[3])], ['Old Gold (Exchange)', formatItemsForTable(pureOldGold)], ['Exchange Fee', formatNumber(exFee) + ' LAK'], ['Switch Old Gold', formatItemsForTable(row[14] || '')], ['Switch Fee', formatNumber(switchFee) + ' LAK'], ['Free Ex Old Gold', formatItemsForTable(row[16] || '')], ['Free Ex Bill', row[17] || '-'], ['Premium', formatNumber(premium) + ' LAK'], ['Total', formatNumber(total) + ' LAK'], ['Customer Paid', exPayInfo], ['Change', exChange > 0 ? formatNumber(exChange) + ' LAK' : '-'], ['Date', formatDateTime(row[11])], ['Status', status], ['Sale', sale]]));
           actions = '<button class="btn-action" onclick="viewTransactionDetail(\'Exchange\',\'' + detail + '\')" style="background:#555;">👁 View</button>';
         }
         return '<tr>' +
@@ -162,7 +165,7 @@ async function verifyFreeExBill() {
 
   try {
     showLoading();
-    var sheets = ['Sells!A:M', 'Tradeins!A:O', 'Exchanges!A:T', 'Withdraws!A:J'];
+    var sheets = ['Sells!A:M', 'Tradeins!A:O', 'Exchanges!A:V', 'Withdraws!A:J'];
     var results = await Promise.all(sheets.map(function(s) { return fetchSheetData(s); }));
 
     var bill = null;
@@ -249,7 +252,9 @@ async function verifyFreeExBill() {
 async function calculateExchangeNew() {
   if (_isSubmitting) return;
   var phone = document.getElementById('exchangePhone').value.replace(/\D/g, '');
-  if (!phone || phone.length !== 10) { alert('กรุณากรอกเบอร์โทร 10 หลัก'); return; }
+  if (!phone || phone.length !== 8) { alert('กรุณากรอกเบอร์โทร 8 หลัก'); return; }
+  var billId = document.getElementById('exchangeBillId').value.replace(/\D/g, '');
+  if (!billId || billId.length !== 6) { alert('กรุณากรอก BILL ID ตัวเลข 6 หลัก'); return; }
 
   var newGold = getItemsFromContainer('exNewGold');
   var oldExchange = getItemsFromContainer('exOldExchange');
@@ -308,6 +313,7 @@ async function calculateExchangeNew() {
     showLoading();
     var result = await callAppsScript('ADD_EXCHANGE', {
       phone: phone,
+      billId: billId,
       oldGold: JSON.stringify(mergeItems(allOldGold)),
       newGold: JSON.stringify(mergeItems(newGold)),
       exchangeFee: exchangeFee,
@@ -340,6 +346,7 @@ async function calculateExchangeNew() {
 
 function resetExchangeForm() {
   document.getElementById('exchangePhone').value = '';
+  document.getElementById('exchangeBillId').value = '';
   ['exNewGold', 'exOldExchange', 'exOldSwitch', 'exOldFreeEx'].forEach(function(id) { document.getElementById(id).innerHTML = ''; });
   document.getElementById('exFreeExBillId').value = '';
   document.getElementById('exFreeExStatus').innerHTML = '';

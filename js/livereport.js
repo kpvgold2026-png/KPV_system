@@ -841,7 +841,7 @@ function printLiveReport() {
 
   var css = [
     '* { box-sizing: border-box; margin: 0; padding: 0; }',
-    'body { font-family: "Segoe UI", Arial, sans-serif; padding: 40px 30px; background: #fff; color: #333; font-size: 13px; line-height: 1.5; }',
+    'body { font-family: "Segoe UI", Arial, sans-serif; padding: 30px; background: #fff; color: #333; font-size: 13px; line-height: 1.5; }',
     '.print-header { text-align: center; border-bottom: 3px solid #b8860b; padding-bottom: 20px; margin-bottom: 30px; }',
     '.print-header h1 { color: #b8860b; font-size: 28px; font-weight: 700; letter-spacing: 2px; margin-bottom: 4px; }',
     '.print-header .subtitle { color: #666; font-size: 13px; }',
@@ -867,7 +867,7 @@ function printLiveReport() {
     'td[style*="color:#f44336"], td[style*="color: #f44336"] { color: #c62828 !important; }',
     'td[style*="color:var(--gold-primary)"] { color: #b8860b !important; }',
     'div[style*="background:rgba(212,175,55"] { background: #fff8e1 !important; }',
-    '@media print { @page { margin: 20mm 15mm; } body { padding: 0; } .print-section { page-break-inside: avoid; } table { page-break-inside: avoid; } h3 { page-break-after: avoid; } }'
+    '@media print { @page { margin: 0; } body { padding: 25mm 15mm; } .print-section { page-break-inside: avoid; } table { page-break-inside: avoid; } h3 { page-break-after: avoid; } }'
   ].join('\n');
 
   var printWin = window.open('', '_blank');

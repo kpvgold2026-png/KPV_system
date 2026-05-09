@@ -259,9 +259,6 @@ function renderSalesStatus(users, salesUserData, closeData, logCashbankData, sel
 
     if (shiftClosed) {
       if (closeRow) {
-        cashLAK = parseFloat(closeRow[3]) || 0;
-        cashTHB = parseFloat(closeRow[4]) || 0;
-        cashUSD = parseFloat(closeRow[5]) || 0;
         try {
           var ogJson = closeRow[6];
           if (ogJson) {
@@ -277,6 +274,28 @@ function renderSalesStatus(users, salesUserData, closeData, logCashbankData, sel
             }
           }
         } catch(e) {}
+      }
+      for (var lc = 1; lc < logCashbankData.length; lc++) {
+        var lcCreator = String(logCashbankData[lc][8] || '').trim();
+        if (lcCreator !== name) continue;
+        var lcMethod = String(logCashbankData[lc][4] || '').trim();
+        var lcBank = String(logCashbankData[lc][5] || '').trim();
+        var lcCur = String(logCashbankData[lc][3] || '').trim();
+        var lcAmt = parseFloat(logCashbankData[lc][2]) || 0;
+        var lcKey = 'Cash';
+        if (lcMethod === 'Bank') {
+          if (lcBank === 'BCEL') lcKey = 'BCEL';
+          else if (lcBank === 'LDB') lcKey = 'LDB';
+          else lcKey = 'Other';
+        }
+        if (salesBalances[lcKey] && (lcCur === 'LAK' || lcCur === 'THB' || lcCur === 'USD')) {
+          salesBalances[lcKey][lcCur] += lcAmt;
+        }
+        if (lcMethod === 'Cash') {
+          if (lcCur === 'LAK') cashLAK += lcAmt;
+          else if (lcCur === 'THB') cashTHB += lcAmt;
+          else if (lcCur === 'USD') cashUSD += lcAmt;
+        }
       }
     } else if (isOpen) {
       for (var r = 1; r < ud.sheet.length; r++) {

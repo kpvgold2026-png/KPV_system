@@ -867,7 +867,7 @@ function printLiveReport() {
     'td[style*="color:#f44336"], td[style*="color: #f44336"] { color: #c62828 !important; }',
     'td[style*="color:var(--gold-primary)"] { color: #b8860b !important; }',
     'div[style*="background:rgba(212,175,55"] { background: #fff8e1 !important; }',
-    '@media print { @page { margin: 0; } body { padding: 25mm 15mm; } .print-section { page-break-inside: avoid; } table { page-break-inside: avoid; } h3 { page-break-after: avoid; } }'
+    '@media print { @page { margin: 20mm; } body { padding: 0 !important; margin: 0 !important; } .print-section { page-break-inside: avoid; } table { page-break-inside: avoid; } h3 { page-break-after: avoid; } .print-tip { display: none !important; } }'
   ].join('\n');
 
   var printWin = window.open('', '_blank');
@@ -877,6 +877,7 @@ function printLiveReport() {
   printWin.document.write('<h1>KPV GOLD</h1>');
   printWin.document.write('<div class="subtitle">Live Report: ' + (dateFrom || '-') + ' to ' + (dateTo || '-') + ' | Printed: ' + new Date().toLocaleString() + '</div>');
   printWin.document.write('</div>');
+  printWin.document.write('<div class="print-tip" style="background:#fff3cd;border:1px solid #ffc107;border-radius:8px;padding:12px 16px;margin-bottom:20px;font-size:12px;color:#856404;">⚠️ ตอน Print/Save PDF กรุณาตั้ง <b>Margins</b> เป็น <b>"Default"</b> เพื่อให้ขอบสวยทุกหน้า</div>');
   printWin.document.write(contentHtml);
   printWin.document.write('</body></html>');
   printWin.document.close();

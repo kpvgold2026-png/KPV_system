@@ -1,6 +1,6 @@
 const CONFIG = {
-  API_KEY: 'AIzaSyA6vWYEHlo-Vr4Llxc_2ZnMH37O7GbSqks',
-  SHEET_ID: '1FF4odviKZ2LnRvPf8ltM0o_jxM0ZHuJHBlkQCjC3sxA',
+  API_KEY: 'AIzaSyCE2v-OIQa2i1rylCPxiCPuQwH2DBnU5ss',
+  SHEET_ID: '1D4pPVKtiYCPiKGHXjwgkF_gpuGTnnWN0UVXIOGpO6rk',
   SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbwvZi5d6CTKtmtUQQfhB674_W6WYaqIkCXzju_cWT4BpndKcthpkm1anQGHdE0V8g_t/exec'
 };
 

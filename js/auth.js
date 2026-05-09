@@ -193,7 +193,7 @@ async function login() {
     var sessionToken = Date.now().toString(36) + Math.random().toString(36).substr(2, 8);
     currentUser.sessionToken = sessionToken;
     localStorage.setItem('currentUser', JSON.stringify(currentUser));
-    callAppsScript('SET_SESSION', { username: username, token: sessionToken });
+    await callAppsScript('SET_SESSION', { username: username, token: sessionToken });
 
     await enterApp();
 

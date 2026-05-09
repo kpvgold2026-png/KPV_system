@@ -54,7 +54,7 @@ function renderCashPayments() {
       </div>
       ${item.currency !== 'LAK' ? `
         <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border-color);">
-          <span style="font-size: 11px; color: var(--text-secondary);">Rate: 1 ${item.currency} = ${formatNumber(item.rate)} LAK</span>
+          <span style="font-size: 11px; color: var(--text-secondary);">Rate: 1 ${item.currency} = ${new Intl.NumberFormat('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}).format(item.rate)} LAK</span>
           <span class="lak-display" style="color: var(--gold-primary); font-weight: bold;">= ${formatNumber(lakAmount)} LAK</span>
         </div>
       ` : ''}
@@ -104,7 +104,7 @@ function renderBankPayments() {
       </div>
       ${item.currency !== 'LAK' ? `
         <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border-color);">
-          <span style="font-size: 11px; color: var(--text-secondary);">Rate: 1 ${item.currency} = ${formatNumber(item.rate)} LAK</span>
+          <span style="font-size: 11px; color: var(--text-secondary);">Rate: 1 ${item.currency} = ${new Intl.NumberFormat('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}).format(item.rate)} LAK</span>
           <span class="lak-display" style="color: var(--gold-primary); font-weight: bold;">= ${formatNumber(lakAmount)} LAK</span>
         </div>
       ` : ''}

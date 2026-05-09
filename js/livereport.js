@@ -254,6 +254,7 @@ function renderSalesStatus(users, salesUserData, closeData, logCashbankData, sel
     }
 
     var cashLAK = 0, cashTHB = 0, cashUSD = 0;
+    var salesBalances = { Cash: { LAK: 0, THB: 0, USD: 0 }, BCEL: { LAK: 0, THB: 0, USD: 0 }, LDB: { LAK: 0, THB: 0, USD: 0 }, Other: { LAK: 0, THB: 0, USD: 0 } };
     var oldGoldG = 0;
 
     if (shiftClosed) {
@@ -279,9 +280,20 @@ function renderSalesStatus(users, salesUserData, closeData, logCashbankData, sel
       }
     } else if (isOpen) {
       for (var r = 1; r < ud.sheet.length; r++) {
-        if (String(ud.sheet[r][4] || '').trim() === 'Cash') {
-          var cur = String(ud.sheet[r][3] || '').trim();
-          var amt = parseFloat(ud.sheet[r][2]) || 0;
+        var method = String(ud.sheet[r][4] || '').trim();
+        var bank = String(ud.sheet[r][5] || '').trim();
+        var cur = String(ud.sheet[r][3] || '').trim();
+        var amt = parseFloat(ud.sheet[r][2]) || 0;
+        var key = 'Cash';
+        if (method === 'Bank') {
+          if (bank === 'BCEL') key = 'BCEL';
+          else if (bank === 'LDB') key = 'LDB';
+          else key = 'Other';
+        }
+        if (salesBalances[key] && (cur === 'LAK' || cur === 'THB' || cur === 'USD')) {
+          salesBalances[key][cur] += amt;
+        }
+        if (method === 'Cash') {
           if (cur === 'LAK') cashLAK += amt;
           else if (cur === 'THB') cashTHB += amt;
           else if (cur === 'USD') cashUSD += amt;
@@ -316,7 +328,7 @@ function renderSalesStatus(users, salesUserData, closeData, logCashbankData, sel
       }
     }
     window._lrSalesGold[name] = goldQty;
-    window._lrSalesCash[name] = { LAK: cashLAK, THB: cashTHB, USD: cashUSD };
+    window._lrSalesCash[name] = salesBalances;
 
     html += '<div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:12px;padding:16px;margin-bottom:12px;">';
     html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:' + (isOpen || shiftClosed ? '10' : '0') + 'px;">';
@@ -334,7 +346,7 @@ function renderSalesStatus(users, salesUserData, closeData, logCashbankData, sel
         html += '<div><span style="color:var(--text-secondary);">Withdraw:</span> ' + formatNumber(wdLAK) + ' LAK | ' + wdG.toFixed(2) + 'g | ' + wdCount + ' บิล</div>';
         html += '<div><span style="color:var(--text-secondary);">Buyback:</span> ' + formatNumber(bbLAK) + ' LAK | ' + bbG.toFixed(2) + 'g | ' + bbCount + ' บิล</div>';
       }
-      html += '<div><span style="color:var(--text-secondary);">เงินสด:</span> ' + formatNumber(cashLAK) + ' LAK | ' + formatNumber(cashTHB) + ' THB | ' + formatNumber(cashUSD) + ' USD</div>';
+      html += '<div><span style="color:var(--text-secondary);">เงินสด:</span> ' + formatNumber(cashLAK) + ' LAK | ' + formatCurrency(cashTHB,'THB') + ' THB | ' + formatCurrency(cashUSD,'USD') + ' USD</div>';
       html += '<div><span style="color:var(--text-secondary);">ทองเก่า:</span> ' + oldGoldG.toFixed(2) + ' g</div>';
       html += '</div>';
     }
@@ -755,17 +767,23 @@ function showLROldGoldModal(salesName) {
 
   title.textContent = 'รายละเอียด — ' + salesName;
 
-  var cashData = (window._lrSalesCash && window._lrSalesCash[salesName]) || { LAK: 0, THB: 0, USD: 0 };
+  var cashData = (window._lrSalesCash && window._lrSalesCash[salesName]) || { Cash: { LAK: 0, THB: 0, USD: 0 }, BCEL: { LAK: 0, THB: 0, USD: 0 }, LDB: { LAK: 0, THB: 0, USD: 0 }, Other: { LAK: 0, THB: 0, USD: 0 } };
   var html = '<div style="margin-bottom:16px;padding:14px;background:rgba(76,175,80,0.08);border-radius:8px;border:1px solid rgba(76,175,80,0.2);">';
   html += '<div style="font-size:13px;color:#4caf50;font-weight:700;margin-bottom:10px;">💵 สรุปเงินทั้งหมด</div>';
   html += '<table style="width:100%;border-collapse:collapse;">';
   var thC = 'background:#2d2d2d;color:#4caf50;border:1px solid rgba(76,175,80,0.3);padding:8px 12px;font-size:12px;font-weight:700;';
   html += '<thead><tr><th style="' + thC + 'text-align:left;">ประเภท</th><th style="' + thC + 'text-align:center;">LAK</th><th style="' + thC + 'text-align:center;">THB</th><th style="' + thC + 'text-align:center;">USD</th></tr></thead><tbody>';
-  html += '<tr><td style="padding:8px 12px;font-size:13px;font-weight:600;">💵 Cash</td>';
-  html += '<td style="padding:8px 12px;text-align:center;font-size:13px;color:#4caf50;font-weight:600;">' + formatNumber(cashData.LAK) + '</td>';
-  html += '<td style="padding:8px 12px;text-align:center;font-size:13px;color:#2196f3;font-weight:600;">' + formatCurrency(cashData.THB, 'THB') + '</td>';
-  html += '<td style="padding:8px 12px;text-align:center;font-size:13px;color:#ff9800;font-weight:600;">' + formatCurrency(cashData.USD, 'USD') + '</td>';
-  html += '</tr></tbody></table></div>';
+  var methods = [{key:'Cash',icon:'💵'},{key:'BCEL',icon:'🏦'},{key:'LDB',icon:'🏦'},{key:'Other',icon:'🏦'}];
+  methods.forEach(function(m) {
+    var d = cashData[m.key] || { LAK: 0, THB: 0, USD: 0 };
+    html += '<tr style="border-top:1px solid var(--border-color);">';
+    html += '<td style="padding:8px 12px;font-size:13px;font-weight:600;">' + m.icon + ' ' + m.key + '</td>';
+    html += '<td style="padding:8px 12px;text-align:center;font-size:13px;color:#4caf50;font-weight:600;">' + formatNumber(d.LAK) + '</td>';
+    html += '<td style="padding:8px 12px;text-align:center;font-size:13px;color:#2196f3;font-weight:600;">' + formatCurrency(d.THB, 'THB') + '</td>';
+    html += '<td style="padding:8px 12px;text-align:center;font-size:13px;color:#ff9800;font-weight:600;">' + formatCurrency(d.USD, 'USD') + '</td>';
+    html += '</tr>';
+  });
+  html += '</tbody></table></div>';
 
   var goldQty = (window._lrSalesGold && window._lrSalesGold[salesName]) || {};
   var products = ['G01','G02','G03','G04','G05','G06','G07'];
@@ -816,10 +834,10 @@ async function loadSalesInfoBar() {
 
     document.getElementById('siSellPrice').textContent = formatNumber(sellPrice);
     document.getElementById('siBuybackPrice').textContent = formatNumber(buybackPrice);
-    document.getElementById('siThbSell').textContent = formatNumber(currentExchangeRates.THB_Sell || 0);
-    document.getElementById('siUsdSell').textContent = formatNumber(currentExchangeRates.USD_Sell || 0);
-    document.getElementById('siThbBuy').textContent = formatNumber(currentExchangeRates.THB_Buy || 0);
-    document.getElementById('siUsdBuy').textContent = formatNumber(currentExchangeRates.USD_Buy || 0);
+    document.getElementById('siThbSell').textContent = formatCurrency(currentExchangeRates.THB_Sell || 0,'THB');
+    document.getElementById('siUsdSell').textContent = formatCurrency(currentExchangeRates.USD_Sell || 0,'USD');
+    document.getElementById('siThbBuy').textContent = formatCurrency(currentExchangeRates.THB_Buy || 0,'THB');
+    document.getElementById('siUsdBuy').textContent = formatCurrency(currentExchangeRates.USD_Buy || 0,'USD');
 
     if (spinner) spinner.style.display = 'none';
     if (content) content.style.display = 'block';

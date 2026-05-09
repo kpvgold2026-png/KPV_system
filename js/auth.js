@@ -190,10 +190,7 @@ async function login() {
 
   if (USERS[username] && USERS[username].password === password) {
     currentUser = { username: username, password: USERS[username].password, role: USERS[username].role, nickname: USERS[username].nickname, sheetRole: USERS[username].sheetRole };
-    var sessionToken = Date.now().toString(36) + Math.random().toString(36).substr(2, 8);
-    currentUser.sessionToken = sessionToken;
     localStorage.setItem('currentUser', JSON.stringify(currentUser));
-    await callAppsScript('SET_SESSION', { username: username, token: sessionToken });
 
     await enterApp();
 

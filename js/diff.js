@@ -51,7 +51,7 @@ function renderDiffTable(data, startDate, endDate) {
       '<td>' + formatNumber(Math.round(parseFloat(row.switch_fee) || 0)) + '</td>' +
       '<td>' + formatNumber(Math.round(parseFloat(row.premium) || 0)) + '</td>' +
       '<td>' + formatNumber(Math.round(parseFloat(row.cost_diff) || 0)) + '</td>' +
-      '<td>' + formatNumber(Math.round(parseFloat(row.fee) || 0)) + '</td>' +
+      '<td>' + formatNumber(Math.round(parseFloat(row.cost_old_gold) || 0)) + '</td>' +
       '<td style="color:' + diffColor + ';font-weight:bold;">' + formatNumber(Math.round(diff)) + '</td>' +
     '</tr>';
   }).join('');

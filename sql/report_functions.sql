@@ -232,7 +232,7 @@ BEGIN
     'switch_fee', d.switch_fee,
     'premium', d.premium,
     'cost_diff', d.cost_diff,
-    'fee', d.fee,
+    'cost_old_gold', d.cost_old_gold,
     'diff', d.diff,
     'date', d.date
   ) ORDER BY d.date DESC), '[]'::jsonb)

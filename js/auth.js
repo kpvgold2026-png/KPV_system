@@ -110,107 +110,55 @@ function stopSessionCheck() {
   stopRealtimeSessionWatch();
 }
 
-var _realtimeWs = null;
-var _realtimeHeartbeat = null;
-var _realtimeRef = 0;
+var _kickChannel = null;
 
 function startRealtimeSessionWatch() {
   stopRealtimeSessionWatch();
-  if (!currentUser || !currentUser.token) return;
-
-  var wsUrl = CONFIG.SUPABASE_URL.replace(/^https?:/, 'wss:') + '/realtime/v1/websocket?apikey=' + encodeURIComponent(CONFIG.SUPABASE_ANON_KEY) + '&vsn=1.0.0';
-
+  if (!currentUser) return;
   try {
-    _realtimeWs = new WebSocket(wsUrl);
-  } catch(e) {
-    return;
-  }
-
-  var topic = 'realtime:session:' + currentUser.id;
-
-  _realtimeWs.onopen = function() {
-    _realtimeWs.send(JSON.stringify({
-      topic: topic,
-      event: 'phx_join',
-      payload: {
-        config: {
-          broadcast: { self: false, ack: false },
-          presence: { key: '' }
-        },
-        access_token: currentUser.token
-      },
-      ref: String(++_realtimeRef)
-    }));
-
-    _realtimeHeartbeat = setInterval(function() {
-      if (_realtimeWs && _realtimeWs.readyState === 1) {
-        _realtimeWs.send(JSON.stringify({
-          topic: 'phoenix',
-          event: 'heartbeat',
-          payload: {},
-          ref: String(++_realtimeRef)
-        }));
+    _kickChannel = sb.channel('session:' + currentUser.id, {
+      config: { broadcast: { self: false } }
+    });
+    _kickChannel.on('broadcast', { event: 'kick' }, function(msg) {
+      var p = (msg && msg.payload) || {};
+      var newSession = p.session;
+      if (newSession && newSession !== currentUser.sessionId) {
+        stopInactivityWatch();
+        if (typeof stopNotificationPolling === 'function') stopNotificationPolling();
+        alert('บัญชีนี้ถูกเข้าสู่ระบบที่อื่น คุณจะถูกออกจากระบบ');
+        currentUser = null;
+        localStorage.removeItem('currentUser');
+        localStorage.removeItem('lastActivity');
+        sb.auth.signOut().finally(function() { window.location.reload(); });
       }
-    }, 25000);
-  };
-
-  _realtimeWs.onmessage = function(event) {
-    try {
-      var msg = JSON.parse(event.data);
-      if (msg.event === 'broadcast' && msg.payload && msg.payload.event === 'kick') {
-        var newSession = msg.payload.payload && msg.payload.payload.session;
-        if (newSession && newSession !== currentUser.sessionId) {
-          stopInactivityWatch();
-          if (typeof stopNotificationPolling === 'function') stopNotificationPolling();
-          alert('บัญชีนี้ถูกเข้าสู่ระบบที่อื่น คุณจะถูกออกจากระบบ');
-          currentUser = null;
-          localStorage.removeItem('currentUser');
-          localStorage.removeItem('jwt');
-          localStorage.removeItem('lastActivity');
-          window.location.reload();
-        }
-      }
-    } catch(e) {}
-  };
-
-  _realtimeWs.onerror = function() {};
-  _realtimeWs.onclose = function() {
-    if (_realtimeHeartbeat) { clearInterval(_realtimeHeartbeat); _realtimeHeartbeat = null; }
-    _realtimeWs = null;
-    if (currentUser) {
-      setTimeout(function() {
-        if (currentUser) startRealtimeSessionWatch();
-      }, 5000);
-    }
-  };
+    });
+    _kickChannel.subscribe();
+  } catch(e) {}
 }
 
 async function broadcastKickOthers(sessionId) {
+  if (!currentUser) return;
   try {
-    await fetch(CONFIG.SUPABASE_URL + '/realtime/v1/api/broadcast', {
-      method: 'POST',
-      headers: {
-        'apikey': CONFIG.SUPABASE_ANON_KEY,
-        'Authorization': 'Bearer ' + currentUser.token,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        messages: [{
-          topic: 'session:' + currentUser.id,
-          event: 'kick',
-          payload: { session: sessionId },
-          private: false
-        }]
-      })
+    var ch = sb.channel('session:' + currentUser.id);
+    await new Promise(function(resolve, reject) {
+      var t = setTimeout(function() { reject(new Error('subscribe timeout')); }, 3000);
+      ch.subscribe(function(status) {
+        if (status === 'SUBSCRIBED') { clearTimeout(t); resolve(); }
+      });
     });
+    await ch.send({
+      type: 'broadcast',
+      event: 'kick',
+      payload: { session: sessionId }
+    });
+    setTimeout(function() { try { sb.removeChannel(ch); } catch(e) {} }, 500);
   } catch(e) {}
 }
 
 function stopRealtimeSessionWatch() {
-  if (_realtimeHeartbeat) { clearInterval(_realtimeHeartbeat); _realtimeHeartbeat = null; }
-  if (_realtimeWs) {
-    try { _realtimeWs.close(); } catch(e) {}
-    _realtimeWs = null;
+  if (_kickChannel) {
+    try { sb.removeChannel(_kickChannel); } catch(e) {}
+    _kickChannel = null;
   }
 }
 
@@ -245,7 +193,7 @@ async function fetchUsersFromDB() {
 }
 
 async function checkSession() {
-  if (!currentUser || !currentUser.token) return;
+  if (!currentUser) return;
   try {
     var result = await dbRpc('get_my_session', {});
     var stored = result && result.session_token ? result.session_token : null;
@@ -255,9 +203,8 @@ async function checkSession() {
       alert('บัญชีนี้ถูกเข้าสู่ระบบที่อื่น คุณจะถูกออกจากระบบ');
       currentUser = null;
       localStorage.removeItem('currentUser');
-      localStorage.removeItem('jwt');
       localStorage.removeItem('lastActivity');
-      window.location.reload();
+      sb.auth.signOut().finally(function() { window.location.reload(); });
     }
   } catch(e) {}
 }
@@ -326,61 +273,52 @@ async function login() {
 
   showLoading();
   try {
-    var result = await dbRpc('login_user', { p_username: username, p_password: password });
+    var email = username.indexOf('@') !== -1 ? username : username.toLowerCase() + '@kpv.local';
+    var authResp = await sb.auth.signInWithPassword({ email: email, password: password });
 
-    var user = Array.isArray(result) ? result[0] : result;
-    if (!user) {
+    if (authResp.error || !authResp.data || !authResp.data.user) {
       hideLoading();
-      alert('Invalid username or password (no response)');
+      var msg = authResp.error ? authResp.error.message : 'Invalid response from server';
+      alert('Login failed: ' + msg);
       return;
     }
 
-    if (user.success === false) {
-      hideLoading();
-      alert('Login failed: ' + (user.message || 'Unknown'));
-      return;
-    }
+    _cachedSession = authResp.data.session;
+    var authUser = authResp.data.user;
 
-    if (!user.id) {
-      hideLoading();
-      alert('Invalid response from server');
-      return;
-    }
-
-    var nickname = user.nickname || user.role || user.username || 'User';
-    var dbRole = user.role || 'Sales';
-
-    var sessionId = _b64urlEncode(crypto.getRandomValues(new Uint8Array(16)));
-    var role = mapRole(dbRole);
-    var token = await jwtSign({
-      user_id: user.id,
-      role: 'authenticated',
-      user_role: dbRole,
-      username: user.username,
-      session: sessionId
+    var userRows = await dbSelect('users', {
+      select: 'id,role,nickname,username,is_active',
+      filters: { id: 'eq.' + authUser.id },
+      useCache: false
     });
 
+    if (!userRows || userRows.length === 0 || !userRows[0].is_active) {
+      await sb.auth.signOut();
+      _cachedSession = null;
+      hideLoading();
+      alert('Login failed: User profile not found or inactive');
+      return;
+    }
+
+    var u = userRows[0];
+    var dbRole = u.role || 'Sales';
+    var role = mapRole(dbRole);
+    var sessionId = crypto.randomUUID();
+
     currentUser = {
-      id: user.id,
-      username: user.username,
+      id: u.id,
+      username: u.username,
       role: role,
-      nickname: nickname,
+      nickname: u.nickname || dbRole,
       dbRole: dbRole,
-      token: token,
       sessionId: sessionId
     };
 
-    localStorage.setItem('jwt', token);
     localStorage.setItem('currentUser', JSON.stringify(currentUser));
     localStorage.setItem('lastActivity', Date.now().toString());
 
-    try {
-      await broadcastKickOthers(sessionId);
-    } catch(e) {}
-
-    try {
-      await dbRpc('set_my_session', { p_session: sessionId });
-    } catch(e) {}
+    try { await broadcastKickOthers(sessionId); } catch(e) {}
+    try { await dbRpc('set_my_session', { p_session: sessionId }); } catch(e) {}
 
     hideLoading();
     await enterApp();
@@ -476,21 +414,21 @@ function logout() {
   currentUser = null;
 
   localStorage.removeItem('currentUser');
-  localStorage.removeItem('jwt');
   localStorage.removeItem('lastActivity');
+  localStorage.removeItem('jwt');
 
-  document.getElementById('loginScreen').classList.add('active');
-  document.getElementById('mainHeader').style.display = 'none';
-  document.getElementById('mainContainer').style.display = 'none';
-  var lu = document.getElementById('loginUsername'); if (lu) lu.value = '';
-  var lp = document.getElementById('loginPassword'); if (lp) lp.value = '';
-  document.body.className = '';
+  var cleanup = function() {
+    document.getElementById('loginScreen').classList.add('active');
+    document.getElementById('mainHeader').style.display = 'none';
+    document.getElementById('mainContainer').style.display = 'none';
+    var lu = document.getElementById('loginUsername'); if (lu) lu.value = '';
+    var lp = document.getElementById('loginPassword'); if (lp) lp.value = '';
+    document.body.className = '';
+    localStorage.setItem('cacheBuster', Date.now());
+    setTimeout(function() { window.location.reload(); }, 100);
+  };
 
-  localStorage.setItem('cacheBuster', Date.now());
-
-  setTimeout(function() {
-    window.location.reload();
-  }, 100);
+  sb.auth.signOut().then(cleanup).catch(cleanup);
 }
 
 function isManager() {
@@ -498,24 +436,25 @@ function isManager() {
 }
 
 async function restoreSession() {
-  var token = localStorage.getItem('jwt');
-  var saved = localStorage.getItem('currentUser');
-  if (!token || !saved) return false;
   try {
-    var payload = await jwtVerify(token);
-    if (!payload) {
-      localStorage.removeItem('jwt');
-      localStorage.removeItem('currentUser');
-      return false;
-    }
+    var s = await sb.auth.getSession();
+    _cachedSession = s.data.session;
+  } catch(e) { _cachedSession = null; }
+
+  if (!_cachedSession) return false;
+
+  var saved = localStorage.getItem('currentUser');
+  if (!saved) return false;
+
+  try {
     if (isSessionExpired()) {
-      localStorage.removeItem('jwt');
+      await sb.auth.signOut();
+      _cachedSession = null;
       localStorage.removeItem('currentUser');
       localStorage.removeItem('lastActivity');
       return false;
     }
     currentUser = JSON.parse(saved);
-    currentUser.token = token;
     return true;
   } catch(e) {
     return false;
@@ -530,8 +469,9 @@ document.addEventListener('DOMContentLoaded', async function() {
     var stored = result && result.session_token ? result.session_token : null;
     if (stored && currentUser.sessionId && stored !== currentUser.sessionId) {
       localStorage.removeItem('currentUser');
-      localStorage.removeItem('jwt');
       localStorage.removeItem('lastActivity');
+      await sb.auth.signOut();
+      _cachedSession = null;
       currentUser = null;
       return;
     }

@@ -1,9 +1,23 @@
 const CONFIG = {
   SUPABASE_URL: 'https://sypuplecctmdrjpdmkzc.supabase.co',
   SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN5cHVwbGVjY3RtZHJqcGRta3pjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ1MTQzNjgsImV4cCI6MjA5MDA5MDM2OH0._VLh_p-Py6wloYt653ZjMvbXSq2s2I1ce3TiyTQabu0',
-  JWT_SECRET: 'n5oyDRgC7IZeYi/tibZA6wu7QPJcLvn3tgSfNagRrx97Q+UZKaPqgpEmbSxcTQNrDRTwDZiRSO079lOo4kkQEw==',
   INACTIVITY_TIMEOUT_MINUTES: 60
 };
+
+const sb = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY, {
+  auth: {
+    autoRefreshToken: true,
+    persistSession: true,
+    detectSessionInUrl: false,
+    storage: window.localStorage,
+    storageKey: 'kpv-auth'
+  }
+});
+
+var _cachedSession = null;
+sb.auth.onAuthStateChange(function(_event, session) {
+  _cachedSession = session;
+});
 
 let USERS = {};
 

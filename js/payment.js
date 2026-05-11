@@ -26,13 +26,13 @@ function openMultiPaymentModal(type, id, total, phone, details) {
 
 function addCashPayment() {
   const id = Date.now();
-  paymentItems.cash.push({ id, currency: 'LAK', amount: 0, rate: 1 });
+  paymentItems.cash.push({ id, method: 'CASH', currency: 'LAK', amount: 0, rate: 1 });
   renderCashPayments();
 }
 
 function addBankPayment() {
   const id = Date.now();
-  paymentItems.bank.push({ id, bank: 'BCEL', currency: 'LAK', amount: 0, rate: 1, fee: 0 });
+  paymentItems.bank.push({ id, method: 'BANK', bank: 'BCEL', currency: 'LAK', amount: 0, rate: 1, fee: 0 });
   renderBankPayments();
 }
 

@@ -1,11 +1,17 @@
 var _apiCache = {};
 var _apiCacheTTL = 60000;
 
-function _apiHeaders() {
-  var token = (currentUser && currentUser.token) || localStorage.getItem('jwt') || '';
+async function _apiHeaders() {
+  if (_cachedSession === null) {
+    try {
+      var s = await sb.auth.getSession();
+      _cachedSession = s.data.session;
+    } catch(e) {}
+  }
+  var token = (_cachedSession && _cachedSession.access_token) || CONFIG.SUPABASE_ANON_KEY;
   return {
     'apikey': CONFIG.SUPABASE_ANON_KEY,
-    'Authorization': 'Bearer ' + (token || CONFIG.SUPABASE_ANON_KEY),
+    'Authorization': 'Bearer ' + token,
     'Content-Type': 'application/json',
     'Accept': 'application/json'
   };
@@ -29,7 +35,7 @@ function invalidateCache(prefix) {
 async function _apiRequest(method, path, options) {
   options = options || {};
   var url = _apiUrl(path);
-  var headers = _apiHeaders();
+  var headers = await _apiHeaders();
   if (options.headers) Object.assign(headers, options.headers);
 
   var key = _cacheKey(method, path);

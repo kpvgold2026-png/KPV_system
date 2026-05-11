@@ -268,3 +268,4 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 GRANT EXECUTE ON FUNCTION mark_notifications_read() TO authenticated;
+

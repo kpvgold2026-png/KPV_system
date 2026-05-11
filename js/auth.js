@@ -1,6 +1,6 @@
-function mapRole(sheetRole) {
-  if (sheetRole === 'Sales') return 'User';
-  return sheetRole;
+function mapRole(dbRole) {
+  if (dbRole === 'Sales') return 'User';
+  return dbRole;
 }
 
 function setupManagerUI() {
@@ -67,14 +67,16 @@ function setupManagerUI() {
 }
 
 var _inactivityTimer = null;
-var INACTIVITY_LIMIT = 60 * 60 * 1000;
+var INACTIVITY_LIMIT = (CONFIG.INACTIVITY_TIMEOUT_MINUTES || 60) * 60 * 1000;
 
 function resetInactivityTimer() {
   localStorage.setItem('lastActivity', Date.now());
   if (_inactivityTimer) clearTimeout(_inactivityTimer);
   _inactivityTimer = setTimeout(function() {
     if (currentUser) {
-      alert('⏰ ไม่มีการใช้งาน 1 ชั่วโมง — ออกจากระบบอัตโนมัติ');
+      var mins = CONFIG.INACTIVITY_TIMEOUT_MINUTES || 60;
+      var msg = mins >= 60 ? (mins / 60) + ' ชั่วโมง' : mins + ' นาที';
+      alert('⏰ ไม่มีการใช้งาน ' + msg + ' — ออกจากระบบอัตโนมัติ');
       logout();
     }
   }, INACTIVITY_LIMIT);
@@ -99,26 +101,53 @@ function isSessionExpired() {
   return (Date.now() - last) > INACTIVITY_LIMIT;
 }
 
-async function fetchUsersFromSheet() {
+async function fetchUsersFromDB() {
   try {
-    var data = await fetchSheetData('_database!A33:D100');
+    var rows = await dbSelect('users', {
+      select: 'id,role,nickname,username,is_active',
+      filters: { is_active: 'eq.true' },
+      useCache: false
+    });
     USERS = {};
-    if (data.length > 1) {
-      for (var i = 1; i < data.length; i++) {
-        var role = String(data[i][0] || '').trim();
-        var name = String(data[i][1] || '').trim();
-        var username = String(data[i][2] || '').trim();
-        var pass = String(data[i][3] || '').trim();
-        if (username && pass && role) {
-          USERS[username] = { password: pass, role: mapRole(role), nickname: name || role, sheetRole: role };
-        }
-      }
+    if (rows) {
+      rows.forEach(function(u) {
+        USERS[u.username] = {
+          id: u.id,
+          role: mapRole(u.role),
+          nickname: u.nickname || u.role,
+          dbRole: u.role
+        };
+      });
     }
     return true;
   } catch(e) {
     console.error('Error fetching users:', e);
     return false;
   }
+}
+
+async function checkSession() {
+  if (!currentUser || !currentUser.token) return;
+  try {
+    var payload = await jwtVerify(currentUser.token);
+    if (!payload) {
+      alert('Session หมดอายุ กรุณาเข้าสู่ระบบใหม่');
+      logout();
+      return;
+    }
+    var rows = await dbSelect('users', {
+      select: 'id,session_token',
+      filters: { id: 'eq.' + currentUser.id },
+      useCache: false
+    });
+    if (rows && rows.length > 0) {
+      var stored = rows[0].session_token;
+      if (stored && stored !== currentUser.sessionId) {
+        alert('บัญชีนี้ถูกเข้าสู่ระบบที่อื่น คุณจะถูกออกจากระบบ');
+        logout();
+      }
+    }
+  } catch(e) {}
 }
 
 function applyRoleUI() {
@@ -167,10 +196,7 @@ async function enterApp() {
   applyRoleUI();
 
   await batchFetchAll();
-  await fetchExchangeRates();
-  await fetchCurrentPricing();
   if (typeof checkAndResumePendingClose === 'function') checkAndResumePendingClose();
-  callAppsScript('INIT_STOCK').catch(function(){});
   startNotificationPolling();
   startInactivityWatch();
 }
@@ -185,13 +211,43 @@ async function login() {
   }
 
   showLoading();
-  await fetchUsersFromSheet();
-  hideLoading();
+  try {
+    var result = await dbRpc('login_user', { p_username: username, p_password: password });
+    var user = Array.isArray(result) ? result[0] : result;
 
-  if (USERS[username] && USERS[username].password === password) {
-    currentUser = { username: username, password: USERS[username].password, role: USERS[username].role, nickname: USERS[username].nickname, sheetRole: USERS[username].sheetRole };
+    if (!user || !user.id) {
+      hideLoading();
+      alert('Invalid username or password');
+      return;
+    }
+
+    var sessionId = _b64urlEncode(crypto.getRandomValues(new Uint8Array(16)));
+    var role = mapRole(user.role);
+    var token = await jwtSign({
+      user_id: user.id,
+      role: user.role,
+      username: user.username,
+      session: sessionId
+    });
+
+    currentUser = {
+      id: user.id,
+      username: user.username,
+      role: role,
+      nickname: user.nickname || user.role,
+      dbRole: user.role,
+      token: token,
+      sessionId: sessionId
+    };
+
+    localStorage.setItem('jwt', token);
     localStorage.setItem('currentUser', JSON.stringify(currentUser));
 
+    try {
+      await dbUpdate('users', { id: 'eq.' + user.id }, { session_token: sessionId });
+    } catch(e) {}
+
+    hideLoading();
     await enterApp();
 
     if (currentUser.role === 'User') {
@@ -200,38 +256,47 @@ async function login() {
     } else {
       loadDashboard();
     }
-  } else {
-    alert('Invalid username or password');
+  } catch(e) {
+    hideLoading();
+    console.error('Login error:', e);
+    alert('Login failed: ' + (e.message || 'Unknown error'));
   }
 }
 
 async function checkOpenShift() {
   if (!currentUser || currentUser.role !== 'User') return;
   try {
-    var closeData = await fetchSheetData('Close!A:I');
-    if (closeData && closeData.length > 1) {
-      var today = getTodayLocalStr();
-      for (var ci = 1; ci < closeData.length; ci++) {
-        var closeUser = String(closeData[ci][1] || '').trim();
-        var status = String(closeData[ci][8] || '').trim();
-        if (closeUser !== currentUser.nickname) continue;
+    var today = getTodayLocalStr();
+    var closes = await dbSelect('closes', {
+      select: 'id,date,status',
+      filters: { user_id: 'eq.' + currentUser.id },
+      order: 'date.desc',
+      limit: 5,
+      useCache: false
+    });
+    if (closes && closes.length > 0) {
+      for (var ci = 0; ci < closes.length; ci++) {
+        var status = String(closes[ci].status || '').trim();
         if (status !== 'PENDING' && status !== 'APPROVED' && status !== 'COMPLETED') continue;
-        var rawDate = closeData[ci][2];
-        var closeDate = '';
-        try {
-          var d = new Date(rawDate);
-          var local = new Date(d.getTime() + 7 * 60 * 60000);
-          closeDate = local.toISOString().split('T')[0];
-        } catch(e2) {}
-        if (closeDate === today) {
-          return;
-        }
+        var d = new Date(closes[ci].date);
+        var local = new Date(d.getTime() + 7 * 60 * 60000);
+        var closeDate = local.toISOString().split('T')[0];
+        if (closeDate === today) return;
       }
     }
 
-    var sheetName = currentUser.nickname;
-    var data = await fetchSheetData(sheetName + '!A2:A2');
-    if (!data || data.length === 0 || !data[0] || !data[0][0] || String(data[0][0]).trim() === '') {
+    var openShifts = await dbSelect('user_cashbook', {
+      select: 'id,date',
+      filters: {
+        user_id: 'eq.' + currentUser.id,
+        type: 'eq.OPEN_SHIFT',
+        date: 'gte.' + today + 'T00:00:00'
+      },
+      limit: 1,
+      useCache: false
+    });
+
+    if (!openShifts || openShifts.length === 0) {
       document.getElementById('openShiftAmount').value = '';
       _shiftCompleted = false;
       openModal('openShiftModal');
@@ -252,56 +317,38 @@ async function confirmOpenShift() {
   if (!confirm('ยืนยันเปิดกะด้วยเงิน ' + formatNumber(amount) + ' LAK ?')) return;
   try {
     showLoading();
-    var result = await callAppsScript('OPEN_SHIFT', {
-      user: currentUser.nickname,
-      amount: amount
+    var result = await dbRpc('open_shift', {
+      p_user_id: currentUser.id,
+      p_amount: amount
     });
-    if (result.success) {
+    hideLoading();
+    if (result && (result.success || (Array.isArray(result) && result[0] && result[0].success))) {
       showToast('✅ เปิดกะสำเร็จ');
-      _shiftCompleted = true;
       closeModal('openShiftModal');
+      _shiftCompleted = true;
     } else {
-      alert('❌ ' + result.message);
+      alert('เปิดกะไม่สำเร็จ');
     }
-    hideLoading();
   } catch(e) {
-    alert('❌ ' + e.message);
     hideLoading();
+    alert('เปิดกะไม่สำเร็จ: ' + e.message);
   }
-}
-
-async function checkSession() {
-  if (!currentUser || !currentUser.sessionToken) return;
-  try {
-    var dbData = await fetchSheetData('_database!A1:M100');
-    if (dbData && dbData.length > 33) {
-      for (var i = 33; i < dbData.length; i++) {
-        if (String(dbData[i][2] || '').trim() === currentUser.username) {
-          var storedToken = String(dbData[i][4] || '').trim();
-          if (storedToken && storedToken !== currentUser.sessionToken) {
-            alert('บัญชีนี้ถูกเข้าสู่ระบบที่อื่น คุณจะถูกออกจากระบบ');
-            logout();
-          }
-          return;
-        }
-      }
-    }
-  } catch(e) {}
 }
 
 function logout() {
   stopInactivityWatch();
-  stopNotificationPolling();
+  if (typeof stopNotificationPolling === 'function') stopNotificationPolling();
   currentUser = null;
 
   localStorage.removeItem('currentUser');
+  localStorage.removeItem('jwt');
   localStorage.removeItem('lastActivity');
 
   document.getElementById('loginScreen').classList.add('active');
   document.getElementById('mainHeader').style.display = 'none';
   document.getElementById('mainContainer').style.display = 'none';
-  document.getElementById('loginUsername').value = '';
-  document.getElementById('loginPassword').value = '';
+  var lu = document.getElementById('loginUsername'); if (lu) lu.value = '';
+  var lp = document.getElementById('loginPassword'); if (lp) lp.value = '';
   document.body.className = '';
 
   localStorage.setItem('cacheBuster', Date.now());
@@ -311,30 +358,30 @@ function logout() {
   }, 100);
 }
 
-(async function checkSession() {
-  var savedUser = localStorage.getItem('currentUser');
-  if (!savedUser) return;
+function isManager() {
+  return currentUser && (currentUser.role === 'Manager' || currentUser.role === 'Admin');
+}
 
-  if (isSessionExpired()) {
-    localStorage.removeItem('currentUser');
-    localStorage.removeItem('lastActivity');
-    return;
-  }
-
+async function restoreSession() {
+  var token = localStorage.getItem('jwt');
+  var saved = localStorage.getItem('currentUser');
+  if (!token || !saved) return false;
   try {
-    currentUser = JSON.parse(savedUser);
-
-    await enterApp();
-
-    if (currentUser.role === 'User') {
-      showSection('sell');
-      checkOpenShift();
-    } else {
-      loadDashboard();
+    var payload = await jwtVerify(token);
+    if (!payload) {
+      localStorage.removeItem('jwt');
+      localStorage.removeItem('currentUser');
+      return false;
     }
-  } catch (error) {
-    console.error('Session restore error:', error);
-    localStorage.removeItem('currentUser');
-    localStorage.removeItem('lastActivity');
+    if (isSessionExpired()) {
+      localStorage.removeItem('jwt');
+      localStorage.removeItem('currentUser');
+      return false;
+    }
+    currentUser = JSON.parse(saved);
+    currentUser.token = token;
+    return true;
+  } catch(e) {
+    return false;
   }
-})();
+}

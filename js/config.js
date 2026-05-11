@@ -1,7 +1,8 @@
 const CONFIG = {
-  API_KEY: 'AIzaSyCE2v-OIQa2i1rylCPxiCPuQwH2DBnU5ss',
-  SHEET_ID: '1D4pPVKtiYCPiKGHXjwgkF_gpuGTnnWN0UVXIOGpO6rk',
-  SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbwvZi5d6CTKtmtUQQfhB674_W6WYaqIkCXzju_cWT4BpndKcthpkm1anQGHdE0V8g_t/exec'
+  SUPABASE_URL: 'https://sypuplecctmdrjpdmkzc.supabase.co',
+  SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN5cHVwbGVjY3RtZHJqcGRta3pjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ1MTQzNjgsImV4cCI6MjA5MDA5MDM2OH0._VLh_p-Py6wloYt653ZjMvbXSq2s2I1ce3TiyTQabu0',
+  JWT_SECRET: 'n5oyDRgC7IZeYi/tibZA6wu7QPJcLvn3tgSfNagRrx97Q+UZKaPqgpEmbSxcTQNrDRTwDZiRSO079lOo4kkQEw==',
+  INACTIVITY_TIMEOUT_MINUTES: 60
 };
 
 let USERS = {};
@@ -17,11 +18,11 @@ const FIXED_PRODUCTS = [
 ];
 
 const GOLD_WEIGHTS = {
-  'G01': 10, 
-  'G02': 5, 
-  'G03': 2, 
+  'G01': 10,
+  'G02': 5,
+  'G03': 2,
   'G04': 1,
-  'G05': 0.5, 
+  'G05': 0.5,
   'G06': 0.25,
   'G07': 1/15
 };

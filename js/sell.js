@@ -2,76 +2,107 @@ async function loadSells() {
   try {
     var tbody = document.getElementById('sellTable');
     tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:30px;"><div style="display:inline-block;width:24px;height:24px;border:3px solid var(--border-color);border-top:3px solid var(--gold-primary);border-radius:50%;animation:spin 0.8s linear infinite;"></div></td></tr>';
-    const data = await fetchSheetData('Sells!A:N');
-    
-    let filteredData = data.slice(1);
-    
-    if (currentUser.role === 'User' || isManager()) {
-      if (sellDateFrom || sellDateTo) {
-        filteredData = filterByDateRange(filteredData, 9, 11, sellDateFrom, sellDateTo);
-      } else {
-        filteredData = filterTodayData(filteredData, 9, 11);
-      }
+
+    var filters = { type: 'eq.SELL' };
+    var order = sellSortOrder === 'asc' ? 'date.asc' : 'date.desc';
+
+    if (currentUser.role === 'User') {
+      filters.sale_user_id = 'eq.' + currentUser.id;
     }
-    
-    if (sellSortOrder === 'asc') {
-      filteredData.sort((a, b) => new Date(a[9]) - new Date(b[9]));
-    } else {
-      filteredData.sort((a, b) => new Date(b[9]) - new Date(a[9]));
+
+    var dateFrom = sellDateFrom;
+    var dateTo = sellDateTo;
+    if (!dateFrom && !dateTo && (currentUser.role === 'User' || isManager())) {
+      var today = getTodayLocalStr();
+      dateFrom = today;
+      dateTo = today;
     }
-    
-    if (filteredData.length === 0) {
+    if (dateFrom) filters['date'] = 'gte.' + dateFrom + 'T00:00:00';
+    if (dateTo) {
+      var existing = filters['date'];
+      filters['and'] = '(date.gte.' + dateFrom + 'T00:00:00,date.lte.' + dateTo + 'T23:59:59)';
+      delete filters['date'];
+    }
+
+    var rows = await dbSelect('transactions', {
+      select: '*,items:transaction_items(product_id,qty,item_role),sale:users!sale_user_id(nickname)',
+      filters: filters,
+      order: order,
+      useCache: false
+    });
+
+    var data = (rows || []).map(function(r) {
+      var newItems = (r.items || []).filter(function(i) { return i.item_role === 'NEW'; })
+        .map(function(i) { return { productId: i.product_id, qty: i.qty }; });
+      return Object.assign({}, r, {
+        _items: newItems,
+        _itemsJson: JSON.stringify(newItems),
+        _saleName: r.sale ? r.sale.nickname : ''
+      });
+    });
+
+    if (data.length === 0) {
       tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 40px;">No records</td></tr>';
-    } else {
-      tbody.innerHTML = filteredData.map(row => {
-        const items = formatItemsForTable(row[2]);
-        const premium = calculatePremiumFromItems(row[2]);
-        const saleName = row[11];
-        const status = row[10];
-        
-        let actions = '';
-        
-        if (status === 'PENDING') {
-          if (isManager()) {
-            actions = `<button class="btn-action" onclick="reviewSell('${row[0]}')">Review</button>`;
-          } else {
-            actions = '<span style="color: var(--text-secondary);">Waiting for review</span>';
-          }
-        } else if (status === 'READY') {
-          if (currentUser.role === 'User') {
-            actions = `<button class="btn-action" onclick="openSellPayment('${row[0]}')">Confirm</button>`;
-          } else {
-            actions = '<span style="color: var(--text-secondary);">Waiting for confirmation</span>';
-          }
-        } else {
-          var paid = parseFloat(row[5]) || 0;
-          var changeLak = parseFloat(row[8]) || 0;
-          var payInfo = paid > 0 ? formatNumber(paid) + ' ' + (row[6] || 'LAK') : '-';
-          var detail = encodeURIComponent(JSON.stringify([['Transaction ID', row[0]], ['BILL ID', row[13] || '-'], ['Phone', row[1]], ['Items', formatItemsForTable(row[2])], ['Total', formatNumber(row[3]) + ' LAK'], ['Customer Paid', payInfo], ['Change', changeLak > 0 ? formatNumber(changeLak) + ' LAK' : '-'], ['Date', formatDateTime(row[9])], ['Status', status], ['Sale', row[11]]]));
-          actions = '<button class="btn-action" onclick="viewTransactionDetail(\'Sell\',\'' + detail + '\')" style="background:#555;">👁 View</button>';
-        }
-        
-        return `
-          <tr>
-            <td>${row[0]}</td>
-            <td>${row[13] || '-'}</td>
-            <td style="font-size:11px;white-space:nowrap;">${row[9] || ''}</td>
-            <td>${row[1]}</td>
-            <td>${items}</td>
-            <td>${formatNumber(premium)}</td>
-            <td>${formatNumber(row[3])}</td>
-            <td><span class="status-badge status-${status.toLowerCase()}">${status}</span></td>
-            <td>${saleName}</td>
-            <td>${actions}</td>
-          </tr>
-        `;
-      }).join('');
+      return;
     }
+
+    tbody.innerHTML = data.map(function(row) {
+      var items = formatItemsForTable(row._itemsJson);
+      var premium = parseFloat(row.premium) || calculatePremiumFromItems(row._itemsJson);
+      var saleName = row._saleName;
+      var status = row.status;
+      var actions = '';
+
+      if (status === 'PENDING') {
+        if (isManager()) {
+          actions = '<button class="btn-action" onclick="reviewSell(\'' + row.id + '\')">Review</button>';
+        } else {
+          actions = '<span style="color: var(--text-secondary);">Waiting for review</span>';
+        }
+      } else if (status === 'APPROVED' || status === 'READY') {
+        if (currentUser.role === 'User') {
+          actions = '<button class="btn-action" onclick="openSellPayment(\'' + row.id + '\')">Confirm</button>';
+        } else {
+          actions = '<span style="color: var(--text-secondary);">Waiting for confirmation</span>';
+        }
+      } else {
+        var paid = parseFloat(row.paid) || 0;
+        var changeLak = parseFloat(row.change_amount) || 0;
+        var payInfo = paid > 0 ? formatNumber(paid) + ' ' + (row.currency || 'LAK') : '-';
+        var detail = encodeURIComponent(JSON.stringify([
+          ['Transaction ID', row.id],
+          ['BILL ID', row.bill_id || '-'],
+          ['Phone', row.phone],
+          ['Items', formatItemsForTable(row._itemsJson)],
+          ['Total', formatNumber(row.total) + ' LAK'],
+          ['Customer Paid', payInfo],
+          ['Change', changeLak > 0 ? formatNumber(changeLak) + ' LAK' : '-'],
+          ['Date', formatDateTime(row.date)],
+          ['Status', status],
+          ['Sale', saleName]
+        ]));
+        actions = '<button class="btn-action" onclick="viewTransactionDetail(\'Sell\',\'' + detail + '\')" style="background:#555;">👁 View</button>';
+      }
+
+      return '<tr>' +
+        '<td>' + row.id + '</td>' +
+        '<td>' + (row.bill_id || '-') + '</td>' +
+        '<td style="font-size:11px;white-space:nowrap;">' + (row.date ? formatDateTime(row.date) : '') + '</td>' +
+        '<td>' + row.phone + '</td>' +
+        '<td>' + items + '</td>' +
+        '<td>' + formatNumber(premium) + '</td>' +
+        '<td>' + formatNumber(row.total) + '</td>' +
+        '<td><span class="status-badge status-' + status.toLowerCase() + '">' + status + '</span></td>' +
+        '<td>' + saleName + '</td>' +
+        '<td>' + actions + '</td>' +
+        '</tr>';
+    }).join('');
   } catch (error) {
-    console.error('❌ Error loading sells:', error);
+    console.error('Error loading sells:', error);
+    var tbody = document.getElementById('sellTable');
+    if (tbody) tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:40px;color:#f44336;">Error loading data</td></tr>';
   }
 }
-
 
 let sellCounter = 0;
 
@@ -80,20 +111,19 @@ function addSellProduct() {
   const container = document.getElementById('sellProducts');
   const row = document.createElement('div');
   row.className = 'product-row';
-  row.id = `sellProduct${sellCounter}`;
-  row.innerHTML = `
-    <select class="form-select" onchange="calculateSellTotal()">
-      <option value="">เลือกสินค้า...</option>
-      ${FIXED_PRODUCTS.map(p => `<option value="${p.id}">${p.name}</option>`).join('')}
-    </select>
-    <input type="number" class="form-input" placeholder="จำนวน" min="1" step="1" oninput="calculateSellTotal()">
-    <button type="button" class="btn-remove" onclick="removeSellProduct(${sellCounter})">×</button>
-  `;
+  row.id = 'sellProduct' + sellCounter;
+  row.innerHTML =
+    '<select class="form-select" onchange="calculateSellTotal()">' +
+      '<option value="">เลือกสินค้า...</option>' +
+      FIXED_PRODUCTS.map(function(p) { return '<option value="' + p.id + '">' + p.name + '</option>'; }).join('') +
+    '</select>' +
+    '<input type="number" class="form-input" placeholder="จำนวน" min="1" step="1" oninput="calculateSellTotal()">' +
+    '<button type="button" class="btn-remove" onclick="removeSellProduct(' + sellCounter + ')">×</button>';
   container.appendChild(row);
 }
 
 function removeSellProduct(id) {
-  const row = document.getElementById(`sellProduct${id}`);
+  const row = document.getElementById('sellProduct' + id);
   if (row) {
     row.remove();
     calculateSellTotal();
@@ -140,19 +170,21 @@ async function submitSell() {
       totalPremium += PREMIUM_PER_PIECE * item.qty;
     }
   });
-  
+
   totalPrice = roundTo1000(totalPrice + totalPremium);
 
   try {
-    var result = await callAppsScript('ADD_SELL', {
-      phone: phone,
-      billId: billId,
-      items: JSON.stringify(mergeItems(items)),
-      total: totalPrice,
-      sell1Baht: currentPricing.sell1Baht
+    var merged = mergeItems(items);
+    var result = await dbRpc('create_sell_tx', {
+      p_phone: phone,
+      p_bill_id: billId,
+      p_items: merged,
+      p_total: totalPrice,
+      p_premium: totalPremium,
+      p_sell_1baht: currentPricing.sell1Baht
     });
 
-    if (result.success) {
+    if (result && result.success) {
       endSubmit();
       showToast('✅ สร้างรายการขายสำเร็จ!');
       closeModal('sellModal');
@@ -163,7 +195,7 @@ async function submitSell() {
       addSellProduct();
       loadSells();
     } else {
-      alert('❌ เกิดข้อผิดพลาด: ' + result.message);
+      alert('❌ เกิดข้อผิดพลาด: ' + (result && result.message ? result.message : 'Unknown'));
       endSubmit();
     }
   } catch (error) {
@@ -178,71 +210,63 @@ async function checkStock(productId, requiredQty) {
 }
 
 async function getCurrentStock(productId) {
-  const data = await fetchSheetData('_database!A7:G7');
-  if (data.length === 0) return 0;
-  
-  const productIndexMap = {
-    'G01': 0, 'G02': 1, 'G03': 2, 'G04': 3,
-    'G05': 4, 'G06': 5, 'G07': 6
-  };
-  
-  const index = productIndexMap[productId];
-  if (index === undefined) return 0;
-  
-  return parseFloat(data[0][index]) || 0;
+  try {
+    var rows = await dbSelect('stock_balances', {
+      select: 'qty',
+      filters: {
+        product_id: 'eq.' + productId,
+        gold_type: 'eq.NEW'
+      },
+      useCache: false
+    });
+    if (!rows || rows.length === 0) return 0;
+    return parseFloat(rows[0].qty) || 0;
+  } catch(e) {
+    return 0;
+  }
 }
 
 function viewSellDetails(sellId) {
-  alert(`View details for ${sellId} (Manager view only)`);
+  alert('View details for ' + sellId + ' (Manager view only)');
 }
 
 async function reviewSell(sellId) {
   if (!confirm('Approve this sell transaction?')) return;
-  
   try {
     showLoading();
-    const result = await callAppsScript('REVIEW_SELL', { sellId });
-    
-    if (result.success) {
+    const result = await dbRpc('review_sell_tx', { p_tx_id: sellId });
+    hideLoading();
+    if (result && result.success) {
       showToast('✅ Transaction reviewed and ready for confirmation!');
       loadSells();
     } else {
-      alert('❌ Error: ' + result.message);
+      alert('❌ Error: ' + (result && result.message ? result.message : 'Unknown'));
     }
-    hideLoading();
   } catch (error) {
-    alert('❌ Error: ' + error.message);
     hideLoading();
+    alert('❌ Error: ' + error.message);
   }
 }
 
 function calculateSellTotal() {
   let totalPrice = 0;
   let totalPremium = 0;
-  
-  
-  document.querySelectorAll('#sellProducts .product-row').forEach((row, index) => {
+
+  document.querySelectorAll('#sellProducts .product-row').forEach(function(row) {
     const productId = row.querySelector('select').value;
     const qty = parseInt(row.querySelector('input').value) || 0;
-    
+
     if (productId && qty > 0) {
-      const productName = FIXED_PRODUCTS.find(p => p.id === productId)?.name || productId;
       const pricePerPiece = calculateSellPrice(productId, currentPricing.sell1Baht);
       const lineTotal = pricePerPiece * qty;
-      
-      
       totalPrice += lineTotal;
-      
       if (PREMIUM_PRODUCTS.includes(productId)) {
-        const premium = PREMIUM_PER_PIECE * qty;
-        totalPremium += premium;
+        totalPremium += PREMIUM_PER_PIECE * qty;
       }
     }
   });
-  
-  
+
   const finalTotal = roundTo1000(totalPrice + totalPremium);
-  
   const priceElement = document.getElementById('sellPrice');
   if (priceElement) {
     priceElement.value = formatNumber(finalTotal) + ' LAK';
@@ -253,24 +277,17 @@ function calculateSellTotal() {
 async function openSellModal() {
   if (currentPricing.sell1Baht === 0) {
     showLoading();
-    const data = await fetchSheetData('Pricing!A:C');
-    if (data.length > 1) {
-      const latestPricing = data[data.length - 1];
-      currentPricing = {
-        sell1Baht: parseFloat(String(latestPricing[1]).replace(/,/g, '')) || 0,
-        buyback1Baht: parseFloat(String(latestPricing[2]).replace(/,/g, '')) || 0
-      };
-    }
+    await fetchCurrentPricing();
     hideLoading();
   }
-  
+
   if (currentPricing.sell1Baht === 0) {
     alert('กรุณากำหนดราคาก่อนใช้งาน (Products → Set Pricing)');
     return;
   }
-  
+
   openModal('sellModal');
-  
+
   if (document.querySelectorAll('#sellProducts .product-row').length === 0) {
     addSellProduct();
   }
@@ -288,14 +305,14 @@ function resetSellDateFilter() {
 document.addEventListener('DOMContentLoaded', function() {
   const fromInput = document.getElementById('sellDateFrom');
   const toInput = document.getElementById('sellDateTo');
-  
+
   if (fromInput && toInput) {
     fromInput.addEventListener('change', function() {
       sellDateFrom = this.value;
       if (sellDateFrom && !sellDateTo) { sellDateTo = sellDateFrom; toInput.value = sellDateTo; }
       if (sellDateFrom && sellDateTo) loadSells();
     });
-    
+
     toInput.addEventListener('change', function() {
       sellDateTo = this.value;
       if (sellDateTo && !sellDateFrom) { sellDateFrom = sellDateTo; fromInput.value = sellDateFrom; }

@@ -1,103 +1,134 @@
-var _sheetCache = {};
-var _cacheTTL = 60000;
+var _apiCache = {};
+var _apiCacheTTL = 60000;
 
-var ALL_RANGES = [
-  '_database!A1:M100',
-  'Sells!A:M',
-  'Tradeins!A:O',
-  'Exchanges!A:T',
-  'Buybacks!A:L',
-  'Withdraws!A:L',
-  'CashBank!A:I',
-  'Diff!A:J',
-  'Close!A:K',
-  'PriceRate!A:E',
-  'Pricing!A:E',
-  '_notifications!A:I',
-  '_log!A:G',
-  'StockMove_Old!A:K',
-  'StockMove_New!A:K'
-];
+function _apiHeaders() {
+  var token = (currentUser && currentUser.token) || localStorage.getItem('jwt') || '';
+  return {
+    'apikey': CONFIG.SUPABASE_ANON_KEY,
+    'Authorization': 'Bearer ' + (token || CONFIG.SUPABASE_ANON_KEY),
+    'Content-Type': 'application/json',
+    'Accept': 'application/json'
+  };
+}
 
-async function batchFetchAll() {
-  var ranges = ALL_RANGES.map(function(r) { return 'ranges=' + encodeURIComponent(r); }).join('&');
-  var url = 'https://sheets.googleapis.com/v4/spreadsheets/' + CONFIG.SHEET_ID + '/values:batchGet?' + ranges + '&key=' + CONFIG.API_KEY;
-  try {
-    var response = await fetch(url);
-    if (!response.ok) return;
-    var data = await response.json();
-    if (!data.valueRanges) return;
+function _apiUrl(path) {
+  return CONFIG.SUPABASE_URL + '/rest/v1/' + path;
+}
+
+function _cacheKey(method, path, body) {
+  return method + ' ' + path + ' ' + (body ? JSON.stringify(body) : '');
+}
+
+function invalidateCache(prefix) {
+  if (!prefix) { _apiCache = {}; return; }
+  Object.keys(_apiCache).forEach(function(k) {
+    if (k.indexOf(prefix) >= 0) delete _apiCache[k];
+  });
+}
+
+async function _apiRequest(method, path, options) {
+  options = options || {};
+  var url = _apiUrl(path);
+  var headers = _apiHeaders();
+  if (options.headers) Object.assign(headers, options.headers);
+
+  var key = _cacheKey(method, path);
+  if (method === 'GET' && options.useCache !== false) {
     var now = Date.now();
-    data.valueRanges.forEach(function(vr) {
-      var range = vr.range || '';
-      var matchedRange = ALL_RANGES.find(function(r) {
-        var sheetName = r.split('!')[0];
-        return range.indexOf(sheetName) >= 0;
-      });
-      if (matchedRange) {
-        _sheetCache[matchedRange] = { data: vr.values || [], time: now };
-      }
+    if (_apiCache[key] && (now - _apiCache[key].time) < _apiCacheTTL) {
+      return _apiCache[key].data;
+    }
+  }
+
+  var fetchOpts = { method: method, headers: headers };
+  if (options.body !== undefined) fetchOpts.body = JSON.stringify(options.body);
+
+  var resp = await fetch(url, fetchOpts);
+  if (!resp.ok) {
+    var errText = await resp.text();
+    if (resp.status === 401) {
+      try { logout(); } catch(e) {}
+    }
+    throw new Error('API ' + resp.status + ': ' + errText);
+  }
+
+  var data = null;
+  if (resp.status !== 204) {
+    var ct = resp.headers.get('content-type') || '';
+    if (ct.indexOf('application/json') >= 0) {
+      var txt = await resp.text();
+      data = txt ? JSON.parse(txt) : null;
+    }
+  }
+
+  if (method === 'GET' && options.useCache !== false) {
+    _apiCache[key] = { data: data, time: Date.now() };
+  } else {
+    invalidateCache(path.split('?')[0]);
+  }
+  return data;
+}
+
+async function dbSelect(table, opts) {
+  opts = opts || {};
+  var qs = [];
+  if (opts.select) qs.push('select=' + encodeURIComponent(opts.select));
+  if (opts.filters) {
+    Object.keys(opts.filters).forEach(function(col) {
+      qs.push(col + '=' + encodeURIComponent(opts.filters[col]));
     });
-  } catch(e) {}
+  }
+  if (opts.order) qs.push('order=' + encodeURIComponent(opts.order));
+  if (opts.limit) qs.push('limit=' + opts.limit);
+  if (opts.offset) qs.push('offset=' + opts.offset);
+  var path = table + (qs.length ? '?' + qs.join('&') : '');
+  return await _apiRequest('GET', path, { useCache: opts.useCache !== false });
 }
 
-async function fetchSheetData(range) {
-  var now = Date.now();
-  if (_sheetCache[range] && (now - _sheetCache[range].time) < _cacheTTL) {
-    return _sheetCache[range].data;
-  }
-  var url = 'https://sheets.googleapis.com/v4/spreadsheets/' + CONFIG.SHEET_ID + '/values/' + encodeURIComponent(range) + '?key=' + CONFIG.API_KEY;
-  var response = await fetch(url);
-  if (!response.ok) {
-    return _sheetCache[range] ? _sheetCache[range].data : [];
-  }
-  var data = await response.json();
-  var result = data.values || [];
-  _sheetCache[range] = { data: result, time: now };
-  return result;
+async function dbInsert(table, rows, opts) {
+  opts = opts || {};
+  var headers = { 'Prefer': opts.returning === false ? 'return=minimal' : 'return=representation' };
+  if (opts.upsert) headers['Prefer'] = 'resolution=merge-duplicates,return=representation';
+  return await _apiRequest('POST', table, { body: rows, headers: headers });
 }
 
-function invalidateCache() {
-  _sheetCache = {};
-}
-
-async function callAppsScript(action, params = {}) {
-  if (action !== 'BATCH_READ' && action !== 'READ_SHEET' && action !== 'GET_WAC' && action !== 'GET_LIVE_REPORT' && action !== 'GET_STOCK_MOVES' && action !== 'GET_STOCK_MOVES_RANGE' && action !== 'GET_PENDING_TRANSFERS' && action !== 'GET_TODAY_DIFF_TOTAL') {
-    invalidateCache();
-  }
-  const queryParams = new URLSearchParams({
-    action,
-    ...params,
-    user: currentUser?.nickname || currentUser?.role || 'Unknown'
+async function dbUpdate(table, filters, patch) {
+  var qs = [];
+  Object.keys(filters).forEach(function(col) {
+    qs.push(col + '=' + encodeURIComponent(filters[col]));
   });
-  
-  const url = `${CONFIG.SCRIPT_URL}?${queryParams.toString()}`;
-  
-  const response = await fetch(url, {
-    method: 'GET',
-    redirect: 'follow'
-  });
-  
-  const result = await response.json();
-  return result;
+  var path = table + '?' + qs.join('&');
+  var headers = { 'Prefer': 'return=representation' };
+  return await _apiRequest('PATCH', path, { body: patch, headers: headers });
 }
 
-const executeGoogleScript = callAppsScript;
+async function dbDelete(table, filters) {
+  var qs = [];
+  Object.keys(filters).forEach(function(col) {
+    qs.push(col + '=' + encodeURIComponent(filters[col]));
+  });
+  var path = table + '?' + qs.join('&');
+  return await _apiRequest('DELETE', path);
+}
+
+async function dbRpc(fnName, params) {
+  return await _apiRequest('POST', 'rpc/' + fnName, { body: params || {}, headers: { 'Prefer': 'return=representation' } });
+}
 
 async function fetchExchangeRates() {
   try {
-    var prData = await fetchSheetData('PriceRate!A:E');
-    if (prData.length > 1) {
-      var last = prData[prData.length - 1];
-      var p = function(v) { return parseFloat(String(v).replace(/,/g, '')) || 0; };
+    var rows = await dbSelect('price_rates', { select: '*', order: 'date.desc', limit: 1 });
+    if (rows && rows.length > 0) {
+      var r = rows[0];
+      var p = function(v) { return parseFloat(v) || 0; };
       currentExchangeRates = {
         LAK: 1,
-        THB_Sell: p(last[1]),
-        USD_Sell: p(last[2]),
-        THB_Buy: p(last[3]),
-        USD_Buy: p(last[4]),
-        THB: p(last[1]),
-        USD: p(last[2])
+        THB_Sell: p(r.thb_sell),
+        USD_Sell: p(r.usd_sell),
+        THB_Buy: p(r.thb_buy),
+        USD_Buy: p(r.usd_buy),
+        THB: p(r.thb_sell),
+        USD: p(r.usd_sell)
       };
     }
   } catch(e) {
@@ -108,13 +139,31 @@ async function fetchExchangeRates() {
 
 async function fetchCurrentPricing() {
   try {
-    var data = await fetchSheetData('Pricing!A:E');
-    if (data && data.length > 1) {
-      var last = data[data.length - 1];
-      var p = function(v) { return parseFloat(String(v).replace(/,/g, '')) || 0; };
-      currentPricing.sell1Baht = p(last[1]);
-      currentPricing.buyback1Baht = p(last[2]);
+    var rows = await dbSelect('pricing', { select: '*', order: 'date.desc', limit: 1 });
+    if (rows && rows.length > 0) {
+      currentPricing.sell1Baht = parseFloat(rows[0].sell_1baht) || 0;
+      currentPricing.buyback1Baht = parseFloat(rows[0].buyback_1baht) || 0;
     }
   } catch(e) {}
   return currentPricing;
+}
+
+async function fetchAppConfig() {
+  try {
+    var rows = await dbSelect('app_config', { select: '*' });
+    var cfg = {};
+    if (rows) rows.forEach(function(r) { cfg[r.key] = r.value; });
+    if (cfg.premium_per_piece !== undefined) PREMIUM_PER_PIECE = parseFloat(cfg.premium_per_piece) || PREMIUM_PER_PIECE;
+    return cfg;
+  } catch(e) { return {}; }
+}
+
+async function batchFetchAll() {
+  try {
+    await Promise.all([
+      fetchExchangeRates(),
+      fetchCurrentPricing(),
+      fetchAppConfig()
+    ]);
+  } catch(e) {}
 }

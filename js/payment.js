@@ -383,7 +383,54 @@ async function confirmMultiPayment() {
 
   try {
     showLoading();
-    
+
+    if (currentPaymentData.type === 'SELL') {
+      var allItems = paymentItems.cash.concat(paymentItems.bank);
+      var primary = allItems.find(function(i) { return i.amount > 0; }) || { currency: 'LAK', method: 'CASH', bank: null };
+
+      var lakItems = allItems.filter(function(i) { return i.currency === 'LAK' && i.amount > 0; });
+      var totalLAK = lakItems.reduce(function(s, i) { return s + i.amount; }, 0);
+      var nonLakItems = allItems.filter(function(i) { return i.currency !== 'LAK' && i.amount > 0; });
+
+      var paymentEntries = [];
+      lakItems.forEach(function(i) { paymentEntries.push(i); });
+      nonLakItems.forEach(function(i) { paymentEntries.push(i); });
+
+      var firstResult = null;
+      for (var pi = 0; pi < paymentEntries.length; pi++) {
+        var p = paymentEntries[pi];
+        var bankId = null;
+        if (p.bank) {
+          try {
+            var b = await dbSelect('banks', { select: 'id', filters: { name: 'eq.' + p.bank }, limit: 1, useCache: true });
+            if (b && b.length > 0) bankId = b[0].id;
+          } catch(e2) {}
+        }
+        var partial = await dbRpc('confirm_sell_tx', {
+          p_tx_id: currentPaymentData.id,
+          p_paid: p.amount,
+          p_currency: p.currency,
+          p_method: p.method,
+          p_bank_id: bankId,
+          p_change: pi === paymentEntries.length - 1 ? change : 0
+        });
+        if (!firstResult) firstResult = partial;
+        if (!partial || !partial.success) {
+          alert('❌ เกิดข้อผิดพลาด: ' + (partial && partial.message ? partial.message : 'Unknown'));
+          endSubmit();
+          return;
+        }
+      }
+
+      showToast('✅ ยืนยันการชำระเงินสำเร็จ!');
+      closeModal('multiPaymentModal');
+      currentPaymentData = null;
+      paymentItems = { cash: [], bank: [] };
+      if (typeof loadSells === 'function') loadSells();
+      endSubmit();
+      return;
+    }
+
     const actionMap = {
       'SELL': 'CONFIRM_SELL_PAYMENT',
       'TRADEIN': 'CONFIRM_TRADEIN_PAYMENT',
@@ -447,14 +494,23 @@ async function confirmMultiPayment() {
 }
 
 async function openSellPayment(sellId) {
-  const data = await fetchSheetData('Sells!A:L');
-  const sell = data.slice(1).find(row => row[0] === sellId);
-  if (!sell) return;
-  
-  const items = formatItemsForPayment(sell[2]);
-  const total = parseFloat(sell[3]) || 0;
-  
-  openMultiPaymentModal('SELL', sellId, total, sell[1], `<strong>Items:</strong> ${items}`);
+  try {
+    var rows = await dbSelect('transactions', {
+      select: '*,items:transaction_items(product_id,qty,item_role)',
+      filters: { id: 'eq.' + sellId, type: 'eq.SELL' },
+      useCache: false
+    });
+    if (!rows || rows.length === 0) return;
+    var sell = rows[0];
+    var newItems = (sell.items || []).filter(function(i) { return i.item_role === 'NEW'; })
+      .map(function(i) { return { productId: i.product_id, qty: i.qty }; });
+    var itemsJson = JSON.stringify(newItems);
+    var items = formatItemsForPayment(itemsJson);
+    var total = parseFloat(sell.total) || 0;
+    openMultiPaymentModal('SELL', sellId, total, sell.phone, '<strong>Items:</strong> ' + items);
+  } catch(e) {
+    alert('Error: ' + e.message);
+  }
 }
 
 async function openTradeinPaymentModal(tradeinId) {

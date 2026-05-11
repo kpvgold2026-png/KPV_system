@@ -1,6 +1,5 @@
-let currentCloseId = null;
-let _closeWorkLocked = false;
-let _closePollingInterval = null;
+var currentCloseId = null;
+var _closePollingInterval = null;
 
 async function checkAndResumePendingClose() {
   if (!currentUser || isManager()) return;

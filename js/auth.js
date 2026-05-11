@@ -244,7 +244,8 @@ async function login() {
     var role = mapRole(dbRole);
     var token = await jwtSign({
       user_id: user.id,
-      role: dbRole,
+      role: 'authenticated',
+      user_role: dbRole,
       username: user.username,
       session: sessionId
     });

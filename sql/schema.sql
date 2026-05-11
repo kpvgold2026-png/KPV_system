@@ -395,7 +395,7 @@ CREATE OR REPLACE FUNCTION current_user_role() RETURNS user_role AS $$
 DECLARE
   r TEXT;
 BEGIN
-  r := NULLIF(current_setting('request.jwt.claims', true)::json->>'role', '');
+  r := NULLIF(current_setting('request.jwt.claims', true)::json->>'user_role', '');
   RETURN r::user_role;
 EXCEPTION WHEN OTHERS THEN
   RETURN NULL;

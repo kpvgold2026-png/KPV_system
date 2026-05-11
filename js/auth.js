@@ -187,9 +187,11 @@ async function enterApp() {
   document.getElementById('loginScreen').classList.remove('active');
   document.getElementById('mainHeader').style.display = 'block';
   document.getElementById('mainContainer').style.display = 'block';
-  document.getElementById('userName').textContent = currentUser.nickname || currentUser.role;
-  document.getElementById('userRole').textContent = currentUser.role;
-  document.getElementById('userAvatar').textContent = (currentUser.nickname || currentUser.role)[0];
+  var displayName = currentUser.nickname || currentUser.role || currentUser.username || 'User';
+  var avatarChar = (displayName && displayName.length > 0) ? displayName.charAt(0).toUpperCase() : 'U';
+  document.getElementById('userName').textContent = displayName;
+  document.getElementById('userRole').textContent = currentUser.role || '';
+  document.getElementById('userAvatar').textContent = avatarChar;
   var roleClass = currentUser.role === 'Manager' ? 'role-m' : currentUser.role === 'Admin' ? 'role-a' : 'role-u';
   document.body.className = roleClass;
 
@@ -213,19 +215,36 @@ async function login() {
   showLoading();
   try {
     var result = await dbRpc('login_user', { p_username: username, p_password: password });
-    var user = Array.isArray(result) ? result[0] : result;
+    console.log('[login] RPC result:', result);
 
-    if (!user || !user.id) {
+    var user = Array.isArray(result) ? result[0] : result;
+    if (!user) {
       hideLoading();
-      alert('Invalid username or password');
+      alert('Invalid username or password (no response)');
       return;
     }
 
+    if (user.success === false) {
+      hideLoading();
+      alert('Login failed: ' + (user.message || 'Unknown'));
+      return;
+    }
+
+    if (!user.id) {
+      hideLoading();
+      console.error('[login] user object missing id:', user);
+      alert('Invalid response from server');
+      return;
+    }
+
+    var nickname = user.nickname || user.role || user.username || 'User';
+    var dbRole = user.role || 'Sales';
+
     var sessionId = _b64urlEncode(crypto.getRandomValues(new Uint8Array(16)));
-    var role = mapRole(user.role);
+    var role = mapRole(dbRole);
     var token = await jwtSign({
       user_id: user.id,
-      role: user.role,
+      role: dbRole,
       username: user.username,
       session: sessionId
     });
@@ -234,8 +253,8 @@ async function login() {
       id: user.id,
       username: user.username,
       role: role,
-      nickname: user.nickname || user.role,
-      dbRole: user.role,
+      nickname: nickname,
+      dbRole: dbRole,
       token: token,
       sessionId: sessionId
     };

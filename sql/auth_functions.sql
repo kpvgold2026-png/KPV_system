@@ -14,12 +14,7 @@ CREATE OR REPLACE FUNCTION login_user(
   p_username TEXT,
   p_password TEXT
 )
-RETURNS TABLE (
-  id UUID,
-  username TEXT,
-  nickname TEXT,
-  role TEXT
-) AS $$
+RETURNS JSONB AS $$
 DECLARE
   u RECORD;
 BEGIN
@@ -29,22 +24,24 @@ BEGIN
   WHERE users.username = p_username;
 
   IF NOT FOUND THEN
-    RETURN;
+    RETURN jsonb_build_object('success', false, 'message', 'User not found');
   END IF;
 
   IF NOT u.is_active THEN
-    RETURN;
+    RETURN jsonb_build_object('success', false, 'message', 'User is inactive');
   END IF;
 
   IF NOT verify_password(p_password, u.password_hash) THEN
-    RETURN;
+    RETURN jsonb_build_object('success', false, 'message', 'Invalid password');
   END IF;
 
-  id := u.id;
-  username := u.username;
-  nickname := u.nickname;
-  role := u.role;
-  RETURN NEXT;
+  RETURN jsonb_build_object(
+    'success', true,
+    'id', u.id,
+    'username', u.username,
+    'nickname', COALESCE(u.nickname, u.role),
+    'role', u.role
+  );
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 

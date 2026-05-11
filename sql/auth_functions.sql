@@ -161,3 +161,40 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 GRANT EXECUTE ON FUNCTION delete_tx(TEXT) TO authenticated;
+
+CREATE OR REPLACE FUNCTION set_my_session(p_session TEXT)
+RETURNS JSONB AS $$
+DECLARE
+  v_user_id UUID;
+BEGIN
+  v_user_id := current_user_id();
+  IF v_user_id IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'message', 'Not authenticated');
+  END IF;
+  UPDATE users SET session_token = p_session, updated_at = NOW() WHERE id = v_user_id;
+  RETURN jsonb_build_object('success', true);
+EXCEPTION WHEN OTHERS THEN
+  RETURN jsonb_build_object('success', false, 'message', SQLERRM);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+GRANT EXECUTE ON FUNCTION set_my_session(TEXT) TO authenticated;
+
+CREATE OR REPLACE FUNCTION get_my_session()
+RETURNS JSONB AS $$
+DECLARE
+  v_user_id UUID;
+  v_session TEXT;
+BEGIN
+  v_user_id := current_user_id();
+  IF v_user_id IS NULL THEN
+    RETURN jsonb_build_object('session_token', NULL);
+  END IF;
+  SELECT session_token INTO v_session FROM users WHERE id = v_user_id;
+  RETURN jsonb_build_object('session_token', v_session);
+EXCEPTION WHEN OTHERS THEN
+  RETURN jsonb_build_object('session_token', NULL);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+GRANT EXECUTE ON FUNCTION get_my_session() TO authenticated;

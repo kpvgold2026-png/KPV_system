@@ -67,6 +67,7 @@ function setupManagerUI() {
 }
 
 var _inactivityTimer = null;
+var _sessionCheckInterval = null;
 var INACTIVITY_LIMIT = (CONFIG.INACTIVITY_TIMEOUT_MINUTES || 60) * 60 * 1000;
 
 function resetInactivityTimer() {
@@ -87,6 +88,7 @@ function startInactivityWatch() {
     document.addEventListener(evt, resetInactivityTimer, { passive: true });
   });
   resetInactivityTimer();
+  startSessionCheck();
 }
 
 function stopInactivityWatch() {
@@ -94,6 +96,104 @@ function stopInactivityWatch() {
     document.removeEventListener(evt, resetInactivityTimer);
   });
   if (_inactivityTimer) { clearTimeout(_inactivityTimer); _inactivityTimer = null; }
+  stopSessionCheck();
+}
+
+function startSessionCheck() {
+  if (_sessionCheckInterval) clearInterval(_sessionCheckInterval);
+  _sessionCheckInterval = setInterval(checkSession, 30000);
+  startRealtimeSessionWatch();
+}
+
+function stopSessionCheck() {
+  if (_sessionCheckInterval) { clearInterval(_sessionCheckInterval); _sessionCheckInterval = null; }
+  stopRealtimeSessionWatch();
+}
+
+var _realtimeWs = null;
+var _realtimeHeartbeat = null;
+var _realtimeRef = 0;
+
+function startRealtimeSessionWatch() {
+  stopRealtimeSessionWatch();
+  if (!currentUser || !currentUser.token) return;
+
+  var wsUrl = CONFIG.SUPABASE_URL.replace(/^https?:/, 'wss:') + '/realtime/v1/websocket?apikey=' + encodeURIComponent(CONFIG.SUPABASE_ANON_KEY) + '&vsn=1.0.0';
+
+  try {
+    _realtimeWs = new WebSocket(wsUrl);
+  } catch(e) {
+    return;
+  }
+
+  _realtimeWs.onopen = function() {
+    var topic = 'realtime:public:users:id=eq.' + currentUser.id;
+    _realtimeWs.send(JSON.stringify({
+      topic: topic,
+      event: 'phx_join',
+      payload: {
+        config: {
+          postgres_changes: [{
+            event: 'UPDATE',
+            schema: 'public',
+            table: 'users',
+            filter: 'id=eq.' + currentUser.id
+          }]
+        },
+        access_token: currentUser.token
+      },
+      ref: String(++_realtimeRef)
+    }));
+
+    _realtimeHeartbeat = setInterval(function() {
+      if (_realtimeWs && _realtimeWs.readyState === 1) {
+        _realtimeWs.send(JSON.stringify({
+          topic: 'phoenix',
+          event: 'heartbeat',
+          payload: {},
+          ref: String(++_realtimeRef)
+        }));
+      }
+    }, 25000);
+  };
+
+  _realtimeWs.onmessage = function(event) {
+    try {
+      var msg = JSON.parse(event.data);
+      if (msg.event === 'postgres_changes' && msg.payload && msg.payload.data) {
+        var newRow = msg.payload.data.record;
+        if (newRow && newRow.session_token && newRow.session_token !== currentUser.sessionId) {
+          stopInactivityWatch();
+          if (typeof stopNotificationPolling === 'function') stopNotificationPolling();
+          alert('บัญชีนี้ถูกเข้าสู่ระบบที่อื่น คุณจะถูกออกจากระบบ');
+          currentUser = null;
+          localStorage.removeItem('currentUser');
+          localStorage.removeItem('jwt');
+          localStorage.removeItem('lastActivity');
+          window.location.reload();
+        }
+      }
+    } catch(e) {}
+  };
+
+  _realtimeWs.onerror = function() {};
+  _realtimeWs.onclose = function() {
+    if (_realtimeHeartbeat) { clearInterval(_realtimeHeartbeat); _realtimeHeartbeat = null; }
+    _realtimeWs = null;
+    if (currentUser) {
+      setTimeout(function() {
+        if (currentUser) startRealtimeSessionWatch();
+      }, 5000);
+    }
+  };
+}
+
+function stopRealtimeSessionWatch() {
+  if (_realtimeHeartbeat) { clearInterval(_realtimeHeartbeat); _realtimeHeartbeat = null; }
+  if (_realtimeWs) {
+    try { _realtimeWs.close(); } catch(e) {}
+    _realtimeWs = null;
+  }
 }
 
 function isSessionExpired() {
@@ -129,23 +229,17 @@ async function fetchUsersFromDB() {
 async function checkSession() {
   if (!currentUser || !currentUser.token) return;
   try {
-    var payload = await jwtVerify(currentUser.token);
-    if (!payload) {
-      alert('Session หมดอายุ กรุณาเข้าสู่ระบบใหม่');
-      logout();
-      return;
-    }
-    var rows = await dbSelect('users', {
-      select: 'id,session_token',
-      filters: { id: 'eq.' + currentUser.id },
-      useCache: false
-    });
-    if (rows && rows.length > 0) {
-      var stored = rows[0].session_token;
-      if (stored && stored !== currentUser.sessionId) {
-        alert('บัญชีนี้ถูกเข้าสู่ระบบที่อื่น คุณจะถูกออกจากระบบ');
-        logout();
-      }
+    var result = await dbRpc('get_my_session', {});
+    var stored = result && result.session_token ? result.session_token : null;
+    if (stored && stored !== currentUser.sessionId) {
+      stopInactivityWatch();
+      if (typeof stopNotificationPolling === 'function') stopNotificationPolling();
+      alert('บัญชีนี้ถูกเข้าสู่ระบบที่อื่น คุณจะถูกออกจากระบบ');
+      currentUser = null;
+      localStorage.removeItem('currentUser');
+      localStorage.removeItem('jwt');
+      localStorage.removeItem('lastActivity');
+      window.location.reload();
     }
   } catch(e) {}
 }
@@ -215,7 +309,6 @@ async function login() {
   showLoading();
   try {
     var result = await dbRpc('login_user', { p_username: username, p_password: password });
-    console.log('[login] RPC result:', result);
 
     var user = Array.isArray(result) ? result[0] : result;
     if (!user) {
@@ -232,7 +325,6 @@ async function login() {
 
     if (!user.id) {
       hideLoading();
-      console.error('[login] user object missing id:', user);
       alert('Invalid response from server');
       return;
     }
@@ -262,6 +354,11 @@ async function login() {
 
     localStorage.setItem('jwt', token);
     localStorage.setItem('currentUser', JSON.stringify(currentUser));
+    localStorage.setItem('lastActivity', Date.now().toString());
+
+    try {
+      await dbRpc('set_my_session', { p_session: sessionId });
+    } catch(e) {}
 
     hideLoading();
     await enterApp();
@@ -392,6 +489,7 @@ async function restoreSession() {
     if (isSessionExpired()) {
       localStorage.removeItem('jwt');
       localStorage.removeItem('currentUser');
+      localStorage.removeItem('lastActivity');
       return false;
     }
     currentUser = JSON.parse(saved);
@@ -401,3 +499,27 @@ async function restoreSession() {
     return false;
   }
 }
+
+document.addEventListener('DOMContentLoaded', async function() {
+  var ok = await restoreSession();
+  if (!ok) return;
+  try {
+    var result = await dbRpc('get_my_session', {});
+    var stored = result && result.session_token ? result.session_token : null;
+    if (stored && currentUser.sessionId && stored !== currentUser.sessionId) {
+      localStorage.removeItem('currentUser');
+      localStorage.removeItem('jwt');
+      localStorage.removeItem('lastActivity');
+      currentUser = null;
+      return;
+    }
+  } catch(e) {}
+
+  await enterApp();
+  if (currentUser.role === 'User') {
+    showSection('sell');
+    if (typeof checkOpenShift === 'function') checkOpenShift();
+  } else {
+    if (typeof loadDashboard === 'function') loadDashboard();
+  }
+});

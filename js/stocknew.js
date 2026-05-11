@@ -1,5 +1,6 @@
 var stockNewDateFrom = null;
 var stockNewDateTo = null;
+var _tblSpinner = '<div style="display:inline-block;width:20px;height:20px;border:3px solid var(--border-color);border-top:3px solid var(--gold-primary);border-radius:50%;animation:spin 0.8s linear infinite;"></div>';
 
 async function loadStockNew() {
   var isFiltered = stockNewDateFrom && stockNewDateTo;
@@ -15,68 +16,56 @@ async function loadStockNew() {
   document.getElementById('stockNewCostValue').textContent = '...';
 
   if (!isFiltered || isToday) {
-    loadStockNewSummary();
-    loadStockNewMoves();
+    await loadStockNewSummary();
+    await loadStockNewMoves();
   } else {
-    loadStockNewFiltered();
+    await loadStockNewFiltered();
   }
 }
 
-var _tblSpinner = '<div style="display:inline-block;width:20px;height:20px;border:3px solid var(--border-color);border-top:3px solid var(--gold-primary);border-radius:50%;animation:spin 0.8s linear infinite;"></div>';
-
 async function loadStockNewSummary() {
   try {
-    var stockData = await safeFetch('Stock_New!A:D');
-    var carry = {}, qtyIn = {}, qtyOut = {};
-    FIXED_PRODUCTS.forEach(function(p) { carry[p.id] = 0; qtyIn[p.id] = 0; qtyOut[p.id] = 0; });
-    if (stockData.length > 1) {
-      var lastRow = stockData[stockData.length - 1];
-      try { carry = JSON.parse(lastRow[1] || '{}'); } catch(e) {}
-      try { qtyIn = JSON.parse(lastRow[2] || '{}'); } catch(e) {}
-      try { qtyOut = JSON.parse(lastRow[3] || '{}'); } catch(e) {}
-    }
+    var res = await dbRpc('get_stock_summary', { p_gold_type: 'NEW' });
+    var carry = res && res.carry ? res.carry : {};
+    var qtyIn = res && res.in ? res.in : {};
+    var qtyOut = res && res.out ? res.out : {};
+    FIXED_PRODUCTS.forEach(function(p) {
+      if (carry[p.id] === undefined) carry[p.id] = 0;
+      if (qtyIn[p.id] === undefined) qtyIn[p.id] = 0;
+      if (qtyOut[p.id] === undefined) qtyOut[p.id] = 0;
+    });
     renderStockNewSummary(carry, qtyIn, qtyOut);
   } catch(e) { console.error('Error loading stock new summary:', e); }
 }
 
 async function loadStockNewMoves() {
   try {
-    var moveResult = await callAppsScript('GET_STOCK_MOVES', { sheet: 'StockMove_New' });
-    var prevW = moveResult.data ? moveResult.data.prevW || 0 : 0;
-    var prevC = moveResult.data ? moveResult.data.prevC || 0 : 0;
-    var moves = moveResult.data ? moveResult.data.moves || [] : [];
+    var today = getTodayDateString();
+    var res = await dbRpc('get_stock_moves', {
+      p_gold_type: 'NEW',
+      p_date_from: today,
+      p_date_to: today
+    });
+    var prevW = res && res.prevW ? parseFloat(res.prevW) : 0;
+    var prevC = res && res.prevC ? parseFloat(res.prevC) : 0;
+    var moves = res && res.moves ? res.moves : [];
     renderStockNewMovements(moves, prevW, prevC);
   } catch(e) { console.error('Error loading stock new moves:', e); }
 }
 
 async function loadStockNewFiltered() {
   try {
-    var stockData = await safeFetch('Stock_New!A:D');
-    var from = new Date(stockNewDateFrom); from.setHours(0,0,0,0);
-    var to = new Date(stockNewDateTo); to.setHours(23,59,59,999);
+    var res = await dbRpc('get_stock_moves', {
+      p_gold_type: 'NEW',
+      p_date_from: stockNewDateFrom,
+      p_date_to: stockNewDateTo
+    });
+    var moves = res && res.moves ? res.moves : [];
+    var filtered = moves.filter(function(m) { return m.type === 'TRANSFER' || m.type === 'STOCK_IN'; });
+
     var carry = {}, qtyIn = {}, qtyOut = {};
     FIXED_PRODUCTS.forEach(function(p) { carry[p.id] = 0; qtyIn[p.id] = 0; qtyOut[p.id] = 0; });
-    var foundCarry = false;
-    for (var r = 1; r < stockData.length; r++) {
-      var rd = new Date(stockData[r][0]);
-      if (isNaN(rd.getTime())) continue;
-      rd.setHours(0,0,0,0);
-      if (rd >= from && rd <= to) {
-        if (!foundCarry) {
-          try { carry = JSON.parse(stockData[r][1] || '{}'); } catch(e) {}
-          foundCarry = true;
-        }
-        var ri = {}, ro = {};
-        try { ri = JSON.parse(stockData[r][2] || '{}'); } catch(e) {}
-        try { ro = JSON.parse(stockData[r][3] || '{}'); } catch(e) {}
-        FIXED_PRODUCTS.forEach(function(p) { qtyIn[p.id] += (ri[p.id] || 0); qtyOut[p.id] += (ro[p.id] || 0); });
-      }
-    }
     renderStockNewSummary(carry, qtyIn, qtyOut);
-
-    var moveResult = await callAppsScript('GET_STOCK_MOVES_RANGE', { sheet: 'StockMove_New', dateFrom: stockNewDateFrom, dateTo: stockNewDateTo });
-    var moves = moveResult.data ? moveResult.data.moves || [] : [];
-    var filtered = moves.filter(function(m) { return m.type === 'TRANSFER' || m.type === 'STOCK-IN'; });
     renderFilteredMoves('stockNewMovementTable', filtered, stockNewDateFrom, stockNewDateTo);
     document.getElementById('stockNewGoldG').textContent = '-';
     document.getElementById('stockNewCostValue').textContent = '-';
@@ -85,9 +74,9 @@ async function loadStockNewFiltered() {
 
 function renderStockNewSummary(carry, qtyIn, qtyOut) {
   document.getElementById('stockNewSummaryTable').innerHTML = FIXED_PRODUCTS.map(function(p) {
-    var c = carry[p.id] || 0;
-    var i = qtyIn[p.id] || 0;
-    var o = qtyOut[p.id] || 0;
+    var c = parseFloat(carry[p.id]) || 0;
+    var i = parseFloat(qtyIn[p.id]) || 0;
+    var o = parseFloat(qtyOut[p.id]) || 0;
     return '<tr><td>' + p.id + '</td><td>' + p.name + '</td><td>' + c + '</td>' +
       '<td style="color:#4caf50;">' + i + '</td>' +
       '<td style="color:#f44336;">' + o + '</td>' +
@@ -99,13 +88,15 @@ function renderStockNewMovements(moves, prevW, prevC) {
   var w = prevW, c = prevC;
   var todayMovements = [];
   moves.forEach(function(m) {
-    var gIn = m.dir === 'IN' ? m.goldG : 0;
-    var gOut = m.dir === 'OUT' ? m.goldG : 0;
-    var pIn = m.dir === 'IN' ? m.price : 0;
-    var pOut = m.dir === 'OUT' ? m.price : 0;
+    var goldG = parseFloat(m.goldG) || 0;
+    var price = parseFloat(m.price) || 0;
+    var gIn = m.dir === 'IN' ? goldG : 0;
+    var gOut = m.dir === 'OUT' ? goldG : 0;
+    var pIn = m.dir === 'IN' ? price : 0;
+    var pOut = m.dir === 'OUT' ? price : 0;
     w += gIn - gOut;
     c += pIn - pOut;
-    if (m.type === 'TRANSFER' || m.type === 'STOCK-IN') {
+    if (m.type === 'TRANSFER' || m.type === 'STOCK_IN') {
       todayMovements.push({ id: m.id, type: m.type, goldIn: gIn, goldOut: gOut, priceIn: pIn, priceOut: pOut, w: w, c: c });
     }
   });
@@ -152,15 +143,6 @@ function resetStockNewFilter() {
   stockNewDateTo = today;
   loadStockNew();
 }
-
-document.addEventListener('DOMContentLoaded', function() {
-  var f = document.getElementById('stockNewDateFrom');
-  var t = document.getElementById('stockNewDateTo');
-  if (f && t) {
-    f.addEventListener('change', function() { stockNewDateFrom = this.value; stockNewDateTo = t.value || stockNewDateFrom; if (!t.value) t.value = stockNewDateTo; if (stockNewDateFrom && stockNewDateTo) loadStockNew(); });
-    t.addEventListener('change', function() { stockNewDateTo = this.value; stockNewDateFrom = f.value || stockNewDateTo; if (!f.value) f.value = stockNewDateFrom; if (stockNewDateFrom && stockNewDateTo) loadStockNew(); });
-  }
-});
 
 function loadPendingTransferCount() {}
 
@@ -445,76 +427,24 @@ async function confirmStockInNew() {
       return;
     }
 
-    showLoading();
-    var dbData = await fetchSheetData('_database!A1:G31');
-    hideLoading();
-
-    var shopBalance = {
-      cash: { LAK: 0, THB: 0, USD: 0 },
-      BCEL: { LAK: 0, THB: 0, USD: 0 },
-      LDB: { LAK: 0, THB: 0, USD: 0 },
-      OTHER: { LAK: 0, THB: 0, USD: 0 }
-    };
-    if (dbData.length >= 17) {
-      shopBalance.cash.LAK = parseFloat(dbData[16][0]) || 0;
-      shopBalance.cash.THB = parseFloat(dbData[16][1]) || 0;
-      shopBalance.cash.USD = parseFloat(dbData[16][2]) || 0;
-      shopBalance.OTHER.LAK = parseFloat(dbData[16][4]) || 0;
-      shopBalance.OTHER.THB = parseFloat(dbData[16][5]) || 0;
-      shopBalance.OTHER.USD = parseFloat(dbData[16][6]) || 0;
-    }
-    if (dbData.length >= 20) {
-      shopBalance.BCEL.LAK = parseFloat(dbData[19][0]) || 0;
-      shopBalance.BCEL.THB = parseFloat(dbData[19][1]) || 0;
-      shopBalance.BCEL.USD = parseFloat(dbData[19][2]) || 0;
-    }
-    if (dbData.length >= 23) {
-      shopBalance.LDB.LAK = parseFloat(dbData[22][0]) || 0;
-      shopBalance.LDB.THB = parseFloat(dbData[22][1]) || 0;
-      shopBalance.LDB.USD = parseFloat(dbData[22][2]) || 0;
-    }
-
-    var usageSummary = {};
-    payments.forEach(function(p) {
-      var source = p.method === 'Cash' ? 'cash' : (p.bank || 'OTHER');
-      var cur = p.currency || 'LAK';
-      var key = source + '_' + cur;
-      if (!usageSummary[key]) usageSummary[key] = { source: source, currency: cur, total: 0 };
-      usageSummary[key].total += p.amount;
-    });
-
-    var insufficientList = [];
-    Object.keys(usageSummary).forEach(function(key) {
-      var u = usageSummary[key];
-      var available = (shopBalance[u.source] && shopBalance[u.source][u.currency]) ? shopBalance[u.source][u.currency] : 0;
-      if (u.total > available) {
-        var label = u.source === 'cash' ? 'เงินสด' : u.source;
-        insufficientList.push(label + ' ' + u.currency + ': ต้องการ ' + formatNumber(u.total) + ' แต่มี ' + formatNumber(available));
-      }
-    });
-
-    if (insufficientList.length > 0) {
-      alert('❌ ยอดเงินร้านไม่เพียงพอ\n\n' + insufficientList.join('\n'));
-      return;
-    }
-
     if (!confirm('ยืนยัน Stock In (NEW) ' + items.length + ' รายการ ต้นทุน ' + formatNumber(costRound) + ' LAK' + (totalFee > 0 ? ' + Fee ' + formatNumber(totalFee) + ' LAK' : '') + '?')) return;
 
     var note = document.getElementById('stockInNewNote').value.trim();
     showLoading();
-    var result = await callAppsScript('STOCK_IN_NEW', {
-      items: JSON.stringify(mergeItems(items)),
-      note: note,
-      cost: costRound,
-      payments: JSON.stringify(payments),
-      fee: Math.round(totalFee),
-      user: currentUser.nickname
+    var result = await dbRpc('stock_in_new_tx', {
+      p_items: mergeItems(items),
+      p_note: note,
+      p_cost: costRound,
+      p_payments: payments,
+      p_fee: Math.round(totalFee)
     });
     hideLoading();
-    if (result.success) {
+    if (result && result.success) {
       showToast('✅ ' + result.message);
       closeModal('stockInNewModal');
       await loadStockNew();
-    } else { alert('❌ ' + result.message); }
+    } else {
+      alert('❌ ' + (result && result.message ? result.message : 'Unknown'));
+    }
   } catch(e) { hideLoading(); alert('❌ ' + e.message); }
 }

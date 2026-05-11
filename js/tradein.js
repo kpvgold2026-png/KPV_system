@@ -2,80 +2,113 @@ async function loadTradeins() {
   try {
     var tbody = document.getElementById('tradeinTable');
     tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:30px;"><div style="display:inline-block;width:24px;height:24px;border:3px solid var(--border-color);border-top:3px solid var(--gold-primary);border-radius:50%;animation:spin 0.8s linear infinite;"></div></td></tr>';
-    const data = await fetchSheetData('Tradeins!A:T');
-    
-    let filteredData = data.slice(1);
-    
-    if (currentUser.role === 'User' || isManager()) {
-      if (tradeinDateFrom || tradeinDateTo) {
-        filteredData = filterByDateRange(filteredData, 11, 13, tradeinDateFrom, tradeinDateTo);
-      } else {
-        filteredData = filterTodayData(filteredData, 11, 13);
-      }
+
+    var filters = { type: 'eq.TRADEIN' };
+    var order = tradeinSortOrder === 'asc' ? 'date.asc' : 'date.desc';
+    if (currentUser.role === 'User') filters.sale_user_id = 'eq.' + currentUser.id;
+
+    var dateFrom = tradeinDateFrom;
+    var dateTo = tradeinDateTo;
+    if (!dateFrom && !dateTo && (currentUser.role === 'User' || isManager())) {
+      var today = getTodayLocalStr();
+      dateFrom = today; dateTo = today;
     }
-    
-    if (tradeinSortOrder === 'asc') {
-      filteredData.sort((a, b) => new Date(a[11]) - new Date(b[11]));
-    } else {
-      filteredData.sort((a, b) => new Date(b[11]) - new Date(a[11]));
+    if (dateFrom && dateTo) {
+      filters['and'] = '(date.gte.' + dateFrom + 'T00:00:00,date.lte.' + dateTo + 'T23:59:59)';
     }
-    
-    tbody = document.getElementById('tradeinTable');
-    if (filteredData.length === 0) {
+
+    var rows = await dbSelect('transactions', {
+      select: '*,items:transaction_items(product_id,qty,item_role),sale:users!sale_user_id(nickname)',
+      filters: filters,
+      order: order,
+      useCache: false
+    });
+
+    var data = (rows || []).map(function(r) {
+      var oldI = (r.items || []).filter(function(i) { return i.item_role === 'OLD'; });
+      var newI = (r.items || []).filter(function(i) { return i.item_role === 'NEW'; });
+      var focI = (r.items || []).filter(function(i) { return i.item_role === 'FOC'; });
+      var allOld = oldI.concat(focI);
+      return Object.assign({}, r, {
+        _oldJson: JSON.stringify(allOld.map(function(i) { return { productId: i.product_id, qty: i.qty }; })),
+        _newJson: JSON.stringify(newI.map(function(i) { return { productId: i.product_id, qty: i.qty }; })),
+        _focJson: JSON.stringify(focI.map(function(i) { return { productId: i.product_id, qty: i.qty }; })),
+        _pureOldJson: JSON.stringify(oldI.map(function(i) { return { productId: i.product_id, qty: i.qty }; })),
+        _saleName: r.sale ? r.sale.nickname : ''
+      });
+    });
+
+    if (data.length === 0) {
       tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; padding: 40px;">No records</td></tr>';
-    } else {
-      tbody.innerHTML = filteredData.map(row => {
-        const oldGold = formatItemsForTable(row[2]);
-        const newGold = formatItemsForTable(row[3]);
-        const premium = calculatePremiumFromItems(row[3]);
-        const saleName = row[13];
-        const status = row[12];
-        
-        let actions = '';
-        
-        if (status === 'PENDING') {
-          if (isManager()) {
-            actions = `<button class="btn-action" onclick="reviewTradein('${row[0]}')">Review</button>`;
-          } else {
-            actions = '<span style="color: var(--text-secondary);">Waiting for review</span>';
-          }
-        } else if (status === 'READY') {
-          if (currentUser.role === 'User') {
-            actions = `<button class="btn-action" onclick="openTradeinPaymentModal('${row[0]}')">Confirm</button>`;
-          } else {
-            actions = '<span style="color: var(--text-secondary);">Waiting for confirmation</span>';
-          }
-        } else {
-          var tiPaid = parseFloat(row[7]) || 0;
-          var tiChange = parseFloat(row[10]) || 0;
-          var tiPayInfo = tiPaid > 0 ? formatNumber(tiPaid) + ' ' + (row[8] || 'LAK') : '-';
-          var focGoldStr = row[16] ? formatItemsForTable(row[16]) : '-';
-          var pureOldGold = row[16] ? formatItemsForTable(subtractItems(row[2], row[16])) : oldGold;
-          var focPremDeduct = row[17] ? formatNumber(row[17]) + ' LAK' : '-';
-          var focBillRef = row[18] || '-';
-          var detail = encodeURIComponent(JSON.stringify([['Transaction ID', row[0]], ['BILL ID', row[19] || '-'], ['Phone', row[1]], ['F.O.C รหัสบิลเก่า', focBillRef], ['F.O.C (Old Gold)', focGoldStr], ['Old Gold', pureOldGold], ['New Gold', newGold], ['Difference', formatNumber(row[4]) + ' LAK'], ['Premium', formatNumber(premium) + ' LAK'], ['FOC Premium หัก', focPremDeduct], ['Total', formatNumber(row[6]) + ' LAK'], ['Customer Paid', tiPayInfo], ['Change', tiChange > 0 ? formatNumber(tiChange) + ' LAK' : '-'], ['Date', formatDateTime(row[11])], ['Status', status], ['Sale', saleName]]));
-          actions = '<button class="btn-action" onclick="viewTransactionDetail(\'Trade-in\',\'' + detail + '\')" style="background:#555;">👁 View</button>';
-        }
-        
-        return `
-          <tr>
-            <td>${row[0]}</td>
-            <td>${row[19] || '-'}</td>
-            <td style="font-size:11px;white-space:nowrap;">${row[11] || ''}</td>
-            <td>${row[1]}</td>
-            <td>${oldGold}</td>
-            <td>${newGold}</td>
-            <td>${formatNumber(row[4])}</td>
-            <td>${formatNumber(premium)}</td>
-            <td>${formatNumber(row[6])}</td>
-            <td><span class="status-badge status-${status.toLowerCase()}">${status}</span></td>
-            <td>${saleName}</td>
-            <td>${actions}</td>
-          </tr>
-        `;
-      }).join('');
+      return;
     }
+
+    tbody.innerHTML = data.map(function(row) {
+      var oldGold = formatItemsForTable(row._oldJson);
+      var newGold = formatItemsForTable(row._newJson);
+      var premium = parseFloat(row.premium) || 0;
+      var saleName = row._saleName;
+      var status = row.status;
+      var actions = '';
+
+      if (status === 'PENDING') {
+        if (isManager()) {
+          actions = '<button class="btn-action" onclick="reviewTradein(\'' + row.id + '\')">Review</button>';
+        } else {
+          actions = '<span style="color: var(--text-secondary);">Waiting for review</span>';
+        }
+      } else if (status === 'APPROVED' || status === 'READY') {
+        if (currentUser.role === 'User') {
+          actions = '<button class="btn-action" onclick="openTradeinPaymentModal(\'' + row.id + '\')">Confirm</button>';
+        } else {
+          actions = '<span style="color: var(--text-secondary);">Waiting for confirmation</span>';
+        }
+      } else {
+        var paid = parseFloat(row.paid) || 0;
+        var change = parseFloat(row.change_amount) || 0;
+        var payInfo = paid > 0 ? formatNumber(paid) + ' ' + (row.currency || 'LAK') : '-';
+        var focGoldStr = row._focJson !== '[]' ? formatItemsForTable(row._focJson) : '-';
+        var pureOldGold = row._focJson !== '[]' ? formatItemsForTable(row._pureOldJson) : oldGold;
+        var focPremDeduct = row.foc_premium_deduct ? formatNumber(row.foc_premium_deduct) + ' LAK' : '-';
+        var focBillRef = row.foc_bill_ref || '-';
+        var detail = encodeURIComponent(JSON.stringify([
+          ['Transaction ID', row.id],
+          ['BILL ID', row.bill_id || '-'],
+          ['Phone', row.phone],
+          ['F.O.C รหัสบิลเก่า', focBillRef],
+          ['F.O.C (Old Gold)', focGoldStr],
+          ['Old Gold', pureOldGold],
+          ['New Gold', newGold],
+          ['Difference', formatNumber(row.diff_amount) + ' LAK'],
+          ['Premium', formatNumber(premium) + ' LAK'],
+          ['FOC Premium หัก', focPremDeduct],
+          ['Total', formatNumber(row.total) + ' LAK'],
+          ['Customer Paid', payInfo],
+          ['Change', change > 0 ? formatNumber(change) + ' LAK' : '-'],
+          ['Date', formatDateTime(row.date)],
+          ['Status', status],
+          ['Sale', saleName]
+        ]));
+        actions = '<button class="btn-action" onclick="viewTransactionDetail(\'Trade-in\',\'' + detail + '\')" style="background:#555;">👁 View</button>';
+      }
+
+      return '<tr>' +
+        '<td>' + row.id + '</td>' +
+        '<td>' + (row.bill_id || '-') + '</td>' +
+        '<td style="font-size:11px;white-space:nowrap;">' + (row.date ? formatDateTime(row.date) : '') + '</td>' +
+        '<td>' + row.phone + '</td>' +
+        '<td>' + oldGold + '</td>' +
+        '<td>' + newGold + '</td>' +
+        '<td>' + formatNumber(row.diff_amount) + '</td>' +
+        '<td>' + formatNumber(premium) + '</td>' +
+        '<td>' + formatNumber(row.total) + '</td>' +
+        '<td><span class="status-badge status-' + status.toLowerCase() + '">' + status + '</span></td>' +
+        '<td>' + saleName + '</td>' +
+        '<td>' + actions + '</td>' +
+        '</tr>';
+    }).join('');
   } catch (error) {
+    console.error('Error loading tradeins:', error);
   }
 }
 
@@ -162,9 +195,7 @@ function updateTradeinTotal() {
 
   var totalOldWeight = focWeight + oldWeight;
   var premium = newPremium;
-  if (newPremium > 0 && focPremium > 0) {
-    premium = Math.max(0, newPremium - focPremium);
-  }
+  if (newPremium > 0 && focPremium > 0) premium = Math.max(0, newPremium - focPremium);
 
   var total = 0;
   var diffValue = 0;
@@ -189,39 +220,23 @@ function updateTradeinTotal() {
 async function calculateTradein() {
   if (_isSubmitting) return;
   var phone = document.getElementById('tradeinPhone').value.replace(/\D/g, '');
-  if (!phone || phone.length !== 8) {
-    alert('กรุณากรอกเบอร์โทร 8 หลัก');
-    return;
-  }
+  if (!phone || phone.length !== 8) { alert('กรุณากรอกเบอร์โทร 8 หลัก'); return; }
   var billId = document.getElementById('tradeinBillId').value.replace(/\D/g, '');
-  if (!billId || billId.length !== 6) {
-    alert('กรุณากรอก BILL ID ตัวเลข 6 หลัก');
-    return;
-  }
+  if (!billId || billId.length !== 6) { alert('กรุณากรอก BILL ID ตัวเลข 6 หลัก'); return; }
 
   var focGold = mergeItems(collectItems('tradeinFocGold'));
   var oldGold = mergeItems(collectItems('tradeinOldGold'));
   var newGold = mergeItems(collectItems('tradeinNewGold'));
 
-  if (oldGold.length === 0 && focGold.length === 0) {
-    alert('กรุณาเลือกทองเก่าอย่างน้อย 1 รายการ');
-    return;
-  }
-  if (newGold.length === 0) {
-    alert('กรุณาเลือกทองใหม่');
-    return;
-  }
+  if (oldGold.length === 0 && focGold.length === 0) { alert('กรุณาเลือกทองเก่าอย่างน้อย 1 รายการ'); return; }
+  if (newGold.length === 0) { alert('กรุณาเลือกทองใหม่'); return; }
   if (focGold.length > 0) {
     var focRef = document.getElementById('tradeinFocBillRef') ? document.getElementById('tradeinFocBillRef').value.trim() : '';
-    if (!focRef) {
-      alert('กรุณากรอกรหัสบิลเก่าสำหรับ F.O.C');
-      return;
-    }
+    if (!focRef) { alert('กรุณากรอกรหัสบิลเก่าสำหรับ F.O.C'); return; }
   }
 
   var focWeight = 0, oldWeight = 0, newWeight = 0;
   var focPremium = 0, newPremium = 0;
-
   focGold.forEach(function(item) {
     var p = FIXED_PRODUCTS.find(function(fp) { return fp.id === item.productId; });
     if (p) focWeight += p.weight * item.qty;
@@ -239,40 +254,35 @@ async function calculateTradein() {
 
   var totalOldWeight = focWeight + oldWeight;
   if (newWeight <= totalOldWeight) {
-    alert('❌ น้ำหนักทองใหม่ต้องมากกว่าทองเก่ารวม!\nทองเก่ารวม (FOC+Old): ' + totalOldWeight.toFixed(3) + ' บาท\nทองใหม่: ' + newWeight.toFixed(3) + ' บาท');
+    alert('❌ น้ำหนักทองใหม่ต้องมากกว่าทองเก่ารวม!\nทองเก่ารวม: ' + totalOldWeight.toFixed(3) + ' บาท\nทองใหม่: ' + newWeight.toFixed(3) + ' บาท');
     return;
   }
 
   var premium = newPremium;
-  if (newPremium > 0 && focPremium > 0) {
-    premium = Math.max(0, newPremium - focPremium);
-  }
+  if (newPremium > 0 && focPremium > 0) premium = Math.max(0, newPremium - focPremium);
 
   var difference = (newWeight - totalOldWeight) * currentPricing.sell1Baht;
   var total = roundTo1000(Math.round(difference) + premium);
-
-  var allOldGold = mergeItems(focGold.concat(oldGold));
 
   try {
     _isSubmitting = true;
     showLoading();
     var focBillRef = document.getElementById('tradeinFocBillRef') ? document.getElementById('tradeinFocBillRef').value.trim() : '';
-    var result = await callAppsScript('ADD_TRADEIN', {
-      phone: phone,
-      oldGold: JSON.stringify(allOldGold),
-      newGold: JSON.stringify(newGold),
-      focGold: JSON.stringify(focGold),
-      focBillRef: focBillRef,
-      billId: billId,
-      difference: difference,
-      premium: premium,
-      focPremiumDeduct: Math.min(focPremium, newPremium),
-      total: total,
-      sell1Baht: currentPricing.sell1Baht,
-      user: currentUser.nickname
+    var result = await dbRpc('create_tradein_tx', {
+      p_phone: phone,
+      p_bill_id: billId,
+      p_old_items: oldGold,
+      p_new_items: newGold,
+      p_foc_items: focGold,
+      p_foc_bill_ref: focBillRef,
+      p_difference: difference,
+      p_premium: premium,
+      p_foc_premium_deduct: Math.min(focPremium, newPremium),
+      p_total: total,
+      p_sell_1baht: currentPricing.sell1Baht
     });
 
-    if (result.success) {
+    if (result && result.success) {
       endSubmit();
       showToast('✅ สร้างรายการแลกเปลี่ยนสำเร็จ!');
       closeModal('tradeinModal');
@@ -289,7 +299,7 @@ async function calculateTradein() {
       addTradeinNewGold();
       loadTradeins();
     } else {
-      alert('❌ เกิดข้อผิดพลาด: ' + result.message);
+      alert('❌ เกิดข้อผิดพลาด: ' + (result && result.message ? result.message : 'Unknown'));
       endSubmit();
     }
   } catch (error) {
@@ -300,39 +310,24 @@ async function calculateTradein() {
 
 async function loadCurrentPricing() {
   try {
-    const pricingData = await fetchSheetData('Pricing!A:B');
-    
-    if (pricingData.length > 1) {
-      const latestPricing = pricingData[pricingData.length - 1];
-      currentPricing = {
-        sell1Baht: parseFloat(String(latestPricing[1]).replace(/,/g, '')) || 0,
-        buyback1Baht: 0
-      };
-      
-      console.log('Loaded currentPricing:', currentPricing);
-      return true;
-    }
-    return false;
+    await fetchCurrentPricing();
+    return currentPricing.sell1Baht > 0;
   } catch (error) {
-    console.error('Error loading pricing:', error);
     return false;
   }
 }
 
 async function openTradeinModal() {
-  const hasPrice = await loadCurrentPricing();
-  
-  if (!hasPrice || !currentPricing.sell1Baht || currentPricing.sell1Baht === 0) {
+  var hasPrice = await loadCurrentPricing();
+  if (!hasPrice) {
     alert('❌ ยังไม่มีราคาทองในระบบ! กรุณาไปที่หน้า Products → Set New Price ก่อน');
     return;
   }
-  
   openModal('tradeinModal');
 }
 
-
 function resetTradeinDateFilter() {
-  const today = getTodayDateString();
+  var today = getTodayDateString();
   document.getElementById('tradeinDateFrom').value = today;
   document.getElementById('tradeinDateTo').value = today;
   tradeinDateFrom = today;
@@ -341,16 +336,14 @@ function resetTradeinDateFilter() {
 }
 
 document.addEventListener('DOMContentLoaded', function() {
-  const fromInput = document.getElementById('tradeinDateFrom');
-  const toInput = document.getElementById('tradeinDateTo');
-  
+  var fromInput = document.getElementById('tradeinDateFrom');
+  var toInput = document.getElementById('tradeinDateTo');
   if (fromInput && toInput) {
     fromInput.addEventListener('change', function() {
       tradeinDateFrom = this.value;
       if (tradeinDateFrom && !tradeinDateTo) { tradeinDateTo = tradeinDateFrom; toInput.value = tradeinDateTo; }
       if (tradeinDateFrom && tradeinDateTo) loadTradeins();
     });
-    
     toInput.addEventListener('change', function() {
       tradeinDateTo = this.value;
       if (tradeinDateTo && !tradeinDateFrom) { tradeinDateFrom = tradeinDateTo; fromInput.value = tradeinDateFrom; }

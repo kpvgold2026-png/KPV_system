@@ -1,16 +1,19 @@
 async function loadWAC() {
   try {
     showLoading();
-
-    var dbData = await fetchSheetData('_database!A1:G31');
+    var rows = await dbSelect('wac_state', {
+      select: 'new_gold_g,new_value,old_gold_g,old_value',
+      filters: { id: 'eq.1' },
+      limit: 1,
+      useCache: false
+    });
 
     var newGoldG = 0, newValue = 0, oldGoldG = 0, oldValue = 0;
-
-    if (dbData.length >= 31) {
-      newGoldG = parseFloat(dbData[30][0]) || 0;
-      newValue = parseFloat(dbData[30][1]) || 0;
-      oldGoldG = parseFloat(dbData[30][2]) || 0;
-      oldValue = parseFloat(dbData[30][3]) || 0;
+    if (rows && rows.length > 0) {
+      newGoldG = parseFloat(rows[0].new_gold_g) || 0;
+      newValue = parseFloat(rows[0].new_value) || 0;
+      oldGoldG = parseFloat(rows[0].old_gold_g) || 0;
+      oldValue = parseFloat(rows[0].old_value) || 0;
     }
 
     var totalGoldG = newGoldG + oldGoldG;

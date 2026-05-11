@@ -7,12 +7,12 @@ CREATE TYPE tx_status AS ENUM ('PENDING', 'PARTIAL', 'COMPLETED', 'PAID', 'REJEC
 CREATE TYPE item_role AS ENUM ('OLD', 'NEW', 'FOC', 'SWITCH', 'FREE_EX');
 CREATE TYPE gold_type AS ENUM ('NEW', 'OLD');
 CREATE TYPE move_direction AS ENUM ('IN', 'OUT');
-CREATE TYPE move_type AS ENUM ('SELL', 'TRADEIN', 'EXCHANGE', 'SWITCH', 'BUYBACK', 'WITHDRAW', 'STOCK_IN', 'TRANSFER', 'ADJUST');
+CREATE TYPE move_type AS ENUM ('SELL', 'TRADEIN', 'EXCHANGE', 'SWITCH', 'BUYBACK', 'WITHDRAW', 'STOCK_IN', 'STOCK_OUT', 'TRANSFER', 'ADJUST');
 CREATE TYPE cashbank_type AS ENUM (
   'CASH_IN', 'CASH_OUT', 'BANK_IN', 'BANK_OUT', 'BANK_DEPOSIT', 'BANK_WITHDRAW',
   'OTHER_INCOME', 'OTHER_EXPENSE',
   'SELL', 'BUYBACK', 'BUYBACK_FEE', 'TRADEIN', 'EXCHANGE', 'WITHDRAW',
-  'OPEN_SHIFT', 'CLOSE_SHIFT', 'STOCK_IN'
+  'OPEN_SHIFT', 'CLOSE_SHIFT', 'STOCK_IN', 'STOCK_IN_FEE'
 );
 CREATE TYPE currency_code AS ENUM ('LAK', 'THB', 'USD');
 CREATE TYPE close_status AS ENUM ('PENDING', 'APPROVED', 'REJECTED');
@@ -76,7 +76,7 @@ CREATE TABLE pricing (
   id BIGSERIAL PRIMARY KEY,
   date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   sell_1baht NUMERIC(18,2) NOT NULL,
-  buyback_1baht NUMERIC(18,2) NOT NULL,
+  buyback_1baht NUMERIC(18,2) NOT NULL DEFAULT 0,
   updated_by UUID REFERENCES users(id),
   note TEXT
 );
@@ -170,6 +170,7 @@ CREATE TABLE stock_moves (
   wac_per_baht NUMERIC(18,2) DEFAULT 0,
   fulfilled BOOLEAN DEFAULT FALSE,
   user_id UUID REFERENCES users(id),
+  note TEXT,
   date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -300,11 +301,16 @@ CREATE TABLE closes (
   cash_usd NUMERIC(18,2) DEFAULT 0,
   old_gold JSONB DEFAULT '{}'::jsonb,
   new_gold JSONB DEFAULT '{}'::jsonb,
+  cash_summary JSONB DEFAULT '{}'::jsonb,
   bank_summary JSONB DEFAULT '{}'::jsonb,
+  gold_summary JSONB DEFAULT '{}'::jsonb,
+  total_tx INT DEFAULT 0,
+  total_amount NUMERIC(18,2) DEFAULT 0,
   status close_status NOT NULL DEFAULT 'PENDING',
   approved_by_id UUID REFERENCES users(id),
   approved_at TIMESTAMPTZ,
   note TEXT,
+  approval_note TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX idx_closes_user_date ON closes(user_id, date DESC);
@@ -590,6 +596,8 @@ CREATE POLICY closes_insert_self ON closes FOR INSERT
   WITH CHECK (user_id = current_user_id());
 CREATE POLICY closes_update_mgr ON closes FOR UPDATE
   USING (is_manager_or_admin()) WITH CHECK (is_manager_or_admin());
+CREATE POLICY closes_delete_own_pending ON closes FOR DELETE
+  USING ((user_id = current_user_id() AND status = 'PENDING') OR is_admin());
 
 CREATE POLICY daily_reports_read_all ON daily_reports FOR SELECT USING (current_user_id() IS NOT NULL);
 CREATE POLICY daily_reports_mgr_write ON daily_reports FOR ALL

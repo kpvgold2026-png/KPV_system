@@ -37,11 +37,7 @@ function openReviewDecisionModal(type, id, newGold, oldGold) {
   };
 
   var content = '';
-
-  if (oldGold) {
-    content += buildTable('◀ ทองเก่า (OLD GOLD)', '#ff9800', oldGold);
-  }
-
+  if (oldGold) content += buildTable('◀ ทองเก่า (OLD GOLD)', '#ff9800', oldGold);
   content += buildTable('▶ ทองใหม่ (NEW GOLD)', '#4caf50', newGold);
 
   document.getElementById('reviewDecisionItems').innerHTML = content;
@@ -50,102 +46,108 @@ function openReviewDecisionModal(type, id, newGold, oldGold) {
 
 async function submitReviewDecision(decision) {
   if (!currentReviewData) return;
-
   var note = document.getElementById('reviewDecisionNote').value.trim();
 
-  var actionMap = {
-    'SELL': 'REVIEW_SELL',
-    'TRADEIN': 'REVIEW_TRADEIN',
-    'EXCHANGE': 'REVIEW_EXCHANGE',
-    'WITHDRAW': 'REVIEW_WITHDRAW'
+  var rpcMap = {
+    'SELL': 'review_sell_tx',
+    'TRADEIN': 'review_tradein_tx',
+    'EXCHANGE': 'review_exchange_tx',
+    'WITHDRAW': 'review_withdraw_tx'
   };
-
-  var action = actionMap[currentReviewData.type];
-  if (!action) {
-    alert('❌ Unknown transaction type');
-    return;
-  }
+  var rpcName = rpcMap[currentReviewData.type];
+  if (!rpcName) { alert('❌ Unknown transaction type'); return; }
 
   try {
     showLoading();
 
-    var result = await callAppsScript(action, {
-      id: currentReviewData.id,
-      decision: decision,
-      approvedBy: currentUser.nickname,
-      note: note
-    });
+    if (decision === 'REJECT') {
+      var result = await dbRpc('reject_tx', {
+        p_tx_id: currentReviewData.id,
+        p_note: note
+      });
+      hideLoading();
+      if (result && result.success) {
+        alert('❌ Rejected!');
+        closeModal('reviewDecisionModal');
+        var type = currentReviewData.type;
+        currentReviewData = null;
+        if (type === 'SELL') loadSells();
+        else if (type === 'TRADEIN') loadTradeins();
+        else if (type === 'EXCHANGE') loadExchanges();
+        else if (type === 'WITHDRAW') loadWithdraws();
+        if (typeof loadHistorySell === 'function') loadHistorySell();
+        if (typeof loadDashboard === 'function') loadDashboard();
+      } else {
+        alert('❌ Error: ' + (result && result.message ? result.message : 'Unknown'));
+      }
+      return;
+    }
 
-    if (result.success) {
-      var msg = decision === 'APPROVE' ? '✅ Approved!' : '❌ Rejected!';
-      if (decision === 'APPROVE') { showToast(msg); } else { alert(msg); }
+    var result = await dbRpc(rpcName, { p_tx_id: currentReviewData.id });
+    hideLoading();
+    if (result && result.success) {
+      showToast('✅ Approved!');
       closeModal('reviewDecisionModal');
-
       var type = currentReviewData.type;
       currentReviewData = null;
-
       if (type === 'SELL') loadSells();
       else if (type === 'TRADEIN') loadTradeins();
       else if (type === 'EXCHANGE') loadExchanges();
       else if (type === 'WITHDRAW') loadWithdraws();
-
       if (typeof loadHistorySell === 'function') loadHistorySell();
-      loadDashboard();
+      if (typeof loadDashboard === 'function') loadDashboard();
     } else {
-      alert('❌ Error: ' + result.message);
+      alert('❌ Error: ' + (result && result.message ? result.message : 'Unknown'));
     }
-
-    hideLoading();
   } catch (error) {
-    alert('❌ Error: ' + error.message);
     hideLoading();
+    alert('❌ Error: ' + error.message);
   }
+}
+
+async function _loadTxItems(txId, role) {
+  var rows = await dbSelect('transaction_items', {
+    select: 'product_id,qty,item_role',
+    filters: { tx_id: 'eq.' + txId, item_role: 'eq.' + role },
+    useCache: false
+  });
+  return (rows || []).map(function(i) { return { productId: i.product_id, qty: i.qty }; });
 }
 
 async function reviewSell(sellId) {
   try {
-    var data = await fetchSheetData('Sells!A:L');
-    var sell = data.slice(1).find(function(row) { return row[0] === sellId; });
-    if (sell) {
-      openReviewDecisionModal('SELL', sellId, sell[2], null);
-    }
+    var newItems = await _loadTxItems(sellId, 'NEW');
+    openReviewDecisionModal('SELL', sellId, JSON.stringify(newItems), null);
   } catch (e) {
-    alert('❌ Error loading data');
+    alert('❌ Error loading data: ' + e.message);
   }
 }
 
 async function reviewTradein(tradeinId) {
   try {
-    var data = await fetchSheetData('Tradeins!A:N');
-    var tradein = data.slice(1).find(function(row) { return row[0] === tradeinId; });
-    if (tradein) {
-      openReviewDecisionModal('TRADEIN', tradeinId, tradein[3], tradein[2]);
-    }
+    var newItems = await _loadTxItems(tradeinId, 'NEW');
+    var oldItems = await _loadTxItems(tradeinId, 'OLD');
+    openReviewDecisionModal('TRADEIN', tradeinId, JSON.stringify(newItems), JSON.stringify(oldItems));
   } catch (e) {
-    alert('❌ Error loading data');
+    alert('❌ Error loading data: ' + e.message);
   }
 }
 
 async function reviewExchange(exchangeId) {
   try {
-    var data = await fetchSheetData('Exchanges!A:T');
-    var ex = data.slice(1).find(function(row) { return row[0] === exchangeId; });
-    if (ex) {
-      openReviewDecisionModal('EXCHANGE', exchangeId, ex[3], ex[2]);
-    }
+    var newItems = await _loadTxItems(exchangeId, 'NEW');
+    var oldItems = await _loadTxItems(exchangeId, 'OLD');
+    openReviewDecisionModal('EXCHANGE', exchangeId, JSON.stringify(newItems), JSON.stringify(oldItems));
   } catch (e) {
-    alert('❌ Error loading data');
+    alert('❌ Error loading data: ' + e.message);
   }
 }
 
 async function reviewWithdraw(withdrawId) {
   try {
-    var data = await fetchSheetData('Withdraws!A:J');
-    var withdraw = data.slice(1).find(function(row) { return row[0] === withdrawId; });
-    if (withdraw) {
-      openReviewDecisionModal('WITHDRAW', withdrawId, withdraw[2], null);
-    }
+    var newItems = await _loadTxItems(withdrawId, 'NEW');
+    openReviewDecisionModal('WITHDRAW', withdrawId, JSON.stringify(newItems), null);
   } catch (e) {
-    alert('❌ Error loading data');
+    alert('❌ Error loading data: ' + e.message);
   }
 }

@@ -5,64 +5,65 @@ async function loadCashBank() {
   try {
     showLoading();
 
-    const [cashbankData, dbData] = await Promise.all([
-      fetchSheetData('CashBank!A:I'),
-      fetchSheetData('_database!A1:G31')
-    ]);
+    var balResult = await dbRpc('get_cashbank_balances', {});
 
-    let balances = {
+    var balances = {
       cash: { LAK: 0, THB: 0, USD: 0 },
       bcel: { LAK: 0, THB: 0, USD: 0 },
       ldb: { LAK: 0, THB: 0, USD: 0 },
       other: { LAK: 0, THB: 0, USD: 0 }
     };
 
-    if (dbData.length >= 17) {
-      balances.cash.LAK = parseFloat(dbData[16][0]) || 0;
-      balances.cash.THB = parseFloat(dbData[16][1]) || 0;
-      balances.cash.USD = parseFloat(dbData[16][2]) || 0;
+    if (balResult && balResult.cash) {
+      balances.cash.LAK = parseFloat(balResult.cash.LAK) || 0;
+      balances.cash.THB = parseFloat(balResult.cash.THB) || 0;
+      balances.cash.USD = parseFloat(balResult.cash.USD) || 0;
     }
-
-    if (dbData.length >= 20) {
-      balances.bcel.LAK = parseFloat(dbData[19][0]) || 0;
-      balances.bcel.THB = parseFloat(dbData[19][1]) || 0;
-      balances.bcel.USD = parseFloat(dbData[19][2]) || 0;
-    }
-
-    if (dbData.length >= 23) {
-      balances.ldb.LAK = parseFloat(dbData[22][0]) || 0;
-      balances.ldb.THB = parseFloat(dbData[22][1]) || 0;
-      balances.ldb.USD = parseFloat(dbData[22][2]) || 0;
-    }
-
-    if (dbData.length >= 17) {
-      balances.other.LAK = parseFloat(dbData[16][4]) || 0;
-      balances.other.THB = parseFloat(dbData[16][5]) || 0;
-      balances.other.USD = parseFloat(dbData[16][6]) || 0;
+    if (balResult && balResult.banks) {
+      var banksKey = { 'BCEL': 'bcel', 'LDB': 'ldb', 'OTHER': 'other' };
+      Object.keys(balResult.banks).forEach(function(bankName) {
+        var key = banksKey[bankName] || 'other';
+        var b = balResult.banks[bankName] || {};
+        balances[key].LAK = parseFloat(b.LAK) || 0;
+        balances[key].THB = parseFloat(b.THB) || 0;
+        balances[key].USD = parseFloat(b.USD) || 0;
+      });
     }
 
     document.getElementById('cashLAK').textContent = formatNumber(balances.cash.LAK);
-    document.getElementById('cashTHB').textContent = formatCurrency(balances.cash.THB,'THB');
-    document.getElementById('cashUSD').textContent = formatCurrency(balances.cash.USD,'USD');
-
+    document.getElementById('cashTHB').textContent = formatCurrency(balances.cash.THB, 'THB');
+    document.getElementById('cashUSD').textContent = formatCurrency(balances.cash.USD, 'USD');
     document.getElementById('bcelLAK').textContent = formatNumber(balances.bcel.LAK);
-    document.getElementById('bcelTHB').textContent = formatCurrency(balances.bcel.THB,'THB');
-    document.getElementById('bcelUSD').textContent = formatCurrency(balances.bcel.USD,'USD');
-
+    document.getElementById('bcelTHB').textContent = formatCurrency(balances.bcel.THB, 'THB');
+    document.getElementById('bcelUSD').textContent = formatCurrency(balances.bcel.USD, 'USD');
     document.getElementById('ldbLAK').textContent = formatNumber(balances.ldb.LAK);
-    document.getElementById('ldbTHB').textContent = formatCurrency(balances.ldb.THB,'THB');
-    document.getElementById('ldbUSD').textContent = formatCurrency(balances.ldb.USD,'USD');
-
+    document.getElementById('ldbTHB').textContent = formatCurrency(balances.ldb.THB, 'THB');
+    document.getElementById('ldbUSD').textContent = formatCurrency(balances.ldb.USD, 'USD');
     document.getElementById('otherBankLAK').textContent = formatNumber(balances.other.LAK);
-    document.getElementById('otherBankTHB').textContent = formatCurrency(balances.other.THB,'THB');
-    document.getElementById('otherBankUSD').textContent = formatCurrency(balances.other.USD,'USD');
+    document.getElementById('otherBankTHB').textContent = formatCurrency(balances.other.THB, 'THB');
+    document.getElementById('otherBankUSD').textContent = formatCurrency(balances.other.USD, 'USD');
 
-    _cashbankAllRows = [];
-    if (cashbankData.length > 1) {
-      _cashbankAllRows = cashbankData.slice(1).filter(function(row) {
-        return _cashbankFilteredTypes.indexOf(row[1]) >= 0;
-      });
-    }
+    var rows = await dbSelect('cashbank', {
+      select: 'id,type,amount,currency,method,bank_id,note,date,ref_tx_id,bank:banks!bank_id(name)',
+      filters: { type: 'in.(' + _cashbankFilteredTypes.join(',') + ')' },
+      order: 'date.desc',
+      limit: 500,
+      useCache: false
+    });
+
+    _cashbankAllRows = (rows || []).map(function(r) {
+      return [
+        r.id,
+        r.type,
+        r.amount,
+        r.currency,
+        r.method,
+        r.bank ? r.bank.name : '',
+        r.note || '',
+        r.date,
+        r.ref_tx_id || ''
+      ];
+    });
 
     var cbStart = document.getElementById('cbStartDate');
     var cbEnd = document.getElementById('cbEndDate');
@@ -86,7 +87,7 @@ function renderCashBankTable(rows) {
     tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 40px;">No records</td></tr>';
     return;
   }
-  tbody.innerHTML = rows.slice().reverse().map(function(row) {
+  tbody.innerHTML = rows.map(function(row) {
     return '<tr>' +
       '<td>' + row[0] + '</td>' +
       '<td>' + row[1] + '</td>' +
@@ -110,8 +111,8 @@ function filterCashBankByDate() {
   var startDate = startStr ? new Date(startStr + 'T00:00:00') : null;
   var endDate = endStr ? new Date(endStr + 'T23:59:59') : null;
   var filtered = _cashbankAllRows.filter(function(row) {
-    var d = parseSheetDate(row[7]);
-    if (!d) return false;
+    var d = new Date(row[7]);
+    if (isNaN(d.getTime())) return false;
     if (startDate && d < startDate) return false;
     if (endDate && d > endDate) return false;
     return true;
@@ -121,182 +122,113 @@ function filterCashBankByDate() {
 
 function showTodayCashBank() {
   var today = new Date();
-  var yyyy = today.getFullYear();
-  var mm = String(today.getMonth() + 1).padStart(2, '0');
-  var dd = String(today.getDate()).padStart(2, '0');
-  var todayStr = yyyy + '-' + mm + '-' + dd;
+  var todayStr = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
   document.getElementById('cbStartDate').value = todayStr;
   document.getElementById('cbEndDate').value = todayStr;
   filterCashBankByDate();
 }
 
 function toggleOtherIncomeBank() {
-  const method = document.getElementById('otherIncomeMethod').value;
-  const bankGroup = document.getElementById('otherIncomeBankGroup');
-  bankGroup.style.display = method === 'BANK' ? 'block' : 'none';
+  var method = document.getElementById('otherIncomeMethod').value;
+  document.getElementById('otherIncomeBankGroup').style.display = method === 'BANK' ? 'block' : 'none';
 }
 
 function toggleOtherExpenseBank() {
-  const method = document.getElementById('otherExpenseMethod').value;
-  const bankGroup = document.getElementById('otherExpenseBankGroup');
-  bankGroup.style.display = method === 'BANK' ? 'block' : 'none';
+  var method = document.getElementById('otherExpenseMethod').value;
+  document.getElementById('otherExpenseBankGroup').style.display = method === 'BANK' ? 'block' : 'none';
+}
+
+async function _submitCashBankEntry(type, amount, currency, method, bank, note) {
+  if (!amount || amount <= 0) {
+    alert('Please enter amount');
+    return false;
+  }
+  showLoading();
+  try {
+    var result = await dbRpc('add_cashbank_entry', {
+      p_type: type,
+      p_amount: amount,
+      p_currency: currency,
+      p_method: method,
+      p_bank_name: bank || null,
+      p_note: note
+    });
+    hideLoading();
+    if (result && result.success) {
+      showToast('✅ Transaction added successfully!');
+      return true;
+    } else {
+      alert('❌ Error: ' + (result && result.message ? result.message : 'Unknown'));
+      return false;
+    }
+  } catch (error) {
+    hideLoading();
+    alert('❌ Error: ' + error.message);
+    return false;
+  }
 }
 
 async function submitCash() {
-  const type = document.getElementById('cashType').value;
-  const amountEl = document.getElementById('cashAmount');
-  const amount = amountEl.numericValue || parseFloat(String(amountEl.value).replace(/,/g, '')) || 0;
-  const currency = document.getElementById('cashCurrency').value;
-  const note = document.getElementById('cashNote').value;
-
-  if (!amount || amount <= 0) {
-    alert('Please enter amount');
-    return;
-  }
-
-  try {
-    showLoading();
-    const result = await callAppsScript('ADD_CASHBANK', {
-      type: type === 'IN' ? 'CASH_IN' : 'CASH_OUT',
-      amount,
-      currency,
-      method: 'CASH',
-      bank: '',
-      note
-    });
-
-    if (result.success) {
-      showToast('✅ Transaction added successfully!');
-      closeModal('cashModal');
-      document.getElementById('cashAmount').value = '';
-      document.getElementById('cashNote').value = '';
-      loadCashBank();
-    } else {
-      alert('❌ Error: ' + result.message);
-    }
-    hideLoading();
-  } catch (error) {
-    alert('❌ Error: ' + error.message);
-    hideLoading();
+  var type = document.getElementById('cashType').value;
+  var amountEl = document.getElementById('cashAmount');
+  var amount = amountEl.numericValue || parseFloat(String(amountEl.value).replace(/,/g, '')) || 0;
+  var currency = document.getElementById('cashCurrency').value;
+  var note = document.getElementById('cashNote').value;
+  var dbType = type === 'IN' ? 'CASH_IN' : 'CASH_OUT';
+  var ok = await _submitCashBankEntry(dbType, amount, currency, 'CASH', '', note);
+  if (ok) {
+    closeModal('cashModal');
+    document.getElementById('cashAmount').value = '';
+    document.getElementById('cashNote').value = '';
+    loadCashBank();
   }
 }
 
 async function submitBank() {
-  const type = document.getElementById('bankType').value;
-  const bank = document.getElementById('bankName').value;
-  const amountEl = document.getElementById('bankAmount');
-  const amount = amountEl.numericValue || parseFloat(String(amountEl.value).replace(/,/g, '')) || 0;
-  const currency = document.getElementById('bankCurrency').value;
-  const note = document.getElementById('bankNote').value;
-
-  if (!amount || amount <= 0) {
-    alert('Please enter amount');
-    return;
-  }
-
-  try {
-    showLoading();
-    const result = await callAppsScript('ADD_CASHBANK', {
-      type: type === 'DEPOSIT' ? 'BANK_DEPOSIT' : 'BANK_WITHDRAW',
-      amount,
-      currency,
-      method: 'BANK',
-      bank,
-      note
-    });
-
-    if (result.success) {
-      showToast('✅ Transaction added successfully!');
-      closeModal('bankModal');
-      document.getElementById('bankAmount').value = '';
-      document.getElementById('bankNote').value = '';
-      loadCashBank();
-    } else {
-      alert('❌ Error: ' + result.message);
-    }
-    hideLoading();
-  } catch (error) {
-    alert('❌ Error: ' + error.message);
-    hideLoading();
+  var type = document.getElementById('bankType').value;
+  var bank = document.getElementById('bankName').value;
+  var amountEl = document.getElementById('bankAmount');
+  var amount = amountEl.numericValue || parseFloat(String(amountEl.value).replace(/,/g, '')) || 0;
+  var currency = document.getElementById('bankCurrency').value;
+  var note = document.getElementById('bankNote').value;
+  var dbType = type === 'DEPOSIT' ? 'BANK_DEPOSIT' : 'BANK_WITHDRAW';
+  var ok = await _submitCashBankEntry(dbType, amount, currency, 'BANK', bank, note);
+  if (ok) {
+    closeModal('bankModal');
+    document.getElementById('bankAmount').value = '';
+    document.getElementById('bankNote').value = '';
+    loadCashBank();
   }
 }
 
 async function submitOtherIncome() {
-  const method = document.getElementById('otherIncomeMethod').value;
-  const bank = method === 'BANK' ? document.getElementById('otherIncomeBank').value : '';
-  const amountEl = document.getElementById('otherIncomeAmount');
-  const amount = amountEl.numericValue || parseFloat(String(amountEl.value).replace(/,/g, '')) || 0;
-  const currency = document.getElementById('otherIncomeCurrency').value;
-  const note = document.getElementById('otherIncomeNote').value;
-
-  if (!amount || amount <= 0) {
-    alert('Please enter amount');
-    return;
-  }
-
-  try {
-    showLoading();
-    const result = await callAppsScript('ADD_CASHBANK', {
-      type: 'OTHER_INCOME',
-      amount,
-      currency,
-      method,
-      bank,
-      note
-    });
-
-    if (result.success) {
-      showToast('✅ Transaction added successfully!');
-      closeModal('otherIncomeModal');
-      document.getElementById('otherIncomeAmount').value = '';
-      document.getElementById('otherIncomeNote').value = '';
-      loadCashBank();
-    } else {
-      alert('❌ Error: ' + result.message);
-    }
-    hideLoading();
-  } catch (error) {
-    alert('❌ Error: ' + error.message);
-    hideLoading();
+  var method = document.getElementById('otherIncomeMethod').value;
+  var bank = method === 'BANK' ? document.getElementById('otherIncomeBank').value : '';
+  var amountEl = document.getElementById('otherIncomeAmount');
+  var amount = amountEl.numericValue || parseFloat(String(amountEl.value).replace(/,/g, '')) || 0;
+  var currency = document.getElementById('otherIncomeCurrency').value;
+  var note = document.getElementById('otherIncomeNote').value;
+  var ok = await _submitCashBankEntry('OTHER_INCOME', amount, currency, method, bank, note);
+  if (ok) {
+    closeModal('otherIncomeModal');
+    document.getElementById('otherIncomeAmount').value = '';
+    document.getElementById('otherIncomeNote').value = '';
+    loadCashBank();
   }
 }
 
 async function submitOtherExpense() {
-  const method = document.getElementById('otherExpenseMethod').value;
-  const bank = method === 'BANK' ? document.getElementById('otherExpenseBank').value : '';
-  const amountEl = document.getElementById('otherExpenseAmount');
-  const amount = amountEl.numericValue || parseFloat(String(amountEl.value).replace(/,/g, '')) || 0;
-  const currency = document.getElementById('otherExpenseCurrency').value;
-  const note = document.getElementById('otherExpenseNote').value;
-
-  if (!amount || amount <= 0) {
-    alert('Please enter amount');
-    return;
-  }
-
-  try {
-    showLoading();
-    const result = await callAppsScript('ADD_CASHBANK', {
-      type: 'OTHER_EXPENSE',
-      amount,
-      currency,
-      method,
-      bank,
-      note
-    });
-
-    if (result.success) {
-      showToast('✅ Transaction added successfully!');
-      closeModal('otherExpenseModal');
-      document.getElementById('otherExpenseAmount').value = '';
-      document.getElementById('otherExpenseNote').value = '';
-      loadCashBank();
-    } else {
-      alert('❌ Error: ' + result.message);
-    }
-    hideLoading();
-  } catch (error) {
-    alert('❌ Error: ' + error.message);
-    hideLoading();
+  var method = document.getElementById('otherExpenseMethod').value;
+  var bank = method === 'BANK' ? document.getElementById('otherExpenseBank').value : '';
+  var amountEl = document.getElementById('otherExpenseAmount');
+  var amount = amountEl.numericValue || parseFloat(String(amountEl.value).replace(/,/g, '')) || 0;
+  var currency = document.getElementById('otherExpenseCurrency').value;
+  var note = document.getElementById('otherExpenseNote').value;
+  var ok = await _submitCashBankEntry('OTHER_EXPENSE', amount, currency, method, bank, note);
+  if (ok) {
+    closeModal('otherExpenseModal');
+    document.getElementById('otherExpenseAmount').value = '';
+    document.getElementById('otherExpenseNote').value = '';
+    loadCashBank();
   }
 }

@@ -106,3 +106,58 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 GRANT EXECUTE ON FUNCTION create_user(TEXT, TEXT, TEXT, user_role) TO authenticated;
+
+CREATE OR REPLACE FUNCTION reject_tx(p_tx_id TEXT, p_note TEXT)
+RETURNS JSONB AS $$
+DECLARE
+  v_user_id UUID;
+  v_status tx_status;
+  v_type tx_type;
+BEGIN
+  v_user_id := current_user_id();
+  IF NOT is_manager_or_admin() THEN
+    RETURN jsonb_build_object('success', false, 'message', 'Manager only');
+  END IF;
+  SELECT status, type INTO v_status, v_type FROM transactions WHERE id = p_tx_id;
+  IF v_status IS NULL THEN RETURN jsonb_build_object('success', false, 'message', 'Not found'); END IF;
+  IF v_status NOT IN ('PENDING', 'APPROVED') THEN
+    RETURN jsonb_build_object('success', false, 'message', 'Cannot reject: ' || v_status);
+  END IF;
+  UPDATE transactions SET status = 'REJECTED', note = p_note, updated_at = NOW() WHERE id = p_tx_id;
+  INSERT INTO approvals (ref_id, ref_type, decision, note, approved_by_id)
+  VALUES (p_tx_id, v_type::text, 'REJECTED', p_note, v_user_id);
+  RETURN jsonb_build_object('success', true);
+EXCEPTION WHEN OTHERS THEN
+  RETURN jsonb_build_object('success', false, 'message', SQLERRM);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+GRANT EXECUTE ON FUNCTION reject_tx(TEXT, TEXT) TO authenticated;
+
+CREATE OR REPLACE FUNCTION delete_tx(p_tx_id TEXT)
+RETURNS JSONB AS $$
+DECLARE
+  v_user_id UUID;
+  v_status tx_status;
+  v_payload JSONB;
+BEGIN
+  v_user_id := current_user_id();
+  IF NOT is_admin() THEN
+    RETURN jsonb_build_object('success', false, 'message', 'Admin only');
+  END IF;
+  SELECT row_to_json(t)::jsonb INTO v_payload FROM transactions t WHERE id = p_tx_id;
+  IF v_payload IS NULL THEN RETURN jsonb_build_object('success', false, 'message', 'Not found'); END IF;
+  SELECT status INTO v_status FROM transactions WHERE id = p_tx_id;
+  IF v_status = 'COMPLETED' THEN
+    RETURN jsonb_build_object('success', false, 'message', 'Cannot delete completed tx');
+  END IF;
+  INSERT INTO audit_logs (table_name, ref_id, action, payload, user_id)
+  VALUES ('transactions', p_tx_id, 'DELETE', v_payload, v_user_id);
+  DELETE FROM transactions WHERE id = p_tx_id;
+  RETURN jsonb_build_object('success', true);
+EXCEPTION WHEN OTHERS THEN
+  RETURN jsonb_build_object('success', false, 'message', SQLERRM);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+GRANT EXECUTE ON FUNCTION delete_tx(TEXT) TO authenticated;

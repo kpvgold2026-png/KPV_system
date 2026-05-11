@@ -384,19 +384,36 @@ async function confirmMultiPayment() {
   try {
     showLoading();
 
-    if (currentPaymentData.type === 'SELL') {
-      var allItems = paymentItems.cash.concat(paymentItems.bank);
-      var primary = allItems.find(function(i) { return i.amount > 0; }) || { currency: 'LAK', method: 'CASH', bank: null };
+    var supabaseTypes = ['SELL', 'TRADEIN', 'EXCHANGE', 'WITHDRAW', 'BUYBACK'];
+    if (supabaseTypes.indexOf(currentPaymentData.type) !== -1) {
+      var rpcMap = {
+        'SELL': 'confirm_sell_tx',
+        'TRADEIN': 'confirm_tradein_tx',
+        'EXCHANGE': 'confirm_exchange_tx',
+        'WITHDRAW': 'confirm_withdraw_tx',
+        'BUYBACK': 'confirm_buyback_tx'
+      };
+      var rpcName = rpcMap[currentPaymentData.type];
 
+      var allItems = paymentItems.cash.concat(paymentItems.bank);
       var lakItems = allItems.filter(function(i) { return i.currency === 'LAK' && i.amount > 0; });
-      var totalLAK = lakItems.reduce(function(s, i) { return s + i.amount; }, 0);
       var nonLakItems = allItems.filter(function(i) { return i.currency !== 'LAK' && i.amount > 0; });
 
       var paymentEntries = [];
       lakItems.forEach(function(i) { paymentEntries.push(i); });
       nonLakItems.forEach(function(i) { paymentEntries.push(i); });
 
-      var firstResult = null;
+      if (paymentEntries.length === 0) {
+        alert('❌ ไม่มีรายการชำระเงิน');
+        endSubmit();
+        return;
+      }
+
+      var totalFee = 0;
+      if (currentPaymentData.type === 'BUYBACK') {
+        paymentItems.bank.forEach(function(item) { totalFee += item.fee || 0; });
+      }
+
       for (var pi = 0; pi < paymentEntries.length; pi++) {
         var p = paymentEntries[pi];
         var bankId = null;
@@ -406,15 +423,20 @@ async function confirmMultiPayment() {
             if (b && b.length > 0) bankId = b[0].id;
           } catch(e2) {}
         }
-        var partial = await dbRpc('confirm_sell_tx', {
+
+        var params = {
           p_tx_id: currentPaymentData.id,
           p_paid: p.amount,
           p_currency: p.currency,
           p_method: p.method,
           p_bank_id: bankId,
           p_change: pi === paymentEntries.length - 1 ? change : 0
-        });
-        if (!firstResult) firstResult = partial;
+        };
+        if (currentPaymentData.type === 'BUYBACK') {
+          params.p_fee = pi === 0 ? totalFee : 0;
+        }
+
+        var partial = await dbRpc(rpcName, params);
         if (!partial || !partial.success) {
           alert('❌ เกิดข้อผิดพลาด: ' + (partial && partial.message ? partial.message : 'Unknown'));
           endSubmit();
@@ -427,65 +449,15 @@ async function confirmMultiPayment() {
       currentPaymentData = null;
       paymentItems = { cash: [], bank: [] };
       if (typeof loadSells === 'function') loadSells();
-      endSubmit();
-      return;
-    }
-
-    const actionMap = {
-      'SELL': 'CONFIRM_SELL_PAYMENT',
-      'TRADEIN': 'CONFIRM_TRADEIN_PAYMENT',
-      'EXCHANGE': 'CONFIRM_EXCHANGE_PAYMENT',
-      'WITHDRAW': 'CONFIRM_WITHDRAW_PAYMENT',
-      'BUYBACK': 'CONFIRM_BUYBACK_PAYMENT',
-      'SWITCH': 'CONFIRM_SWITCH_PAYMENT',
-      'FREE_EXCHANGE': 'CONFIRM_FREE_EXCHANGE_PAYMENT'
-    };
-    
-    const action = actionMap[currentPaymentData.type];
-    
-    const idParamMap = {
-      'SELL': 'sellId',
-      'TRADEIN': 'tradeinId',
-      'EXCHANGE': 'exchangeId',
-      'WITHDRAW': 'id',
-      'BUYBACK': 'buybackId',
-      'SWITCH': 'switchId',
-      'FREE_EXCHANGE': 'freeExId'
-    };
-    
-    const params = {
-      [idParamMap[currentPaymentData.type]]: currentPaymentData.id,
-      payments: JSON.stringify({ cash: paymentItems.cash, bank: paymentItems.bank }),
-      totalPaid: totalPaid,
-      change: change,
-      user: currentUser.nickname
-    };
-    if (currentPaymentData.type === 'BUYBACK') {
-      var totalFee = 0;
-      paymentItems.bank.forEach(function(item) { totalFee += item.fee || 0; });
-      params.fee = totalFee;
-      params.items = currentPaymentData.items || '';
-      params.total = currentPaymentData.total || 0;
-    }
-    const result = await callAppsScript(action, params);
-    
-    if (result.success) {
-      showToast('✅ ยืนยันการชำระเงินสำเร็จ!');
-      closeModal('multiPaymentModal');
-      currentPaymentData = null;
-      paymentItems = { cash: [], bank: [] };
-      
-      if (typeof loadSells === 'function') loadSells();
       if (typeof loadTradeins === 'function') loadTradeins();
       if (typeof loadExchanges === 'function') loadExchanges();
       if (typeof loadWithdraws === 'function') loadWithdraws();
       if (typeof loadBuybacks === 'function') loadBuybacks();
-      if (typeof loadSwitches === 'function') loadSwitches();
-      if (typeof loadFreeExchanges === 'function') loadFreeExchanges();
-    } else {
-      alert('❌ เกิดข้อผิดพลาด: ' + result.message);
+      endSubmit();
+      return;
     }
-    
+
+    alert('❌ ไม่รองรับประเภทธุรกรรม: ' + currentPaymentData.type);
     endSubmit();
   } catch (error) {
     alert('❌ เกิดข้อผิดพลาด: ' + error.message);
@@ -513,49 +485,61 @@ async function openSellPayment(sellId) {
   }
 }
 
+async function _loadTxWithItems(txId) {
+  var rows = await dbSelect('transactions', {
+    select: '*,items:transaction_items(product_id,qty,item_role)',
+    filters: { id: 'eq.' + txId },
+    limit: 1,
+    useCache: false
+  });
+  if (!rows || rows.length === 0) return null;
+  var r = rows[0];
+  var byRole = function(role) {
+    return (r.items || []).filter(function(i) { return i.item_role === role; })
+      .map(function(i) { return { productId: i.product_id, qty: parseFloat(i.qty) }; });
+  };
+  r._oldItems = byRole('OLD');
+  r._newItems = byRole('NEW');
+  r._focItems = byRole('FOC');
+  r._switchItems = byRole('SWITCH');
+  r._freeExItems = byRole('FREE_EX');
+  return r;
+}
+
 async function openTradeinPaymentModal(tradeinId) {
-  const data = await fetchSheetData('Tradeins!A:N');
-  const tradein = data.slice(1).find(row => row[0] === tradeinId);
-  if (!tradein) return;
-  
-  const oldGold = formatItemsForPayment(tradein[2]);
-  const newGold = formatItemsForPayment(tradein[3]);
-  const total = parseFloat(tradein[6]) || 0;
-  
-  openMultiPaymentModal('TRADEIN', tradeinId, total, tradein[1], 
-    `<strong>Old Gold:</strong> ${oldGold}<br><strong>New Gold:</strong> ${newGold}`);
+  var r = await _loadTxWithItems(tradeinId);
+  if (!r) return;
+  var oldGold = formatItemsForPayment(JSON.stringify(r._oldItems.concat(r._focItems)));
+  var newGold = formatItemsForPayment(JSON.stringify(r._newItems));
+  var total = parseFloat(r.total) || 0;
+  openMultiPaymentModal('TRADEIN', tradeinId, total, r.phone,
+    '<strong>Old Gold:</strong> ' + oldGold + '<br><strong>New Gold:</strong> ' + newGold);
 }
 
 async function openExchangePaymentModal(exchangeId) {
-  const data = await fetchSheetData('Exchanges!A:N');
-  const exchange = data.slice(1).find(row => row[0] === exchangeId);
-  if (!exchange) return;
-  
-  const oldGold = formatItemsForPayment(exchange[2]);
-  const newGold = formatItemsForPayment(exchange[3]);
-  const total = parseFloat(exchange[6]) || 0;
-  
-  openMultiPaymentModal('EXCHANGE', exchangeId, total, exchange[1], 
-    `<strong>Old Gold:</strong> ${oldGold}<br><strong>New Gold:</strong> ${newGold}`);
+  var r = await _loadTxWithItems(exchangeId);
+  if (!r) return;
+  var oldGold = formatItemsForPayment(JSON.stringify(r._oldItems.concat(r._switchItems).concat(r._freeExItems)));
+  var newGold = formatItemsForPayment(JSON.stringify(r._newItems));
+  var total = parseFloat(r.total) || 0;
+  openMultiPaymentModal('EXCHANGE', exchangeId, total, r.phone,
+    '<strong>Old Gold:</strong> ' + oldGold + '<br><strong>New Gold:</strong> ' + newGold);
 }
 
 async function openWithdrawPaymentModal(withdrawId) {
-  const data = await fetchSheetData('Withdraws!A:J');
-  const withdraw = data.slice(1).find(row => row[0] === withdrawId);
-  if (!withdraw) return;
-  
-  const items = formatItemsForPayment(withdraw[2]);
-  const total = parseFloat(withdraw[4]) || 0;
-  
-  openMultiPaymentModal('WITHDRAW', withdrawId, total, withdraw[1], `<strong>Items:</strong> ${items}`);
+  var r = await _loadTxWithItems(withdrawId);
+  if (!r) return;
+  var items = formatItemsForPayment(JSON.stringify(r._newItems));
+  var total = parseFloat(r.total) || 0;
+  openMultiPaymentModal('WITHDRAW', withdrawId, total, r.phone, '<strong>Items:</strong> ' + items);
 }
 
 function formatItemsForPayment(itemsJson) {
   try {
-    const items = typeof itemsJson === 'string' ? JSON.parse(itemsJson) : itemsJson;
-    return items.map(item => {
-      const product = FIXED_PRODUCTS.find(p => p.id === item.productId);
-      return `${product?.name || item.productId} x${item.qty}`;
+    var items = typeof itemsJson === 'string' ? JSON.parse(itemsJson) : itemsJson;
+    return items.map(function(item) {
+      var product = FIXED_PRODUCTS.find(function(p) { return p.id === item.productId; });
+      return (product ? product.name : item.productId) + ' x' + item.qty;
     }).join(', ');
   } catch (e) {
     return '-';
@@ -563,53 +547,45 @@ function formatItemsForPayment(itemsJson) {
 }
 
 async function openBuybackPaymentModalFromList(buybackId) {
-  const data = await fetchSheetData('Buybacks!A:L');
-  if (!data || data.length < 2) return;
-  
-  const headers = data[0];
-  var colMap = {};
-  headers.forEach(function(h, i) { colMap[h] = i; });
-  
-  const buyback = data.slice(1).find(row => row[0] === buybackId);
-  if (!buyback) return;
-  
-  var cTotal = colMap['Total'] !== undefined ? colMap['Total'] : colMap['Price'];
-  var cPaid = colMap['Paid'] !== undefined ? colMap['Paid'] : -1;
-  var cBalance = colMap['Balance'] !== undefined ? colMap['Balance'] : -1;
-  
-  const total = parseFloat(buyback[cTotal]) || 0;
-  const paid = cPaid >= 0 ? (parseFloat(buyback[cPaid]) || 0) : 0;
-  const balance = cBalance >= 0 ? (parseFloat(buyback[cBalance]) || 0) : (total - paid);
-  const outstanding = balance > 0 ? balance : (total - paid);
-  
-  currentPaymentData = { 
-    type: 'BUYBACK', 
-    id: buybackId, 
+  var r = await _loadTxWithItems(buybackId);
+  if (!r) return;
+
+  var total = parseFloat(r.price) || parseFloat(r.total) || 0;
+  var paid = parseFloat(r.paid) || 0;
+  var balance = parseFloat(r.balance);
+  if (isNaN(balance)) balance = total - paid;
+  var outstanding = balance > 0 ? balance : (total - paid);
+
+  var itemsJson = JSON.stringify(r._oldItems);
+
+  currentPaymentData = {
+    type: 'BUYBACK',
+    id: buybackId,
     total: outstanding,
     basePrice: total,
     paid: paid,
-    phone: buyback[1],
-    items: buyback[2],
-    details: '<strong>Items:</strong> ' + formatItemsForPayment(buyback[2]) + '<br>' +
+    phone: r.phone,
+    items: itemsJson,
+    details: '<strong>Items:</strong> ' + formatItemsForPayment(itemsJson) + '<br>' +
               '<strong>Buyback Price:</strong> ' + formatNumber(total) + ' LAK<br>' +
               '<strong>ยอดคงค้าง:</strong> ' + formatNumber(outstanding) + ' LAK',
     allowPartial: true
   };
   paymentItems = { cash: [], bank: [] };
-  
+
   document.getElementById('multiPaymentTitle').textContent = 'Payment Confirmation (Buyback)';
   document.getElementById('multiPaymentId').textContent = buybackId;
-  document.getElementById('multiPaymentPhone').textContent = buyback[1];
+  document.getElementById('multiPaymentPhone').textContent = r.phone;
   document.getElementById('multiPaymentDetails').innerHTML = currentPaymentData.details;
   document.getElementById('multiPaymentTotal').textContent = formatNumber(outstanding) + ' LAK';
-  
+
   document.getElementById('multiPaymentFeeGroup').style.display = 'none';
-  
+
   document.getElementById('cashPaymentsList').innerHTML = '';
   document.getElementById('bankPaymentsList').innerHTML = '';
-  
+
   updatePaymentSummary();
-  
+
   openModal('multiPaymentModal');
 }
 

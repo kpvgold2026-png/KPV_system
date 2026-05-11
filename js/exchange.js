@@ -6,72 +6,114 @@ async function loadExchanges() {
   try {
     var tbody = document.getElementById('exchangeTable');
     tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:30px;"><div style="display:inline-block;width:24px;height:24px;border:3px solid var(--border-color);border-top:3px solid var(--gold-primary);border-radius:50%;animation:spin 0.8s linear infinite;"></div></td></tr>';
-    var data = await fetchSheetData('Exchanges!A:V');
-    var filteredData = data.slice(1);
-    if (currentUser.role === 'User' || isManager()) {
-      if (exchangeDateFrom || exchangeDateTo) {
-        filteredData = filterByDateRange(filteredData, 11, 13, exchangeDateFrom, exchangeDateTo);
-      } else {
-        filteredData = filterTodayData(filteredData, 11, 13);
-      }
+
+    var filters = { type: 'eq.EXCHANGE' };
+    var order = exchangeSortOrder === 'asc' ? 'date.asc' : 'date.desc';
+    if (currentUser.role === 'User') filters.sale_user_id = 'eq.' + currentUser.id;
+
+    var dateFrom = exchangeDateFrom;
+    var dateTo = exchangeDateTo;
+    if (!dateFrom && !dateTo && (currentUser.role === 'User' || isManager())) {
+      var today = getTodayLocalStr();
+      dateFrom = today; dateTo = today;
     }
-    if (exchangeSortOrder === 'asc') {
-      filteredData.sort(function(a, b) { return new Date(a[11]) - new Date(b[11]); });
-    } else {
-      filteredData.sort(function(a, b) { return new Date(b[11]) - new Date(a[11]); });
+    if (dateFrom && dateTo) {
+      filters['and'] = '(date.gte.' + dateFrom + 'T00:00:00,date.lte.' + dateTo + 'T23:59:59)';
     }
-    var tbody = document.getElementById('exchangeTable');
-    if (filteredData.length === 0) {
+
+    var rows = await dbSelect('transactions', {
+      select: '*,items:transaction_items(product_id,qty,item_role),sale:users!sale_user_id(nickname)',
+      filters: filters,
+      order: order,
+      useCache: false
+    });
+
+    var data = (rows || []).map(function(r) {
+      var newI = (r.items || []).filter(function(i) { return i.item_role === 'NEW'; });
+      var oldI = (r.items || []).filter(function(i) { return i.item_role === 'OLD'; });
+      var swI = (r.items || []).filter(function(i) { return i.item_role === 'SWITCH'; });
+      var feI = (r.items || []).filter(function(i) { return i.item_role === 'FREE_EX'; });
+      var allOld = oldI.concat(swI).concat(feI);
+      var toItems = function(arr) { return arr.map(function(i) { return { productId: i.product_id, qty: i.qty }; }); };
+      return Object.assign({}, r, {
+        _newJson: JSON.stringify(toItems(newI)),
+        _oldAllJson: JSON.stringify(toItems(allOld)),
+        _oldPureJson: JSON.stringify(toItems(oldI)),
+        _switchJson: JSON.stringify(toItems(swI)),
+        _freeExJson: JSON.stringify(toItems(feI)),
+        _saleName: r.sale ? r.sale.nickname : ''
+      });
+    });
+
+    if (data.length === 0) {
       tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:40px;">No records</td></tr>';
-    } else {
-      tbody.innerHTML = filteredData.map(function(row) {
-        var oldGold = formatItemsForTable(row[2]);
-        var newGold = formatItemsForTable(row[3]);
-        var exFee = parseFloat(row[4]) || 0;
-        var switchFee = row.length > 15 ? (parseFloat(row[15]) || 0) : 0;
-        var premium = parseFloat(row[5]) || 0;
-        var total = row[6];
-        var status = row[12] || '';
-        var sale = row[13] || '';
-        var actions = '';
-        if (status === 'PENDING') {
-          if (isManager()) {
-            actions = '<button class="btn-action" onclick="reviewExchange(\'' + row[0] + '\')">Review</button>';
-          } else {
-            actions = '<span style="color:var(--text-secondary);">Waiting</span>';
-          }
-        } else if (status === 'READY') {
-          if (currentUser.role === 'User') {
-            actions = '<button class="btn-action" onclick="openExchangePaymentModal(\'' + row[0] + '\')">Confirm</button>';
-          } else {
-            actions = '<span style="color:var(--text-secondary);">Waiting</span>';
-          }
-        } else {
-          var exPaid = parseFloat(row[7]) || 0;
-          var exChange = parseFloat(row[10]) || 0;
-          var exPayInfo = exPaid > 0 ? formatNumber(exPaid) + ' ' + (row[8] || 'LAK') : '-';
-          var pureOldGold = row[2];
-          if (row[14]) pureOldGold = subtractItems(pureOldGold, row[14]);
-          if (row[16]) pureOldGold = subtractItems(pureOldGold, row[16]);
-          var detail = encodeURIComponent(JSON.stringify([['Transaction ID', row[0]], ['BILL ID', row[21] || '-'], ['Phone', row[1]], ['New Gold', formatItemsForTable(row[3])], ['Old Gold (Exchange)', formatItemsForTable(pureOldGold)], ['Exchange Fee', formatNumber(exFee) + ' LAK'], ['Switch Old Gold', formatItemsForTable(row[14] || '')], ['Switch Fee', formatNumber(switchFee) + ' LAK'], ['Free Ex Old Gold', formatItemsForTable(row[16] || '')], ['Free Ex Bill', row[17] || '-'], ['Premium', formatNumber(premium) + ' LAK'], ['Total', formatNumber(total) + ' LAK'], ['Customer Paid', exPayInfo], ['Change', exChange > 0 ? formatNumber(exChange) + ' LAK' : '-'], ['Date', formatDateTime(row[11])], ['Status', status], ['Sale', sale]]));
-          actions = '<button class="btn-action" onclick="viewTransactionDetail(\'Exchange\',\'' + detail + '\')" style="background:#555;">👁 View</button>';
-        }
-        return '<tr>' +
-          '<td>' + row[0] + '</td>' +
-          '<td>' + (row[21] || '-') + '</td>' +
-          '<td style="font-size:11px;white-space:nowrap;">' + (row[11] || '') + '</td>' +
-          '<td>' + row[1] + '</td>' +
-          '<td>' + oldGold + '</td>' +
-          '<td>' + newGold + '</td>' +
-          '<td>' + formatNumber(exFee) + '</td>' +
-          '<td>' + formatNumber(switchFee) + '</td>' +
-          '<td>' + formatNumber(premium) + '</td>' +
-          '<td>' + formatNumber(total) + '</td>' +
-          '<td><span class="status-badge status-' + status.toLowerCase() + '">' + status + '</span></td>' +
-          '<td>' + sale + '</td>' +
-          '<td>' + actions + '</td></tr>';
-      }).join('');
+      return;
     }
+
+    tbody.innerHTML = data.map(function(row) {
+      var oldGold = formatItemsForTable(row._oldAllJson);
+      var newGold = formatItemsForTable(row._newJson);
+      var exFee = parseFloat(row.ex_fee) || 0;
+      var switchFee = parseFloat(row.switch_fee) || 0;
+      var premium = parseFloat(row.premium) || 0;
+      var total = parseFloat(row.total) || 0;
+      var status = row.status;
+      var sale = row._saleName;
+      var actions = '';
+
+      if (status === 'PENDING') {
+        if (isManager()) {
+          actions = '<button class="btn-action" onclick="reviewExchange(\'' + row.id + '\')">Review</button>';
+        } else {
+          actions = '<span style="color:var(--text-secondary);">Waiting</span>';
+        }
+      } else if (status === 'APPROVED' || status === 'READY') {
+        if (currentUser.role === 'User') {
+          actions = '<button class="btn-action" onclick="openExchangePaymentModal(\'' + row.id + '\')">Confirm</button>';
+        } else {
+          actions = '<span style="color:var(--text-secondary);">Waiting</span>';
+        }
+      } else {
+        var exPaid = parseFloat(row.paid) || 0;
+        var exChange = parseFloat(row.change_amount) || 0;
+        var exPayInfo = exPaid > 0 ? formatNumber(exPaid) + ' ' + (row.currency || 'LAK') : '-';
+        var detail = encodeURIComponent(JSON.stringify([
+          ['Transaction ID', row.id],
+          ['BILL ID', row.bill_id || '-'],
+          ['Phone', row.phone],
+          ['New Gold', newGold],
+          ['Old Gold (Exchange)', formatItemsForTable(row._oldPureJson)],
+          ['Exchange Fee', formatNumber(exFee) + ' LAK'],
+          ['Switch Old Gold', formatItemsForTable(row._switchJson)],
+          ['Switch Fee', formatNumber(switchFee) + ' LAK'],
+          ['Free Ex Old Gold', formatItemsForTable(row._freeExJson)],
+          ['Free Ex Bill', row.free_ex_bill_ref || '-'],
+          ['Premium', formatNumber(premium) + ' LAK'],
+          ['Total', formatNumber(total) + ' LAK'],
+          ['Customer Paid', exPayInfo],
+          ['Change', exChange > 0 ? formatNumber(exChange) + ' LAK' : '-'],
+          ['Date', formatDateTime(row.date)],
+          ['Status', status],
+          ['Sale', sale]
+        ]));
+        actions = '<button class="btn-action" onclick="viewTransactionDetail(\'Exchange\',\'' + detail + '\')" style="background:#555;">👁 View</button>';
+      }
+
+      return '<tr>' +
+        '<td>' + row.id + '</td>' +
+        '<td>' + (row.bill_id || '-') + '</td>' +
+        '<td style="font-size:11px;white-space:nowrap;">' + (row.date ? formatDateTime(row.date) : '') + '</td>' +
+        '<td>' + row.phone + '</td>' +
+        '<td>' + oldGold + '</td>' +
+        '<td>' + newGold + '</td>' +
+        '<td>' + formatNumber(exFee) + '</td>' +
+        '<td>' + formatNumber(switchFee) + '</td>' +
+        '<td>' + formatNumber(premium) + '</td>' +
+        '<td>' + formatNumber(total) + '</td>' +
+        '<td><span class="status-badge status-' + status.toLowerCase() + '">' + status + '</span></td>' +
+        '<td>' + sale + '</td>' +
+        '<td>' + actions + '</td></tr>';
+    }).join('');
   } catch (e) {
     console.error('loadExchanges error:', e);
   }
@@ -166,52 +208,37 @@ async function verifyFreeExBill() {
 
   try {
     showLoading();
-    var sheets = ['Sells!A:M', 'Tradeins!A:O', 'Exchanges!A:V', 'Withdraws!A:J'];
-    var results = await Promise.all(sheets.map(function(s) { return fetchSheetData(s); }));
-
-    var bill = null;
-    var billNewGold = null;
-    var billDate = null;
-    var billStatus = '';
-    var freeExUsedCol = -1;
-    var billSheet = '';
-
-    for (var si = 0; si < results.length; si++) {
-      var sdata = results[si];
-      if (!sdata || sdata.length <= 1) continue;
-      var headers = sdata[0];
-      var feuCol = -1;
-      for (var h = 0; h < headers.length; h++) { if (headers[h] === 'FreeEx_Used') feuCol = h; }
-      for (var ri = 1; ri < sdata.length; ri++) {
-        if (String(sdata[ri][0]) === billId) {
-          bill = sdata[ri];
-          freeExUsedCol = feuCol;
-          if (si === 0) { billNewGold = sdata[ri][2]; billDate = sdata[ri][9]; billStatus = String(sdata[ri][10] || ''); billSheet = 'Sells'; }
-          else if (si === 1) { billNewGold = sdata[ri][3]; billDate = sdata[ri][11]; billStatus = String(sdata[ri][12] || ''); billSheet = 'Tradeins'; }
-          else if (si === 2) { billNewGold = sdata[ri][3]; billDate = sdata[ri][11]; billStatus = String(sdata[ri][12] || ''); billSheet = 'Exchanges'; }
-          else if (si === 3) { billNewGold = sdata[ri][2]; billDate = sdata[ri][6]; billStatus = String(sdata[ri][7] || ''); billSheet = 'Withdraws'; }
-          break;
-        }
-      }
-      if (bill) break;
-    }
-
+    var billRows = await dbSelect('transactions', {
+      select: '*,items:transaction_items(product_id,qty,item_role)',
+      filters: { bill_id: 'eq.' + billId },
+      useCache: false
+    });
     hideLoading();
 
-    if (!bill) { statusEl.innerHTML = '<span style="color:#f44336;">❌ ไม่พบบิล ' + billId + '</span>'; return; }
-
-    if (billStatus !== 'COMPLETED' && billStatus !== 'PAID') {
-      statusEl.innerHTML = '<span style="color:#f44336;">❌ บิลนี้สถานะ ' + billStatus + ' (ต้องเป็น COMPLETED)</span>';
+    if (!billRows || billRows.length === 0) {
+      statusEl.innerHTML = '<span style="color:#f44336;">❌ ไม่พบบิล ' + billId + '</span>';
       return;
     }
 
-    if (freeExUsedCol >= 0 && bill[freeExUsedCol] && String(bill[freeExUsedCol]).trim() !== '') {
-      statusEl.innerHTML = '<span style="color:#f44336;">❌ บิลนี้ถูกนำไปแลก Free Ex แล้ว (' + bill[freeExUsedCol] + ')</span>';
+    var bill = billRows.find(function(b) { return b.status === 'COMPLETED' || b.status === 'PAID'; }) || billRows[0];
+
+    if (bill.status !== 'COMPLETED' && bill.status !== 'PAID') {
+      statusEl.innerHTML = '<span style="color:#f44336;">❌ บิลนี้สถานะ ' + bill.status + '</span>';
       return;
     }
 
-    var bd = parseSheetDate(billDate);
-    if (bd) {
+    var usedCheck = await dbSelect('transactions', {
+      select: 'id',
+      filters: { free_ex_bill_ref: 'eq.' + billId },
+      useCache: false
+    });
+    if (usedCheck && usedCheck.length > 0) {
+      statusEl.innerHTML = '<span style="color:#f44336;">❌ บิลนี้ถูกนำไปแลก Free Ex แล้ว</span>';
+      return;
+    }
+
+    if (bill.date) {
+      var bd = new Date(bill.date);
       var now = new Date();
       var diffDays = (now - bd) / (1000 * 60 * 60 * 24);
       if (diffDays > 30) {
@@ -221,15 +248,9 @@ async function verifyFreeExBill() {
     }
 
     var billItems = {};
-    try {
-      JSON.parse(billNewGold).forEach(function(item) {
-        if (!billItems[item.productId]) billItems[item.productId] = 0;
-        billItems[item.productId] += item.qty;
-      });
-    } catch(e) {
-      statusEl.innerHTML = '<span style="color:#f44336;">❌ ไม่สามารถอ่านข้อมูลทองจากบิลได้</span>';
-      return;
-    }
+    (bill.items || []).filter(function(i) { return i.item_role === 'NEW'; }).forEach(function(i) {
+      billItems[i.product_id] = (billItems[i.product_id] || 0) + parseFloat(i.qty);
+    });
 
     for (var fi = 0; fi < freeExItems.length; fi++) {
       var fItem = freeExItems[fi];
@@ -241,8 +262,8 @@ async function verifyFreeExBill() {
     }
 
     _exFreeExVerified = true;
-    _exFreeExBillData = { billId: billId, sheet: billSheet };
-    statusEl.innerHTML = '<span style="color:#4caf50;">✅ ตรวจสอบผ่าน — บิล ' + billId + ' (' + billSheet + ')</span>';
+    _exFreeExBillData = { billId: billId };
+    statusEl.innerHTML = '<span style="color:#4caf50;">✅ ตรวจสอบผ่าน — บิล ' + billId + '</span>';
 
   } catch(e) {
     hideLoading();
@@ -263,7 +284,9 @@ async function calculateExchangeNew() {
   var oldFreeEx = getItemsFromContainer('exOldFreeEx');
 
   if (newGold.length === 0) { alert('กรุณาเพิ่มทองใหม่'); return; }
-  if (oldExchange.length === 0 && oldSwitch.length === 0 && oldFreeEx.length === 0) { alert('กรุณาเพิ่มทองเก่าอย่างน้อย 1 section'); return; }
+  if (oldExchange.length === 0 && oldSwitch.length === 0 && oldFreeEx.length === 0) {
+    alert('กรุณาเพิ่มทองเก่าอย่างน้อย 1 section'); return;
+  }
 
   var newW = calcWeight(newGold);
   var oldW = calcWeight(oldExchange) + calcWeight(oldSwitch) + calcWeight(oldFreeEx);
@@ -277,11 +300,8 @@ async function calculateExchangeNew() {
   oldExchange.forEach(function(item) { exchangeFee += (EXCHANGE_FEES[item.productId] || 0) * item.qty; });
 
   if (oldFreeEx.length > 0) {
-    var billId = document.getElementById('exFreeExBillId').value.trim();
-    if (!billId) {
-      alert('❌ กรุณากรอกรหัสบิลเก่าสำหรับ Free Exchange');
-      return;
-    }
+    var freeBillId = document.getElementById('exFreeExBillId').value.trim();
+    if (!freeBillId) { alert('❌ กรุณากรอกรหัสบิลเก่าสำหรับ Free Exchange'); return; }
   }
 
   var switchFee = 0;
@@ -289,7 +309,6 @@ async function calculateExchangeNew() {
 
   var newPremium = calcPremium(newGold);
   var freeExPremiumDeduct = 0;
-
   if (oldFreeEx.length > 0) {
     var freeExPrem = calcPremium(oldFreeEx);
     freeExPremiumDeduct = Math.min(freeExPrem, newPremium);
@@ -298,45 +317,35 @@ async function calculateExchangeNew() {
   var premium = newPremium - freeExPremiumDeduct;
   var total = roundTo1000(exchangeFee + switchFee + premium);
 
-  var allOldGold = oldExchange.concat(oldSwitch).concat(oldFreeEx);
-
   var freeExBillId = '';
-  var freeExBillSheet = '';
-  if (oldFreeEx.length > 0) {
-    freeExBillId = document.getElementById('exFreeExBillId').value.trim();
-    if (_exFreeExBillData) {
-      freeExBillSheet = _exFreeExBillData.sheet;
-    }
-  }
+  if (oldFreeEx.length > 0) freeExBillId = document.getElementById('exFreeExBillId').value.trim();
 
   try {
     _isSubmitting = true;
     showLoading();
-    var result = await callAppsScript('ADD_EXCHANGE', {
-      phone: phone,
-      billId: billId,
-      oldGold: JSON.stringify(mergeItems(allOldGold)),
-      newGold: JSON.stringify(mergeItems(newGold)),
-      exchangeFee: exchangeFee,
-      premium: premium,
-      total: total,
-      switchOldGold: JSON.stringify(mergeItems(oldSwitch)),
-      switchFee: switchFee,
-      freeExOldGold: JSON.stringify(mergeItems(oldFreeEx)),
-      freeExBillId: freeExBillId,
-      freeExPremiumDeduct: freeExPremiumDeduct,
-      freeExBillSheet: freeExBillSheet,
-      sell1Baht: currentPricing.sell1Baht,
-      user: currentUser.nickname
+    var result = await dbRpc('create_exchange_tx', {
+      p_phone: phone,
+      p_bill_id: billId,
+      p_new_items: mergeItems(newGold),
+      p_old_exchange_items: mergeItems(oldExchange),
+      p_switch_items: mergeItems(oldSwitch),
+      p_free_ex_items: mergeItems(oldFreeEx),
+      p_exchange_fee: exchangeFee,
+      p_switch_fee: switchFee,
+      p_premium: premium,
+      p_total: total,
+      p_free_ex_bill_ref: freeExBillId,
+      p_sell_1baht: currentPricing.sell1Baht
     });
-    if (result.success) {
+
+    if (result && result.success) {
       endSubmit();
       showToast('✅ สร้างรายการ Exchange สำเร็จ!');
       closeModal('exchangeModal');
       resetExchangeForm();
       loadExchanges();
     } else {
-      alert('❌ ' + result.message);
+      alert('❌ ' + (result && result.message ? result.message : 'Unknown'));
       endSubmit();
     }
   } catch(e) {
@@ -358,19 +367,14 @@ function resetExchangeForm() {
 
 async function loadCurrentPricingForExchange() {
   try {
-    var pricingData = await fetchSheetData('Pricing!A:B');
-    if (pricingData.length > 1) {
-      var latestPricing = pricingData[pricingData.length - 1];
-      currentPricing = { sell1Baht: parseFloat(String(latestPricing[1]).replace(/,/g, '')) || 0, buyback1Baht: 0 };
-      return true;
-    }
-    return false;
+    await fetchCurrentPricing();
+    return currentPricing.sell1Baht > 0;
   } catch(e) { return false; }
 }
 
 async function openExchangeModal() {
   var hasPrice = await loadCurrentPricingForExchange();
-  if (!hasPrice || !currentPricing.sell1Baht || currentPricing.sell1Baht === 0) {
+  if (!hasPrice) {
     alert('❌ ยังไม่มีราคาทองในระบบ! กรุณาไปที่หน้า Products → Set New Price ก่อน');
     return;
   }

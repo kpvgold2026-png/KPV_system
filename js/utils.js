@@ -611,6 +611,29 @@ async function deleteTransaction(id, sheetName, type) {
   }
 }
 
+async function deleteTransactionSupabase(id, type) {
+  if (!confirm('ยืนยันลบรายการ ' + id + ' ?')) return;
+  try {
+    showLoading();
+    var result = await dbRpc('delete_tx', { p_tx_id: id });
+    hideLoading();
+    if (result && result.success) {
+      showToast('✅ ลบสำเร็จ');
+      if (typeof loadSells === 'function') loadSells();
+      if (typeof loadTradeins === 'function') loadTradeins();
+      if (typeof loadExchanges === 'function') loadExchanges();
+      if (typeof loadWithdraws === 'function') loadWithdraws();
+      if (typeof loadBuybacks === 'function') loadBuybacks();
+      if (typeof loadHistorySell === 'function') loadHistorySell();
+    } else {
+      alert('❌ ' + (result && result.message ? result.message : 'Unknown'));
+    }
+  } catch(e) {
+    hideLoading();
+    alert('❌ ' + e.message);
+  }
+}
+
 function printBill(encodedData, type) {
   var data = JSON.parse(decodeURIComponent(encodedData));
   var txId = '', phone = '', total = '', date = '', sale = '';

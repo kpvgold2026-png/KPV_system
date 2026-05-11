@@ -129,7 +129,8 @@ async function loadPriceHistory(data) {
 }
 
 async function updatePricing() {
-  var sell1Baht = parseFloat(document.getElementById('sell1BahtPrice').value);
+  var el = document.getElementById('sell1BahtPrice');
+  var sell1Baht = el.numericValue || parseFloat(String(el.value).replace(/,/g, '')) || 0;
   if (!sell1Baht || sell1Baht <= 0) {
     alert('กรุณากรอกราคา 1 บาท');
     return;

@@ -262,10 +262,6 @@ async function login() {
     localStorage.setItem('jwt', token);
     localStorage.setItem('currentUser', JSON.stringify(currentUser));
 
-    try {
-      await dbUpdate('users', { id: 'eq.' + user.id }, { session_token: sessionId });
-    } catch(e) {}
-
     hideLoading();
     await enterApp();
 

@@ -342,8 +342,8 @@ async function confirmMultiPayment() {
 
     try {
       if (currentPaymentData.type === 'BUYBACK') {
-        var dbData = await fetchSheetData('_database!A1:G23');
-        var cashLAK = dbData.length >= 17 ? (parseFloat(dbData[16][0]) || 0) : 0;
+        var balances = await dbRpc('get_cashbank_balances', {});
+        var cashLAK = parseFloat(balances && balances.cash && balances.cash.LAK) || 0;
         if (cashLAK < change) {
           alert('❌ เงินสด LAK ไม่พอทอน! มี ' + formatNumber(cashLAK) + ' LAK แต่ต้องทอน ' + formatNumber(change) + ' LAK');
           _isSubmitting = false;
@@ -351,20 +351,16 @@ async function confirmMultiPayment() {
           return;
         }
       } else {
-        var sheetName = currentUser.nickname;
-        console.log('Fetching user sheet:', sheetName);
-        var userSheetData = await fetchSheetData("'" + sheetName + "'!A:I");
-        console.log('User sheet rows:', userSheetData ? userSheetData.length : 'null');
-        var userCashLAK = 0;
-        if (userSheetData && userSheetData.length > 1) {
-          for (var ui = 1; ui < userSheetData.length; ui++) {
-            var r = userSheetData[ui];
-            if (String(r[4]).trim() === 'Cash' && String(r[3]).trim() === 'LAK') {
-              userCashLAK += parseFloat(r[2]) || 0;
-            }
-          }
-        }
-        console.log('User Cash LAK balance:', userCashLAK);
+        var userRows = await dbSelect('user_cashbook', {
+          select: 'amount',
+          filters: {
+            user_id: 'eq.' + currentUser.id,
+            currency: 'eq.LAK',
+            bank_id: 'is.null'
+          },
+          useCache: false
+        });
+        var userCashLAK = (userRows || []).reduce(function(s, r) { return s + (parseFloat(r.amount) || 0); }, 0);
         if (userCashLAK < change) {
           alert('❌ เงินสด LAK ของคุณไม่พอทอน! มี ' + formatNumber(userCashLAK) + ' LAK แต่ต้องทอน ' + formatNumber(change) + ' LAK');
           _isSubmitting = false;
@@ -373,7 +369,7 @@ async function confirmMultiPayment() {
         }
       }
     } catch(e) {
-      console.error('Error checking user cash balance:', e);
+      console.error('Error checking cash balance:', e);
       alert('❌ ไม่สามารถตรวจสอบยอดเงินได้: ' + e.message);
       _isSubmitting = false;
       hideLoading();

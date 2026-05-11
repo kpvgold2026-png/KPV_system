@@ -1,40 +1,39 @@
 # Migration to Supabase — Progress Log
 
-## Step 1 (เสร็จแล้ว): Auth + API Layer
-- `js/config.js` — ใหม่ (Supabase URL, ANON_KEY, JWT_SECRET, INACTIVITY_TIMEOUT_MINUTES)
-- `js/jwt.js` — ใหม่ (HS256 sign/verify, ไม่มี exp — ใช้ inactivity check แทน)
-- `js/api.js` — ใหม่ (Supabase REST + dbSelect/Insert/Update/Delete/Rpc)
-- `js/auth.js` — ใหม่ (login ผ่าน RPC, JWT, inactivity timeout 60 นาที)
-- `sql/schema.sql` — Schema ทั้งหมด + RLS
-- `sql/auth_functions.sql` — login_user, open_shift, hash_password, ...
-- `index.html` — เพิ่ม `<script src="js/jwt.js">` หลัง config
+## ✅ Migration เสร็จสมบูรณ์
+
+ทุกโมดูลเรียก Supabase REST/RPC ผ่าน `dbSelect/dbInsert/dbUpdate/dbDelete/dbRpc` ใน `js/api.js` ทั้งหมดแล้ว — ไม่มี reference ไปยัง Google Apps Script / Google Sheets (`fetchSheetData`, `callAppsScript`) เหลืออยู่ในโค้ด
+
+### Layered structure
+- `js/config.js` — Supabase URL, ANON_KEY, JWT_SECRET, INACTIVITY_TIMEOUT_MINUTES, product/price constants
+- `js/jwt.js` — HS256 sign/verify (ไม่มี exp — ใช้ inactivity check แทน)
+- `js/utils.js` — Helpers (date, format, items parsing, transaction detail/delete/audit list)
+- `js/api.js` — Supabase REST wrapper + cache
+- `js/auth.js` — Login ผ่าน RPC `login_user`, JWT, inactivity timeout, session enforcement (poll + Realtime WS)
+- Business modules (sell, buyback, tradein, exchange, withdraw, stock*, close, cashbank, dashboard, livereport, diff, reports, review, historysell, accounting, notification, inventory, pricerate, products, usersetting, payment) — เรียก Supabase ทั้งหมด
+
+### SQL artifacts (apply ไปที่ Supabase)
+- `sql/schema.sql` — Schema + RLS ทุก table
+- `sql/auth_functions.sql` — `login_user`, `open_shift`, `hash_password`, `verify_password`, `create_user`, `reject_tx`, `delete_tx`, `set_my_session`, `get_my_session`
+- `sql/sell_functions.sql` — `generate_tx_id`, `calc_items_gold_g`, `get_wac_per_g`, `create_sell_tx`, `review_sell_tx`, `confirm_sell_tx`, `delete_sell_tx`
+- `sql/buyback_functions.sql` — buyback RPCs (FIFO matching)
+- `sql/tradein_functions.sql` — tradein RPCs
+- `sql/exchange_functions.sql` — exchange / switch / free-exchange RPCs
+- `sql/withdraw_functions.sql` — withdraw RPCs
+- `sql/stock_functions.sql` — stock in/out / transfer
+- `sql/admin_functions.sql` — `update_pricing`, `add_price_rate`, `add_cashbank_entry`, `get_cashbank_balances`, `list_users`, `save_user`, `delete_user_soft`, `get_notifications`, `mark_notifications_read`
+- `sql/report_functions.sql` — รายงานวัน / diff / wealth
 
 ### Session policy
-- JWT ไม่มี exp → token ใช้ได้ตลอดจนกว่า:
-  - ผู้ใช้ไม่ขยับ ≥ 60 นาที (inactivity timeout)
+- JWT ไม่มี `exp` → token ใช้ได้ตลอดจนกว่า:
+  - ผู้ใช้ไม่ขยับ ≥ `CONFIG.INACTIVITY_TIMEOUT_MINUTES` (default 60 นาที) → kick
   - ผู้ใช้กด logout
-  - บัญชี login จากอีกเครื่อง (session_token เปลี่ยน)
-- ปรับเวลาได้ที่ `CONFIG.INACTIVITY_TIMEOUT_MINUTES` ใน config.js
+  - บัญชี login จากอีกเครื่อง (`users.session_token` เปลี่ยน → poll + Realtime broadcast แจ้ง kick)
 
-## Step 2 (เสร็จแล้ว): Sell Module
-- `js/sell.js` — ใหม่ (อ่านจาก transactions table + เรียก RPC create_sell_tx, review_sell_tx)
-- `js/payment.js` — patch openSellPayment + branch SELL ใช้ confirm_sell_tx RPC
-- `sql/sell_functions.sql` — ใหม่
-  - `generate_tx_id(type)` — สร้าง ID เช่น S-20260510-0001
-  - `calc_items_gold_g(items)` — คำนวณ gold gram จาก items JSON
-  - `get_wac_per_g()` — อ่าน WAC ปัจจุบัน
-  - `create_sell_tx(...)` — สร้างรายการ + check stock
-  - `review_sell_tx(id)` — Manager กด review
-  - `confirm_sell_tx(id, paid, currency, method, bank_id, change)` — ลด stock, เพิ่ม cashbank, สร้าง diff (atomic)
-  - `delete_sell_tx(id)` — Admin ลบ + audit log
+## ⚠️ ข้อสังเกตด้าน security
 
-## ⚠️ ที่ยังไม่ได้ทำ (Step ถัดไป)
-- buyback.js + RPC create_buyback_tx (FIFO)
-- tradein.js + RPC create_tradein_tx
-- exchange.js + switch + free exchange
-- withdraw.js
-- stocknew.js + stockold.js + wac.js
-- close.js, cashbank.js, dashboard.js, livereport.js
-- notification.js, inventory.js, pricerate.js, products.js, accounting.js, diff.js, reports.js, review.js, historysell.js, usersetting.js
+JWT secret (`CONFIG.JWT_SECRET`) ฝังอยู่ใน `js/config.js` ฝั่ง client — ใครก็ปลอม JWT ที่ถือ `user_role=Admin` ได้ ทำให้ RLS ที่อาศัย `current_setting('request.jwt.claims')` ถูก bypass ได้ทั้งหมด
 
-โมดูลเหล่านี้ยังเรียก `fetchSheetData(...)` กับ `callAppsScript(...)` อยู่ — จะพังจนกว่าจะถูก migrate
+ก่อนใช้งานจริง production ควร:
+- ย้ายการ sign JWT ไปฝั่ง server (Edge Function / Supabase Auth Hook) หรือใช้ Supabase Auth + custom claims โดยตรง
+- เปลี่ยน JWT_SECRET (และ rotate ใน Supabase project setting)

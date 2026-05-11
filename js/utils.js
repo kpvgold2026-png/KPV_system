@@ -491,60 +491,17 @@ async function viewTransactionDetail(type, jsonData) {
 
   if (txId) {
     try {
-      var payments = [];
-      var salesNames = [];
-      try {
-        var userData = await fetchSheetData('_database!A1:M100');
-        if (userData && userData.length > 33) {
-          for (var ui = 33; ui < userData.length; ui++) {
-            if (String(userData[ui][0] || '').trim() === 'Sales') {
-              var sName = String(userData[ui][1] || '').trim();
-              if (sName) salesNames.push(sName);
-            }
-          }
-        }
-      } catch(e3) {}
-
-      for (var su = 0; su < salesNames.length; su++) {
-        try {
-          var uData = await fetchSheetData("'" + salesNames[su] + "'!A:I");
-          if (uData && uData.length > 1) {
-            var found = uData.slice(1).filter(function(r) {
-              return r[6] && String(r[6]).indexOf(txId) !== -1;
-            });
-            if (found.length > 0) {
-              payments = payments.concat(found);
-              break;
-            }
-          }
-        } catch(e2) {}
-      }
-
-      if (payments.length === 0) {
-        try {
-          var logCB = await fetchSheetData('_log_cashbank!A:I');
-          if (logCB && logCB.length > 1) {
-            var logFound = logCB.slice(1).filter(function(r) {
-              return r[6] && String(r[6]).indexOf(txId) !== -1;
-            });
-            if (logFound.length > 0) {
-              payments = payments.concat(logFound);
-            }
-          }
-        } catch(e4) {}
-      }
-
-      if (payments.length === 0) {
-        var cbData = await fetchSheetData('CashBank!A:I');
-        payments = cbData.slice(1).filter(function(r) {
-          return r[6] && String(r[6]).indexOf(txId) !== -1;
-        });
-      }
+      var payments = await dbSelect('transaction_payments', {
+        select: 'amount,currency,method,note,bank:banks!bank_id(name)',
+        filters: { tx_id: 'eq.' + txId },
+        order: 'paid_at.asc',
+        useCache: false
+      });
 
       var section = document.getElementById('paymentDetailSection');
       if (!section) return;
 
-      if (payments.length === 0) {
+      if (!payments || payments.length === 0) {
         section.innerHTML = '<div style="font-size:12px;color:var(--gold-primary);margin-bottom:8px;font-weight:bold;">💳 รายละเอียดการชำระเงิน</div>' +
           '<p style="font-size:12px;color:var(--text-secondary);">ไม่พบข้อมูลการชำระเงิน</p>';
         return;
@@ -552,23 +509,22 @@ async function viewTransactionDetail(type, jsonData) {
 
       var payHtml = '<div style="font-size:12px;color:var(--gold-primary);margin-bottom:8px;font-weight:bold;">💳 รายละเอียดการชำระเงิน</div>';
       payments.forEach(function(p) {
-        var amt = parseFloat(p[2]) || 0;
-        var cur = p[3] || 'LAK';
-        var method = p[4] || '';
-        var bank = p[5] || '';
-        var note = p[6] || '';
+        var amt = parseFloat(p.amount) || 0;
+        var cur = p.currency || 'LAK';
+        var method = String(p.method || '').toUpperCase();
+        var bank = (p.bank && p.bank.name) ? p.bank.name : '';
+        var note = String(p.note || '');
         var isChange = note.toLowerCase().indexOf('change') !== -1;
         var isFee = note.toLowerCase().indexOf('fee') !== -1;
 
-        var icon = '💵';
-        var label = '';
+        var icon, label;
         if (isChange) {
           icon = '💰';
           label = 'เงินทอน';
         } else if (isFee) {
           icon = '🏦';
-          label = 'ค่าธรรมเนียม ' + bank;
-        } else if (method === 'Bank') {
+          label = 'ค่าธรรมเนียม' + (bank ? ' ' + bank : '');
+        } else if (method !== 'CASH' && bank) {
           icon = '🏦';
           label = bank + ' (' + cur + ')';
         } else {
@@ -589,25 +545,6 @@ async function viewTransactionDetail(type, jsonData) {
       var section = document.getElementById('paymentDetailSection');
       if (section) section.innerHTML = '<div style="font-size:12px;color:var(--gold-primary);margin-bottom:8px;font-weight:bold;">💳 รายละเอียดการชำระเงิน</div><p style="font-size:12px;color:#f44336;">โหลดข้อมูลไม่สำเร็จ</p>';
     }
-  }
-}
-
-async function deleteTransaction(id, sheetName, type) {
-  if (!confirm('ยืนยันลบรายการ ' + id + ' ?')) return;
-  try {
-    showLoading();
-    var result = await callAppsScript('DELETE_TRANSACTION', { id: id, sheet: sheetName, type: type });
-    if (result.success) {
-      showToast('✅ ลบสำเร็จ');
-      if (typeof loadHistorySell === 'function') loadHistorySell();
-      if (typeof loadBuybacks === 'function') loadBuybacks();
-    } else {
-      alert('❌ ' + result.message);
-    }
-    hideLoading();
-  } catch(e) {
-    alert('❌ ' + e.message);
-    hideLoading();
   }
 }
 
@@ -690,7 +627,7 @@ async function loadDeletedList() {
   try {
     var tbody = document.getElementById('deletedListTable');
     tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:30px;"><div style="display:inline-block;width:24px;height:24px;border:3px solid var(--border-color);border-top:3px solid var(--gold-primary);border-radius:50%;animation:spin 0.8s linear infinite;"></div></td></tr>';
-    
+
     if (!_deletedDateFrom || !_deletedDateTo) {
       var td = getTodayDateString();
       _deletedDateFrom = td;
@@ -698,114 +635,62 @@ async function loadDeletedList() {
     }
     document.getElementById('deletedDateFrom').value = _deletedDateFrom;
     document.getElementById('deletedDateTo').value = _deletedDateTo;
-    
-    var fromParts = _deletedDateFrom.split('-');
-    var toParts = _deletedDateTo.split('-');
-    var dayStart = new Date(parseInt(fromParts[0]), parseInt(fromParts[1])-1, parseInt(fromParts[2]), 0, 0, 0);
-    var dayEnd = new Date(parseInt(toParts[0]), parseInt(toParts[1])-1, parseInt(toParts[2]), 23, 59, 59);
-    
-    var data = await fetchSheetData('_log!A:G');
-    if (!data || data.length <= 1) {
-      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:40px;">No deleted records</td></tr>';
-      return;
-    }
-    var rows = data.slice(1).filter(function(r) {
-      if (String(r[1] || '').toUpperCase() !== 'DELETE') return false;
-      var d = parseSheetDate(r[0]);
-      return d && d >= dayStart && d <= dayEnd;
+
+    var rows = await dbSelect('audit_logs', {
+      select: 'created_at,table_name,ref_id,action,payload,user:users!user_id(nickname)',
+      filters: {
+        action: 'eq.DELETE',
+        table_name: 'eq.transactions',
+        and: '(created_at.gte.' + _deletedDateFrom + 'T00:00:00,created_at.lte.' + _deletedDateTo + 'T23:59:59)'
+      },
+      order: 'created_at.desc',
+      useCache: false
     });
-    rows.sort(function(a, b) { return new Date(b[0]) - new Date(a[0]); });
-    if (rows.length === 0) {
+
+    if (!rows || rows.length === 0) {
       tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:40px;">No deleted records</td></tr>';
       return;
     }
+
     tbody.innerHTML = rows.map(function(r) {
-      var type = String(r[3] || '');
-      var rawData = [];
-      try {
-        var cellVal = r[5];
-        if (Array.isArray(cellVal)) {
-          rawData = cellVal;
-        } else {
-          var rawStr = String(cellVal || '');
-          try {
-            rawData = JSON.parse(rawStr);
-          } catch(e1) {
-            var _ph = '___DQ___';
-            var cleaned = rawStr.replace(/\\\\"/g, _ph).replace(/\\"/g, _ph);
-            try {
-              var tempArr = JSON.parse(cleaned);
-              rawData = tempArr.map(function(v) { return typeof v === 'string' ? v.replace(/___DQ___/g, '"') : v; });
-            } catch(e2) {
-              cleaned = rawStr.replace(/\\\\/g, '');
-              try { rawData = JSON.parse(cleaned); } catch(e3) {}
-            }
-          }
-        }
-      } catch(e) {}
-      var safeFmt = function(val) {
-        if (!val) return '-';
-        var str = String(val);
-        str = str.replace(/\\"/g, '"').replace(/\\\\/g, '\\');
-        try { var parsed = JSON.parse(str); return formatItemsForTable(JSON.stringify(parsed)); } catch(e) {}
-        try { return formatItemsForTable(str); } catch(e2) {}
-        return str;
-      };
-      var detail = '';
-      if (type === 'SELL' && rawData.length > 0) {
-        detail = '<b>Phone:</b> ' + (rawData[1] || '-') +
-          '<br><b>Items:</b> ' + safeFmt(rawData[2]) +
-          '<br><b>Total:</b> ' + formatNumber(rawData[3]) + ' LAK' +
-          '<br><b>Status:</b> ' + (rawData[10] || '-') +
-          '<br><b>Sale:</b> ' + (rawData[11] || '-');
-      } else if ((type === 'TRADEIN' || type === 'TRADE-IN') && rawData.length > 0) {
-        detail = '<b>Phone:</b> ' + (rawData[1] || '-') +
-          '<br><b>Old Gold:</b> ' + safeFmt(rawData[2]) +
-          '<br><b>New Gold:</b> ' + safeFmt(rawData[3]) +
-          '<br><b>Diff:</b> ' + formatNumber(rawData[4]) + ' | <b>Premium:</b> ' + formatNumber(rawData[5]) +
-          '<br><b>Total:</b> ' + formatNumber(rawData[6]) + ' LAK' +
-          '<br><b>Status:</b> ' + (rawData[12] || '-') +
-          '<br><b>Sale:</b> ' + (rawData[13] || '-');
-      } else if (type === 'EXCHANGE' && rawData.length > 0) {
-        detail = '<b>Phone:</b> ' + (rawData[1] || '-') +
-          '<br><b>Old Gold:</b> ' + safeFmt(rawData[2]) +
-          '<br><b>New Gold:</b> ' + safeFmt(rawData[3]) +
-          '<br><b>Ex Fee:</b> ' + formatNumber(rawData[4]) + ' | <b>Premium:</b> ' + formatNumber(rawData[5]) +
-          '<br><b>Total:</b> ' + formatNumber(rawData[6]) + ' LAK' +
-          '<br><b>Status:</b> ' + (rawData[12] || '-') +
-          '<br><b>Sale:</b> ' + (rawData[13] || '-');
-      } else if (type === 'BUYBACK' && rawData.length > 0) {
-        detail = '<b>Phone:</b> ' + (rawData[1] || '-') +
-          '<br><b>Items:</b> ' + safeFmt(rawData[2]) +
-          '<br><b>Price:</b> ' + formatNumber(rawData[3]) + ' | <b>Fee:</b> ' + formatNumber(rawData[5]) +
-          '<br><b>Total:</b> ' + formatNumber(rawData[6]) + ' LAK' +
-          '<br><b>Paid:</b> ' + formatNumber(rawData[7]) + ' | <b>Balance:</b> ' + formatNumber(rawData[8]) +
-          '<br><b>Status:</b> ' + (rawData[10] || '-') +
-          '<br><b>Sale:</b> ' + (rawData[11] || '-');
-      } else if (type === 'WITHDRAW' && rawData.length > 0) {
-        detail = '<b>Phone:</b> ' + (rawData[1] || '-') +
-          '<br><b>Items:</b> ' + safeFmt(rawData[2]) +
-          '<br><b>Premium:</b> ' + formatNumber(rawData[3]) +
-          '<br><b>Total:</b> ' + formatNumber(rawData[4]) + ' LAK' +
-          '<br><b>Status:</b> ' + (rawData[7] || '-') +
-          '<br><b>Sale:</b> ' + (rawData[8] || '-');
-      } else {
-        var dataStr = String(r[5] || '');
-        if (dataStr.length > 100) dataStr = dataStr.substring(0, 100) + '...';
-        detail = dataStr;
-      }
-      var typeColors = { 'SELL': '#4caf50', 'TRADEIN': '#2196f3', 'TRADE-IN': '#2196f3', 'EXCHANGE': '#ff9800', 'BUYBACK': '#9c27b0', 'WITHDRAW': '#f44336' };
+      var p = r.payload || {};
+      var type = String(p.type || '');
+      var typeColors = { 'SELL': '#4caf50', 'TRADEIN': '#2196f3', 'EXCHANGE': '#ff9800', 'SWITCH': '#ff9800', 'FREE_EXCHANGE': '#ff9800', 'BUYBACK': '#9c27b0', 'WITHDRAW': '#f44336' };
       var tColor = typeColors[type] || '#888';
+
+      var detail = '';
+      if (type) {
+        var parts = [];
+        if (p.phone) parts.push('<b>Phone:</b> ' + p.phone);
+        if (p.bill_id) parts.push('<b>Bill ID:</b> ' + p.bill_id);
+        if (p.total !== undefined && p.total !== null) parts.push('<b>Total:</b> ' + formatNumber(p.total) + ' LAK');
+        if (p.paid !== undefined && p.paid !== null && parseFloat(p.paid) > 0) parts.push('<b>Paid:</b> ' + formatNumber(p.paid) + ' ' + (p.currency || 'LAK'));
+        if (p.premium !== undefined && p.premium !== null && parseFloat(p.premium) > 0) parts.push('<b>Premium:</b> ' + formatNumber(p.premium));
+        if (p.ex_fee !== undefined && p.ex_fee !== null && parseFloat(p.ex_fee) > 0) parts.push('<b>Ex Fee:</b> ' + formatNumber(p.ex_fee));
+        if (p.fee !== undefined && p.fee !== null && parseFloat(p.fee) > 0) parts.push('<b>Fee:</b> ' + formatNumber(p.fee));
+        if (p.diff_amount !== undefined && p.diff_amount !== null && parseFloat(p.diff_amount) !== 0) parts.push('<b>Diff:</b> ' + formatNumber(p.diff_amount));
+        if (p.status) parts.push('<b>Status:</b> ' + p.status);
+        if (p.note) parts.push('<b>Note:</b> ' + p.note);
+        detail = parts.join('<br>');
+      } else {
+        try { detail = JSON.stringify(p).substring(0, 200); } catch(e) { detail = '-'; }
+      }
+
+      var nickname = (r.user && r.user.nickname) ? r.user.nickname : '-';
+
       return '<tr>' +
-        '<td style="font-size:11px;white-space:nowrap;">' + (r[0] || '') + '</td>' +
-        '<td style="font-weight:bold;">' + (r[2] || '') + '</td>' +
-        '<td><span style="background:' + tColor + ';color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;">' + type + '</span></td>' +
-        '<td>' + (r[4] || '') + '</td>' +
+        '<td style="font-size:11px;white-space:nowrap;">' + formatDateTime(r.created_at) + '</td>' +
+        '<td style="font-weight:bold;">' + (r.ref_id || '') + '</td>' +
+        '<td><span style="background:' + tColor + ';color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;">' + (type || '-') + '</span></td>' +
+        '<td>' + (r.table_name || '') + '</td>' +
         '<td style="font-size:12px;line-height:1.6;">' + detail + '</td>' +
-        '<td>' + (r[6] || '') + '</td>' +
+        '<td>' + nickname + '</td>' +
         '</tr>';
     }).join('');
-  } catch(e) {}
+  } catch(e) {
+    var tbody = document.getElementById('deletedListTable');
+    if (tbody) tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:40px;color:#f44336;">Error: ' + e.message + '</td></tr>';
+  }
 }
 
 function filterDeletedList() {

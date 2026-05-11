@@ -101,7 +101,7 @@ function stopInactivityWatch() {
 
 function startSessionCheck() {
   if (_sessionCheckInterval) clearInterval(_sessionCheckInterval);
-  _sessionCheckInterval = setInterval(checkSession, 30000);
+  _sessionCheckInterval = setInterval(checkSession, 10000);
   startRealtimeSessionWatch();
 }
 
@@ -126,19 +126,16 @@ function startRealtimeSessionWatch() {
     return;
   }
 
+  var topic = 'realtime:session:' + currentUser.id;
+
   _realtimeWs.onopen = function() {
-    var topic = 'realtime:public:users:id=eq.' + currentUser.id;
     _realtimeWs.send(JSON.stringify({
       topic: topic,
       event: 'phx_join',
       payload: {
         config: {
-          postgres_changes: [{
-            event: 'UPDATE',
-            schema: 'public',
-            table: 'users',
-            filter: 'id=eq.' + currentUser.id
-          }]
+          broadcast: { self: false, ack: false },
+          presence: { key: '' }
         },
         access_token: currentUser.token
       },
@@ -160,9 +157,9 @@ function startRealtimeSessionWatch() {
   _realtimeWs.onmessage = function(event) {
     try {
       var msg = JSON.parse(event.data);
-      if (msg.event === 'postgres_changes' && msg.payload && msg.payload.data) {
-        var newRow = msg.payload.data.record;
-        if (newRow && newRow.session_token && newRow.session_token !== currentUser.sessionId) {
+      if (msg.event === 'broadcast' && msg.payload && msg.payload.event === 'kick') {
+        var newSession = msg.payload.payload && msg.payload.payload.session;
+        if (newSession && newSession !== currentUser.sessionId) {
           stopInactivityWatch();
           if (typeof stopNotificationPolling === 'function') stopNotificationPolling();
           alert('บัญชีนี้ถูกเข้าสู่ระบบที่อื่น คุณจะถูกออกจากระบบ');
@@ -186,6 +183,27 @@ function startRealtimeSessionWatch() {
       }, 5000);
     }
   };
+}
+
+async function broadcastKickOthers(sessionId) {
+  try {
+    await fetch(CONFIG.SUPABASE_URL + '/realtime/v1/api/broadcast', {
+      method: 'POST',
+      headers: {
+        'apikey': CONFIG.SUPABASE_ANON_KEY,
+        'Authorization': 'Bearer ' + currentUser.token,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        messages: [{
+          topic: 'session:' + currentUser.id,
+          event: 'kick',
+          payload: { session: sessionId },
+          private: false
+        }]
+      })
+    });
+  } catch(e) {}
 }
 
 function stopRealtimeSessionWatch() {
@@ -355,6 +373,10 @@ async function login() {
     localStorage.setItem('jwt', token);
     localStorage.setItem('currentUser', JSON.stringify(currentUser));
     localStorage.setItem('lastActivity', Date.now().toString());
+
+    try {
+      await broadcastKickOthers(sessionId);
+    } catch(e) {}
 
     try {
       await dbRpc('set_my_session', { p_session: sessionId });

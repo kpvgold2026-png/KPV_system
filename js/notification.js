@@ -18,7 +18,12 @@ function stopNotificationPolling() {
 
 function startRealtimeNotifications() {
   stopRealtimeNotifications();
-  if (!currentUser || !currentUser.id) return;
+  if (!currentUser || !currentUser.id) {
+    console.log('[realtime-notif] skip: no currentUser');
+    return;
+  }
+  var role = currentUser.dbRole || currentUser.role || '';
+  console.log('[realtime-notif] subscribing for user=' + currentUser.id + ' role=' + role);
   try {
     _notifRealtimeChannel = sb.channel('notif:' + currentUser.id)
       .on('postgres_changes', {
@@ -26,15 +31,25 @@ function startRealtimeNotifications() {
         schema: 'public',
         table: 'notifications',
         filter: 'target_user_id=eq.' + currentUser.id
-      }, function(payload) { _handleRealtimeNotif(payload && payload.new); })
+      }, function(payload) {
+        console.log('[realtime-notif] user-targeted:', payload && payload.new);
+        _handleRealtimeNotif(payload && payload.new);
+      })
       .on('postgres_changes', {
         event: 'INSERT',
         schema: 'public',
         table: 'notifications',
-        filter: 'target_role=eq.' + (currentUser.dbRole || currentUser.role || '')
-      }, function(payload) { _handleRealtimeNotif(payload && payload.new); })
-      .subscribe();
-  } catch(e) {}
+        filter: 'target_role=eq.' + role
+      }, function(payload) {
+        console.log('[realtime-notif] role-targeted:', payload && payload.new);
+        _handleRealtimeNotif(payload && payload.new);
+      })
+      .subscribe(function(status, err) {
+        console.log('[realtime-notif] status=' + status, err || '');
+      });
+  } catch(e) {
+    console.error('[realtime-notif] subscribe error:', e);
+  }
 }
 
 function stopRealtimeNotifications() {

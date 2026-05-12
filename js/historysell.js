@@ -78,8 +78,22 @@ async function loadHistorySell() {
       }
 
       var dim = 'style="color:var(--text-secondary);"';
-      function fmt(v) {
-        var n = parseFloat(v);
+      // ฟิลด์ที่แต่ละประเภทธุรกรรมควรแสดง
+      // SELL: ขายตรง ลูกค้าจ่ายเต็มราคา → ไม่มี diff/ex_fee/switch_fee
+      // TRADEIN: เอาทองเก่ามาเทรด → มี diff (ลูกค้าจ่ายส่วนต่าง)
+      // EXCHANGE: เปลี่ยนชิ้น → มี ex_fee/switch_fee
+      // WITHDRAW: ฝากไว้แล้วถอน → มี diff
+      var typeCols = {
+        'SELL':     { diff: false, ex_fee: false, switch_fee: false, premium: true },
+        'TRADEIN':  { diff: true,  ex_fee: false, switch_fee: false, premium: true },
+        'EXCHANGE': { diff: false, ex_fee: true,  switch_fee: true,  premium: true },
+        'WITHDRAW': { diff: true,  ex_fee: false, switch_fee: false, premium: true },
+        'BUYBACK':  { diff: false, ex_fee: false, switch_fee: false, premium: false }
+      };
+      function fmt(val, field) {
+        var cols = typeCols[r.type] || {};
+        if (!cols[field]) return '<span ' + dim + '>-</span>';
+        var n = parseFloat(val);
         return (!n) ? '<span ' + dim + '>-</span>' : formatNumber(n);
       }
       return '<tr>' +
@@ -90,10 +104,10 @@ async function loadHistorySell() {
         '<td><span style="background:' + color + ';color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:bold;white-space:nowrap;">' + typeLabel + '</span></td>' +
         '<td>' + (oldGoldStr === '-' ? '<span ' + dim + '>-</span>' : oldGoldStr) + '</td>' +
         '<td>' + (newGoldStr === '-' ? '<span ' + dim + '>-</span>' : newGoldStr) + '</td>' +
-        '<td>' + fmt(r.diff) + '</td>' +
-        '<td>' + fmt(r.ex_fee) + '</td>' +
-        '<td>' + fmt(r.switch_fee) + '</td>' +
-        '<td>' + fmt(r.premium) + '</td>' +
+        '<td>' + fmt(r.diff, 'diff') + '</td>' +
+        '<td>' + fmt(r.ex_fee, 'ex_fee') + '</td>' +
+        '<td>' + fmt(r.switch_fee, 'switch_fee') + '</td>' +
+        '<td>' + fmt(r.premium, 'premium') + '</td>' +
         '<td style="font-weight:bold;">' + formatNumber(total) + '</td>' +
         '<td><span class="status-badge status-' + (r.status || '').toLowerCase() + '">' + r.status + '</span></td>' +
         '<td>' + (r.sale_nickname || '') + '</td>' +

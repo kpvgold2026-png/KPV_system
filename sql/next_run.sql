@@ -265,6 +265,69 @@ GRANT EXECUTE ON FUNCTION get_sales_with_shift() TO authenticated;
 
 
 -- ============================================================
+-- get_history_txs: อ่าน ex_fee/switch_fee/premium/diff จาก transactions ตรง
+-- (ก่อนหน้านี้ JOIN diffs ผิด → ค่าไม่ตรงกับที่ Sales กรอก)
+-- ============================================================
+CREATE OR REPLACE FUNCTION get_history_txs(
+  p_date_from DATE DEFAULT NULL,
+  p_date_to DATE DEFAULT NULL,
+  p_limit INT DEFAULT 500
+)
+RETURNS JSONB AS $$
+DECLARE
+  v_user_id UUID;
+  v_role user_role;
+  v_from TIMESTAMPTZ;
+  v_to TIMESTAMPTZ;
+  v_result JSONB;
+BEGIN
+  v_user_id := current_user_id();
+  v_role := current_user_role();
+  IF p_date_from IS NOT NULL THEN
+    v_from := (p_date_from::text || ' 00:00:00')::timestamp AT TIME ZONE 'Asia/Bangkok';
+  END IF;
+  IF p_date_to IS NOT NULL THEN
+    v_to := (p_date_to::text || ' 23:59:59')::timestamp AT TIME ZONE 'Asia/Bangkok';
+  END IF;
+
+  SELECT COALESCE(jsonb_agg(jsonb_build_object(
+    'id', t.id,
+    'type', t.type,
+    'status', t.status,
+    'bill_id', t.bill_id,
+    'phone', t.phone,
+    'total', t.total,
+    'paid', t.paid,
+    'currency', t.currency,
+    'sale_user_id', t.sale_user_id,
+    'sale_nickname', u.nickname,
+    'date', t.date,
+    'diff', t.diff_amount,
+    'ex_fee', t.ex_fee,
+    'switch_fee', t.switch_fee,
+    'premium', t.premium,
+    'fee', t.fee,
+    'items', (
+      SELECT jsonb_agg(jsonb_build_object('productId', ti.product_id, 'qty', ti.qty, 'role', ti.item_role))
+      FROM transaction_items ti WHERE ti.tx_id = t.id
+    )
+  ) ORDER BY t.date DESC), '[]'::jsonb)
+  INTO v_result
+  FROM transactions t
+  LEFT JOIN users u ON u.id = t.sale_user_id
+  WHERE (v_from IS NULL OR t.date >= v_from)
+    AND (v_to IS NULL OR t.date <= v_to)
+    AND (v_role <> 'Sales' OR t.sale_user_id = v_user_id)
+  LIMIT p_limit;
+
+  RETURN v_result;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+GRANT EXECUTE ON FUNCTION get_history_txs(DATE, DATE, INT) TO authenticated;
+
+
+-- ============================================================
 -- Realtime: เปิด INSERT events บน notifications สำหรับ Supabase Realtime
 -- ============================================================
 -- frontend จะ subscribe via postgres_changes → แจ้งเตือนเด้งทันที (<1s)

@@ -122,20 +122,30 @@ function renderPriceRateCharts(data) {
 }
 
 async function submitPriceRate() {
-  var thbSell = document.getElementById('rateTHBSellInput').value.trim();
-  var usdSell = document.getElementById('rateUSDSellInput').value.trim();
-  var thbBuy = document.getElementById('rateTHBBuyInput').value.trim();
-  var usdBuy = document.getElementById('rateUSDBuyInput').value.trim();
+  var thbSellEl = document.getElementById('rateTHBSellInput');
+  var usdSellEl = document.getElementById('rateUSDSellInput');
+  var thbBuyEl = document.getElementById('rateTHBBuyInput');
+  var usdBuyEl = document.getElementById('rateUSDBuyInput');
+
+  var thbSell = String(thbSellEl.value).trim();
+  var usdSell = String(usdSellEl.value).trim();
+  var thbBuy = String(thbBuyEl.value).trim();
+  var usdBuy = String(usdBuyEl.value).trim();
 
   if (!thbSell && !usdSell && !thbBuy && !usdBuy) {
     alert('กรุณากรอกค่าเงินอย่างน้อย 1 ช่อง');
     return;
   }
 
-  var finalThbSell = parseFloat(thbSell) || currentPriceRates.thbSell || 0;
-  var finalUsdSell = parseFloat(usdSell) || currentPriceRates.usdSell || 0;
-  var finalThbBuy = parseFloat(thbBuy) || currentPriceRates.thbBuy || 0;
-  var finalUsdBuy = parseFloat(usdBuy) || currentPriceRates.usdBuy || 0;
+  function readRate(el, raw) {
+    if (typeof el.numericValue === 'number') return el.numericValue;
+    return parseFloat(String(raw).replace(/,/g, '')) || 0;
+  }
+
+  var finalThbSell = readRate(thbSellEl, thbSell) || currentPriceRates.thbSell || 0;
+  var finalUsdSell = readRate(usdSellEl, usdSell) || currentPriceRates.usdSell || 0;
+  var finalThbBuy = readRate(thbBuyEl, thbBuy) || currentPriceRates.thbBuy || 0;
+  var finalUsdBuy = readRate(usdBuyEl, usdBuy) || currentPriceRates.usdBuy || 0;
 
   try {
     showLoading();

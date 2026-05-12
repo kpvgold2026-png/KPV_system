@@ -287,7 +287,129 @@ GRANT EXECUTE ON FUNCTION stock_in_new_tx(JSONB, TEXT, NUMERIC, JSONB, NUMERIC) 
 
 
 -- ============================================================
+-- bonus: get_dashboard_data ก็มี bug เดียวกัน
+-- ============================================================
+-- Dashboard ของ admin โหลดไม่ขึ้นถ้ามี bank ที่ยังไม่มี tx
+-- → patch inner jsonb_object_agg(cb.currency, ...) ด้วย FILTER
+
+CREATE OR REPLACE FUNCTION get_dashboard_data(p_date_from DATE, p_date_to DATE)
+RETURNS JSONB AS $$
+DECLARE
+  v_from TIMESTAMPTZ;
+  v_to TIMESTAMPTZ;
+  v_wac JSONB;
+  v_pl_diff NUMERIC := 0;
+  v_other_expense NUMERIC := 0;
+  v_new_pieces NUMERIC := 0;
+  v_new_g NUMERIC := 0;
+  v_old_pieces NUMERIC := 0;
+  v_old_g NUMERIC := 0;
+  v_cash JSONB;
+  v_banks JSONB;
+  v_sales JSONB;
+  v_buybacks JSONB;
+  v_withdraws JSONB;
+BEGIN
+  v_from := (p_date_from::text || ' 00:00:00')::timestamp AT TIME ZONE 'Asia/Bangkok';
+  v_to := (p_date_to::text || ' 23:59:59')::timestamp AT TIME ZONE 'Asia/Bangkok';
+
+  SELECT row_to_json(w)::jsonb INTO v_wac FROM wac_state w WHERE id = 1;
+
+  SELECT COALESCE(SUM(diff), 0) INTO v_pl_diff
+  FROM diffs WHERE date BETWEEN v_from AND v_to;
+
+  SELECT COALESCE(SUM(ABS(amount)), 0) INTO v_other_expense
+  FROM cashbank WHERE type = 'OTHER_EXPENSE' AND date BETWEEN v_from AND v_to;
+
+  SELECT
+    COALESCE(SUM(sb.qty), 0),
+    COALESCE(SUM(sb.qty * p.weight_baht * 15), 0)
+  INTO v_new_pieces, v_new_g
+  FROM stock_balances sb JOIN products p ON p.id = sb.product_id
+  WHERE sb.gold_type = 'NEW';
+
+  SELECT
+    COALESCE(SUM(sb.qty), 0),
+    COALESCE(SUM(sb.qty * p.weight_baht * 15), 0)
+  INTO v_old_pieces, v_old_g
+  FROM stock_balances sb JOIN products p ON p.id = sb.product_id
+  WHERE sb.gold_type = 'OLD';
+
+  SELECT COALESCE(jsonb_object_agg(currency, total), '{}'::jsonb) INTO v_cash FROM (
+    SELECT currency::text, COALESCE(SUM(amount), 0) AS total
+    FROM cashbank WHERE method = 'CASH' GROUP BY currency
+  ) t;
+
+  SELECT COALESCE(jsonb_object_agg(bank_name, balances), '{}'::jsonb) INTO v_banks FROM (
+    SELECT b.name AS bank_name,
+           COALESCE(
+             jsonb_object_agg(cb.currency, COALESCE(cb.total, 0))
+               FILTER (WHERE cb.currency IS NOT NULL),
+             '{}'::jsonb
+           ) AS balances
+    FROM banks b
+    LEFT JOIN (
+      SELECT bank_id, currency::text AS currency, SUM(amount) AS total
+      FROM cashbank
+      WHERE method <> 'CASH' AND bank_id IS NOT NULL
+      GROUP BY bank_id, currency
+    ) cb ON cb.bank_id = b.id
+    WHERE b.is_active = TRUE
+    GROUP BY b.name
+  ) t;
+
+  SELECT jsonb_build_object(
+    'sell', COALESCE(SUM(CASE WHEN type = 'SELL' THEN total ELSE 0 END), 0),
+    'sell_count', COALESCE(SUM(CASE WHEN type = 'SELL' THEN 1 ELSE 0 END), 0),
+    'tradein', COALESCE(SUM(CASE WHEN type = 'TRADEIN' THEN total ELSE 0 END), 0),
+    'tradein_count', COALESCE(SUM(CASE WHEN type = 'TRADEIN' THEN 1 ELSE 0 END), 0),
+    'exchange', COALESCE(SUM(CASE WHEN type = 'EXCHANGE' THEN total ELSE 0 END), 0),
+    'exchange_count', COALESCE(SUM(CASE WHEN type = 'EXCHANGE' THEN 1 ELSE 0 END), 0)
+  ) INTO v_sales
+  FROM transactions
+  WHERE type IN ('SELL', 'TRADEIN', 'EXCHANGE')
+    AND status IN ('COMPLETED', 'PAID')
+    AND date BETWEEN v_from AND v_to;
+
+  SELECT jsonb_build_object(
+    'amount', COALESCE(SUM(total), 0),
+    'count', COUNT(*)
+  ) INTO v_buybacks
+  FROM transactions
+  WHERE type = 'BUYBACK' AND status IN ('COMPLETED', 'PAID')
+    AND date BETWEEN v_from AND v_to;
+
+  SELECT jsonb_build_object(
+    'amount', COALESCE(SUM(total), 0),
+    'count', COUNT(*)
+  ) INTO v_withdraws
+  FROM transactions
+  WHERE type = 'WITHDRAW' AND status IN ('COMPLETED', 'PAID')
+    AND date BETWEEN v_from AND v_to;
+
+  RETURN jsonb_build_object(
+    'wac', COALESCE(v_wac, '{}'::jsonb),
+    'pl_diff', v_pl_diff,
+    'other_expense', v_other_expense,
+    'new_pieces', v_new_pieces,
+    'new_g', v_new_g,
+    'old_pieces', v_old_pieces,
+    'old_g', v_old_g,
+    'cash', v_cash,
+    'banks', v_banks,
+    'sales', v_sales,
+    'buybacks', v_buybacks,
+    'withdraws', v_withdraws
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+GRANT EXECUTE ON FUNCTION get_dashboard_data(DATE, DATE) TO authenticated;
+
+
+-- ============================================================
 -- ทดสอบหลังรัน
 -- ============================================================
 --   SELECT name, is_active FROM banks ORDER BY sort_order;          -- ต้องมี BCEL, LDB, OTHER
 --   SELECT * FROM get_cashbank_balances();                          -- ต้องไม่ error
+--   SELECT * FROM get_dashboard_data(CURRENT_DATE, CURRENT_DATE);   -- ต้องไม่ error

@@ -32,11 +32,46 @@ async function loadReports() {
     }).join('');
 
     renderReportsChart(data);
+    await loadSalesShiftList();
     hideLoading();
   } catch (error) {
     console.error('Error loading reports:', error);
     document.getElementById('reportsTable').innerHTML = '<tr><td colspan="3" style="text-align: center; padding: 40px; color: #f44336;">Error loading reports</td></tr>';
     hideLoading();
+  }
+}
+
+async function loadSalesShiftList() {
+  var tbody = document.getElementById('salesShiftTable');
+  if (!tbody) return;
+  try {
+    var rows = await dbRpc('get_sales_with_shift', {});
+    if (!Array.isArray(rows) || rows.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:30px;">ไม่มีพนักงาน Sales</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map(function(r) {
+      var statusLabel, statusColor;
+      if (r.shift_status === 'OPEN') {
+        statusLabel = '🟢 เปิดกะ'; statusColor = '#4caf50';
+      } else if (r.shift_status === 'CLOSED') {
+        statusLabel = '🔒 ปิดกะแล้ว'; statusColor = '#888';
+      } else {
+        statusLabel = '⚪ ยังไม่เปิด'; statusColor = '#aaa';
+      }
+      var amt = r.shift_amount ? formatNumber(parseFloat(r.shift_amount)) + ' LAK' : '-';
+      var openedAt = r.shift_opened_at ? formatDateTime(r.shift_opened_at) : '-';
+      return '<tr>' +
+        '<td>' + (r.username || '-') + '</td>' +
+        '<td>' + (r.nickname || '-') + '</td>' +
+        '<td style="color:' + statusColor + ';font-weight:600;">' + statusLabel + '</td>' +
+        '<td style="text-align:right;">' + amt + '</td>' +
+        '<td style="font-size:11px;">' + openedAt + '</td>' +
+        '</tr>';
+    }).join('');
+  } catch(e) {
+    console.error('loadSalesShiftList error:', e);
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:30px;color:#f44336;">Error</td></tr>';
   }
 }
 

@@ -78,6 +78,10 @@ async function loadHistorySell() {
       }
 
       var dim = 'style="color:var(--text-secondary);"';
+      function fmt(v) {
+        var n = parseFloat(v);
+        return (!n) ? '<span ' + dim + '>-</span>' : formatNumber(n);
+      }
       return '<tr>' +
         '<td style="white-space:nowrap;">' + r.id + '</td>' +
         '<td>' + (r.bill_id || '-') + '</td>' +
@@ -86,6 +90,10 @@ async function loadHistorySell() {
         '<td><span style="background:' + color + ';color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:bold;white-space:nowrap;">' + typeLabel + '</span></td>' +
         '<td>' + (oldGoldStr === '-' ? '<span ' + dim + '>-</span>' : oldGoldStr) + '</td>' +
         '<td>' + (newGoldStr === '-' ? '<span ' + dim + '>-</span>' : newGoldStr) + '</td>' +
+        '<td>' + fmt(r.diff) + '</td>' +
+        '<td>' + fmt(r.ex_fee) + '</td>' +
+        '<td>' + fmt(r.switch_fee) + '</td>' +
+        '<td>' + fmt(r.premium) + '</td>' +
         '<td style="font-weight:bold;">' + formatNumber(total) + '</td>' +
         '<td><span class="status-badge status-' + (r.status || '').toLowerCase() + '">' + r.status + '</span></td>' +
         '<td>' + (r.sale_nickname || '') + '</td>' +

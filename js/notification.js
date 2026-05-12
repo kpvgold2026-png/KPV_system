@@ -120,8 +120,13 @@ async function pollNotifications() {
             if (!n.txId) return true;
             var status = statusMap[n.txId];
             if (!status) return false;
-            if (status === 'COMPLETED' || status === 'REJECTED') return false;
-            return true;
+            // Sales-targeted (INFO/PAYMENT to user): แสดงจนกว่า tx COMPLETED/REJECTED
+            if (n.type === 'INFO') {
+              return !(status === 'COMPLETED' || status === 'REJECTED');
+            }
+            // Admin/Manager action items (APPROVAL/PAYMENT/CLOSE):
+            // ซ่อนทันทีที่มี action (APPROVED/COMPLETED/REJECTED)
+            return !(status === 'APPROVED' || status === 'COMPLETED' || status === 'REJECTED');
           });
         } catch(e) {}
       }

@@ -2,15 +2,60 @@ var _notifInterval = null;
 var _notifData = [];
 var _notifDropdownOpen = false;
 var _markedReadIds = {};
+var _notifRealtimeChannel = null;
 
 function startNotificationPolling() {
   if (_notifInterval) clearInterval(_notifInterval);
   pollAll();
   _notifInterval = setInterval(pollAll, 30000);
+  startRealtimeNotifications();
 }
 
 function stopNotificationPolling() {
   if (_notifInterval) { clearInterval(_notifInterval); _notifInterval = null; }
+  stopRealtimeNotifications();
+}
+
+function startRealtimeNotifications() {
+  stopRealtimeNotifications();
+  if (!currentUser || !currentUser.id) return;
+  try {
+    _notifRealtimeChannel = sb.channel('notif:' + currentUser.id)
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'notifications',
+        filter: 'target_user_id=eq.' + currentUser.id
+      }, function(payload) { _handleRealtimeNotif(payload && payload.new); })
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'notifications',
+        filter: 'target_role=eq.' + (currentUser.dbRole || currentUser.role || '')
+      }, function(payload) { _handleRealtimeNotif(payload && payload.new); })
+      .subscribe();
+  } catch(e) {}
+}
+
+function stopRealtimeNotifications() {
+  if (_notifRealtimeChannel) {
+    try { sb.removeChannel(_notifRealtimeChannel); } catch(e) {}
+    _notifRealtimeChannel = null;
+  }
+}
+
+function _handleRealtimeNotif(n) {
+  if (!n) return;
+  // กันกรณีของตัวเอง (Manager approve tx ของ Manager เอง — ไม่ควรเด้ง)
+  if (n.created_by_id && currentUser && n.created_by_id === currentUser.id) return;
+  // เด้ง toast
+  if (typeof showToast === 'function') {
+    var msg = (n.message || 'New notification');
+    if (msg.length > 80) msg = msg.substring(0, 77) + '...';
+    showToast('🔔 ' + msg, 4000);
+  }
+  // refresh dropdown badge ทันที (poll RPC สั้น ๆ)
+  pollNotifications();
 }
 
 async function pollAll() {

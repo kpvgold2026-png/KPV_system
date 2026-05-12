@@ -64,10 +64,16 @@ BEGIN
     v_hash := hash_password(p_password);
 
     -- auth.users ก่อน
+    -- หมายเหตุ: token fields ต้องเป็น '' ไม่ใช่ NULL
+    -- ไม่งั้น GoTrue scan แล้ว error → "Database error querying schema"
     INSERT INTO auth.users (
       id, instance_id, aud, role,
       email, encrypted_password, email_confirmed_at,
       raw_app_meta_data, raw_user_meta_data,
+      confirmation_token, recovery_token,
+      email_change, email_change_token_new, email_change_token_current,
+      phone_change, phone_change_token,
+      reauthentication_token,
       created_at, updated_at
     )
     VALUES (
@@ -81,6 +87,10 @@ BEGIN
         'user_role', p_role::text
       ),
       jsonb_build_object('username', p_username, 'nickname', p_nickname),
+      '', '',
+      '', '', '',
+      '', '',
+      '',
       NOW(), NOW()
     );
 
@@ -250,6 +260,29 @@ END;
 $$;
 
 GRANT EXECUTE ON FUNCTION restore_user(UUID) TO authenticated;
+
+
+-- ============================================================
+-- Backfill: แก้ token fields ที่เป็น NULL ให้เป็น '' (กันบัก login)
+-- ============================================================
+-- GoTrue คาดว่า field พวกนี้เป็น empty string เสมอ → NULL = login fail
+UPDATE auth.users SET
+  confirmation_token = COALESCE(confirmation_token, ''),
+  recovery_token = COALESCE(recovery_token, ''),
+  email_change = COALESCE(email_change, ''),
+  email_change_token_new = COALESCE(email_change_token_new, ''),
+  email_change_token_current = COALESCE(email_change_token_current, ''),
+  phone_change = COALESCE(phone_change, ''),
+  phone_change_token = COALESCE(phone_change_token, ''),
+  reauthentication_token = COALESCE(reauthentication_token, '')
+WHERE confirmation_token IS NULL
+   OR recovery_token IS NULL
+   OR email_change IS NULL
+   OR email_change_token_new IS NULL
+   OR email_change_token_current IS NULL
+   OR phone_change IS NULL
+   OR phone_change_token IS NULL
+   OR reauthentication_token IS NULL;
 
 
 -- ============================================================

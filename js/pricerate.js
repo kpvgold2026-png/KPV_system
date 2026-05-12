@@ -127,25 +127,25 @@ async function submitPriceRate() {
   var thbBuyEl = document.getElementById('rateTHBBuyInput');
   var usdBuyEl = document.getElementById('rateUSDBuyInput');
 
-  var thbSell = String(thbSellEl.value).trim();
-  var usdSell = String(usdSellEl.value).trim();
-  var thbBuy = String(thbBuyEl.value).trim();
-  var usdBuy = String(usdBuyEl.value).trim();
+  function readRate(el) {
+    var raw = String(el.value || '').replace(/[^0-9.\-]/g, '');
+    return parseFloat(raw) || 0;
+  }
+
+  var thbSell = readRate(thbSellEl);
+  var usdSell = readRate(usdSellEl);
+  var thbBuy = readRate(thbBuyEl);
+  var usdBuy = readRate(usdBuyEl);
 
   if (!thbSell && !usdSell && !thbBuy && !usdBuy) {
     alert('กรุณากรอกค่าเงินอย่างน้อย 1 ช่อง');
     return;
   }
 
-  function readRate(el, raw) {
-    if (typeof el.numericValue === 'number') return el.numericValue;
-    return parseFloat(String(raw).replace(/,/g, '')) || 0;
-  }
-
-  var finalThbSell = readRate(thbSellEl, thbSell) || currentPriceRates.thbSell || 0;
-  var finalUsdSell = readRate(usdSellEl, usdSell) || currentPriceRates.usdSell || 0;
-  var finalThbBuy = readRate(thbBuyEl, thbBuy) || currentPriceRates.thbBuy || 0;
-  var finalUsdBuy = readRate(usdBuyEl, usdBuy) || currentPriceRates.usdBuy || 0;
+  var finalThbSell = thbSell || currentPriceRates.thbSell || 0;
+  var finalUsdSell = usdSell || currentPriceRates.usdSell || 0;
+  var finalThbBuy = thbBuy || currentPriceRates.thbBuy || 0;
+  var finalUsdBuy = usdBuy || currentPriceRates.usdBuy || 0;
 
   try {
     showLoading();

@@ -396,11 +396,13 @@ async function confirmOpenShift() {
     });
     hideLoading();
     if (result && (result.success || (Array.isArray(result) && result[0] && result[0].success))) {
+      _shiftCompleted = true;
       showToast('✅ เปิดกะสำเร็จ');
       closeModal('openShiftModal');
-      _shiftCompleted = true;
+      if (typeof loadCashBank === 'function') loadCashBank();
     } else {
-      alert('เปิดกะไม่สำเร็จ');
+      var errMsg = (result && (result.message || result.error)) || 'เปิดกะไม่สำเร็จ';
+      alert('❌ ' + errMsg);
     }
   } catch(e) {
     hideLoading();

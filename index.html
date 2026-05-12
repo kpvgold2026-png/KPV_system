@@ -2183,21 +2183,8 @@
   
   <script>
   document.addEventListener('DOMContentLoaded', function() {
-    document.querySelectorAll('.modal').forEach(modal => {
-      const modalContent = modal.querySelector('.modal-content');
-      
-      if (modalContent) {
-        modalContent.addEventListener('click', function(e) {
-          e.stopPropagation();
-        });
-      }
-      
-      modal.addEventListener('click', function(e) {
-        if (e.target === modal && modal.id !== 'openShiftModal' && !(modal.id === 'closeWorkModal' && (_closePollingInterval || _closeWorkLocked))) {
-          modal.classList.remove('active');
-        }
-      });
-    });
+    // Click outside modal does NOT close — must use close button
+    // (Cancel ลื่นนิ้วชนเปิด modal โดยไม่ตั้งใจ → form ที่กรอกไว้หาย)
     
     const dateInputs = document.querySelectorAll('input[type="date"]');
     dateInputs.forEach(input => {

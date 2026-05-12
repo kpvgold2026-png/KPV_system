@@ -25,24 +25,20 @@ function startRealtimeNotifications() {
   var role = currentUser.dbRole || currentUser.role || '';
   console.log('[realtime-notif] subscribing for user=' + currentUser.id + ' role=' + role);
   try {
+    // ไม่ใช้ filter — ให้ RLS กรองเอง
+    // (filter ของ Realtime เป็น exact match ไม่รองรับ "Admin เห็น Manager noti")
     _notifRealtimeChannel = sb.channel('notif:' + currentUser.id)
       .on('postgres_changes', {
         event: 'INSERT',
         schema: 'public',
-        table: 'notifications',
-        filter: 'target_user_id=eq.' + currentUser.id
+        table: 'notifications'
       }, function(payload) {
-        console.log('[realtime-notif] user-targeted:', payload && payload.new);
-        _handleRealtimeNotif(payload && payload.new);
-      })
-      .on('postgres_changes', {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'notifications',
-        filter: 'target_role=eq.' + role
-      }, function(payload) {
-        console.log('[realtime-notif] role-targeted:', payload && payload.new);
-        _handleRealtimeNotif(payload && payload.new);
+        var n = payload && payload.new;
+        if (!n) return;
+        console.log('[realtime-notif] received:', n);
+        // RLS ทำงานฝั่ง server แล้ว แต่กันพลาด: เช็คอีกชั้นฝั่ง client
+        if (n.created_by_id === currentUser.id) return; // ของตัวเอง — skip
+        _handleRealtimeNotif(n);
       })
       .subscribe(function(status, err) {
         console.log('[realtime-notif] status=' + status, err || '');

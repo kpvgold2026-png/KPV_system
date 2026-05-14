@@ -6,7 +6,7 @@ async function checkAndResumePendingClose() {
   try {
     var today = getTodayLocalStr();
     var rows = await dbSelect('closes', {
-      select: 'id,status,date',
+      select: 'id,status,date,cash_summary,bank_summary,gold_summary,total_tx,total_amount',
       filters: { user_id: 'eq.' + currentUser.id, 'and': '(date.gte.' + today + 'T00:00:00,date.lte.' + today + 'T23:59:59)' },
       useCache: false
     });
@@ -19,16 +19,162 @@ async function checkAndResumePendingClose() {
     if (myPending) {
       currentCloseId = myPending.id;
       await openCloseWorkModal(true);
+      _wireResumePendingUI(myPending.id);
+      startClosePolling();
     } else if (myApproved) {
-      var modalBody = document.getElementById('closeWorkSummary');
-      if (modalBody) {
-        modalBody.innerHTML = '<div style="text-align:center;padding:40px;"><h2 style="color:#4caf50;">✅ ปิดกะวันนี้แล้ว</h2></div>';
-        openModal('closeWorkModal');
-      }
+      currentCloseId = myApproved.id;
+      _renderClosedSummary(myApproved);
+      _wireApprovedUI();
+      _closeWorkLocked = true;
+      openModal('closeWorkModal');
+      var modal = document.getElementById('closeWorkModal');
+      if (modal) modal.onclick = function(e) { e.stopImmediatePropagation(); };
     }
   } catch(e) {
     console.error('Error checking pending close:', e);
   }
+}
+
+function _renderClosedSummary(closeRow) {
+  var cash = closeRow.cash_summary || {};
+  var bank = closeRow.bank_summary || {};
+  var gold = closeRow.gold_summary || {};
+  var newOut = gold.newOut || {};
+  var oldIn = gold.oldIn || {};
+
+  var productNames = { 'G01': '10 บาท', 'G02': '5 บาท', 'G03': '2 บาท', 'G04': '1 บาท', 'G05': '2 สลึง', 'G06': '1 สลึง', 'G07': '1 กรัม' };
+  var pids = ['G01', 'G02', 'G03', 'G04', 'G05', 'G06', 'G07'];
+
+  var moneyKeys = [
+    { key: 'Cash', label: '💵 Cash', data: cash },
+    { key: 'BCEL', label: '🏦 BCEL Bank', data: bank.BCEL || {} },
+    { key: 'LDB', label: '🏦 LDB Bank', data: bank.LDB || {} },
+    { key: 'Other', label: '🏦 Bank อื่นๆ', data: bank.Other || {} }
+  ];
+  var moneyTableRows = moneyKeys.map(function(m) {
+    var d = m.data || {};
+    return '<tr><td style="padding:6px 10px;font-weight:600;">' + m.label + '</td>' +
+      '<td style="padding:6px 10px;text-align:right;">' + formatNumber(Math.round(parseFloat(d.LAK) || 0)) + '</td>' +
+      '<td style="padding:6px 10px;text-align:right;">' + formatNumber(Math.round(parseFloat(d.THB) || 0)) + '</td>' +
+      '<td style="padding:6px 10px;text-align:right;">' + formatNumber(Math.round(parseFloat(d.USD) || 0)) + '</td></tr>';
+  }).join('');
+
+  document.getElementById('closeWorkSummary').innerHTML =
+    '<div style="text-align:center;margin-bottom:15px;">' +
+    '<p style="font-size:18px;color:var(--gold-primary);">สรุปยอดประจำวัน</p>' +
+    '<p style="color:var(--text-secondary);">' + currentUser.nickname + ' — ' + getTodayLocalStr() + '</p>' +
+    '<p style="color:#4caf50;font-weight:bold;margin-top:8px;">✅ สถานะ: Manager ยืนยันแล้ว (' + closeRow.id + ')</p>' +
+    '</div>' +
+
+    '<div class="stat-card" style="text-align:center;margin-bottom:15px;">' +
+    '<h3 style="color:var(--gold-primary);margin-bottom:8px;">ยอดรวมทั้งวัน</h3>' +
+    '<p style="font-size:24px;font-weight:bold;margin:4px 0;">' + formatNumber(Math.round(parseFloat(closeRow.total_amount) || 0)) + ' <span style="font-size:12px;">LAK</span></p>' +
+    '<p style="font-size:13px;color:var(--text-secondary);">' + (closeRow.total_tx || 0) + ' บิล</p></div>' +
+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:15px;">' +
+    '<div class="stat-card" style="padding:15px;">' +
+    '<h3 style="color:#4caf50;margin-bottom:10px;font-size:14px;">▶ ทองใหม่ที่จ่ายออก</h3>' +
+    '<table style="width:100%;border-collapse:collapse;">' +
+    pids.map(function(pid) { return '<tr><td style="padding:4px 10px;">' + productNames[pid] + '</td><td style="padding:4px 10px;text-align:center;font-weight:bold;">' + (newOut[pid] || 0) + '</td></tr>'; }).join('') +
+    '</table></div>' +
+    '<div class="stat-card" style="padding:15px;">' +
+    '<h3 style="color:#ff9800;margin-bottom:10px;font-size:14px;">◀ ทองเก่าที่ได้รับ</h3>' +
+    '<table style="width:100%;border-collapse:collapse;">' +
+    pids.map(function(pid) { return '<tr><td style="padding:4px 10px;">' + productNames[pid] + '</td><td style="padding:4px 10px;text-align:center;font-weight:bold;">' + (oldIn[pid] || 0) + '</td></tr>'; }).join('') +
+    '</table></div></div>' +
+
+    '<div class="stat-card" style="padding:15px;margin-bottom:15px;">' +
+    '<h3 style="color:var(--gold-primary);margin-bottom:10px;font-size:14px;">💰 สรุปเงินทั้งหมด</h3>' +
+    '<table style="width:100%;border-collapse:collapse;">' +
+    '<tr style="border-bottom:2px solid var(--border-color);"><th style="padding:6px 10px;text-align:left;color:var(--text-secondary);font-size:12px;">ประเภท</th><th style="padding:6px 10px;text-align:right;color:var(--text-secondary);font-size:12px;">LAK</th><th style="padding:6px 10px;text-align:right;color:var(--text-secondary);font-size:12px;">THB</th><th style="padding:6px 10px;text-align:right;color:var(--text-secondary);font-size:12px;">USD</th></tr>' +
+    moneyTableRows + '</table></div>';
+}
+
+function _wireApprovedUI() {
+  var cancelBtn = document.getElementById('closeWorkCancelBtn');
+  if (cancelBtn) cancelBtn.style.display = 'none';
+  var refreshCloseBtn = document.getElementById('closeRefreshBtn');
+  if (refreshCloseBtn) refreshCloseBtn.style.display = 'none';
+  var submitBtn = document.getElementById('closeWorkSubmitBtn');
+  if (submitBtn) {
+    submitBtn.style.background = '#4caf50';
+    submitBtn.style.color = '#fff';
+    submitBtn.textContent = '✅ ตกลง';
+    submitBtn.disabled = false;
+    submitBtn.onclick = function() {
+      _closeWorkLocked = false;
+      var modal = document.getElementById('closeWorkModal');
+      if (modal) modal.onclick = null;
+      closeModal('closeWorkModal');
+      logout();
+    };
+  }
+}
+
+function _wireResumePendingUI(closeId) {
+  var cancelBtn = document.getElementById('closeWorkCancelBtn');
+  if (cancelBtn) {
+    cancelBtn.style.display = 'inline-block';
+    cancelBtn.textContent = '❌ ยกเลิกปิดกะ';
+    cancelBtn.style.background = '#f44336';
+    cancelBtn.style.color = '#fff';
+    cancelBtn.onclick = function() { cancelPendingClose(closeId); };
+  }
+  var submitBtn = document.getElementById('closeWorkSubmitBtn');
+  if (submitBtn) {
+    submitBtn.onclick = null;
+    submitBtn.style.background = '#d4af37';
+    submitBtn.style.color = '#000';
+    submitBtn.textContent = '⏳ รอ Manager ยืนยัน...';
+    submitBtn.disabled = true;
+  }
+  var refreshCloseBtn = document.getElementById('closeRefreshBtn');
+  if (!refreshCloseBtn) {
+    refreshCloseBtn = document.createElement('button');
+    refreshCloseBtn.id = 'closeRefreshBtn';
+    refreshCloseBtn.className = 'btn-secondary';
+    refreshCloseBtn.style.cssText = 'margin-left:10px;padding:8px 16px;font-size:14px;';
+    refreshCloseBtn.textContent = '↻ รีเฟรช';
+    if (submitBtn && submitBtn.parentNode) submitBtn.parentNode.insertBefore(refreshCloseBtn, submitBtn.nextSibling);
+  }
+  refreshCloseBtn.style.display = 'inline-block';
+  refreshCloseBtn.onclick = async function() {
+    refreshCloseBtn.textContent = '↻ กำลังเช็ค...';
+    refreshCloseBtn.disabled = true;
+    try {
+      var rows2 = await dbSelect('closes', {
+        select: 'id,status,cash_summary,bank_summary,gold_summary,total_tx,total_amount',
+        filters: { id: 'eq.' + closeId },
+        useCache: false
+      });
+      if (rows2 && rows2.length > 0) {
+        var status = rows2[0].status;
+        if (status === 'APPROVED') {
+          if (_closePollingInterval) { clearInterval(_closePollingInterval); _closePollingInterval = null; }
+          _renderClosedSummary(rows2[0]);
+          _wireApprovedUI();
+        } else if (status === 'REJECTED') {
+          if (_closePollingInterval) { clearInterval(_closePollingInterval); _closePollingInterval = null; }
+          if (cancelBtn) cancelBtn.style.display = 'none';
+          refreshCloseBtn.style.display = 'none';
+          if (submitBtn) {
+            submitBtn.style.background = '#f44336';
+            submitBtn.style.color = '#fff';
+            submitBtn.textContent = '❌ ปฏิเสธ - กดเพื่อรับทราบ';
+            submitBtn.disabled = false;
+            submitBtn.onclick = function() {
+              _closeWorkLocked = false;
+              closeModal('closeWorkModal');
+            };
+          }
+        } else {
+          showToast('⏳ ยังไม่ได้รับการอนุมัติ');
+        }
+      }
+    } catch(e) {}
+    refreshCloseBtn.textContent = '↻ รีเฟรช';
+    refreshCloseBtn.disabled = false;
+  };
 }
 
 async function cancelPendingClose(closeId) {
@@ -110,11 +256,23 @@ async function openCloseWorkModal(isResume) {
       Other: { LAK: 0, THB: 0, USD: 0 }
     };
 
-    cashbook.forEach(function(c) {
+    // ดึง cashbook ที่ join กับ bank.name เพื่อแยก BCEL/LDB/Other ได้ถูกต้อง
+    var cashbookWithBank = null;
+    try {
+      cashbookWithBank = await dbRpc('get_close_cashbook', { p_user_id: currentUser.id, p_date: today });
+    } catch(e) { console.warn('get_close_cashbook not available — falling back to cashbook from get_close_report:', e); }
+
+    var rowsToUse = (cashbookWithBank && Array.isArray(cashbookWithBank)) ? cashbookWithBank : cashbook;
+    rowsToUse.forEach(function(c) {
       var amt = parseFloat(c.amount) || 0;
       var cur = c.currency;
       var method = c.method || 'CASH';
-      var key = method === 'CASH' ? 'Cash' : 'Other';
+      var bankName = (c.bank_name || '').toUpperCase();
+      var key;
+      if (method === 'CASH') key = 'Cash';
+      else if (bankName.indexOf('BCEL') === 0) key = 'BCEL';
+      else if (bankName.indexOf('LDB') === 0) key = 'LDB';
+      else key = 'Other';
       if (moneyGrid[key] && moneyGrid[key][cur] !== undefined) {
         moneyGrid[key][cur] += amt;
       }

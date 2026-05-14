@@ -21,6 +21,10 @@ async function loadAccounting() {
       p_date_from: _accDateFrom,
       p_date_to: _accDateTo
     });
+    var gramV2 = await dbRpc('get_sales_gold_grams_v2', {
+      p_date_from: _accDateFrom,
+      p_date_to: _accDateTo
+    });
     var diffData = await dbRpc('get_diff_summary', {
       p_date_from: _accDateFrom,
       p_date_to: _accDateTo
@@ -29,8 +33,15 @@ async function loadAccounting() {
       p_date_from: _accDateFrom,
       p_date_to: _accDateTo
     });
+    var incompleteData = null;
+    try {
+      incompleteData = await dbRpc('get_incomplete_summary', {
+        p_date_from: _accDateFrom,
+        p_date_to: _accDateTo
+      });
+    } catch(e) { console.warn('get_incomplete_summary not available yet:', e); }
 
-    renderAccounting(dashData, gramData, diffData, accData);
+    renderAccounting(dashData, gramData, gramV2, diffData, accData, incompleteData);
     await renderNetSellChartFromRPC();
     hideLoading();
   } catch (error) {
@@ -39,7 +50,7 @@ async function loadAccounting() {
   }
 }
 
-function renderAccounting(dashData, gramData, diffData, accData) {
+function renderAccounting(dashData, gramData, gramV2, diffData, accData, incompleteData) {
   var sales = dashData && dashData.sales ? dashData.sales : {};
   var buybacks = dashData && dashData.buybacks ? dashData.buybacks : {};
   var withdraws = dashData && dashData.withdraws ? dashData.withdraws : {};
@@ -54,6 +65,13 @@ function renderAccounting(dashData, gramData, diffData, accData) {
   var salesNewG = gramData ? parseFloat(gramData.sales_new_g) || 0 : 0;
   var bbOldG = gramData ? parseFloat(gramData.buyback_old_g) || 0 : 0;
   var wdNewG = gramData ? parseFloat(gramData.withdraw_new_g) || 0 : 0;
+
+  // per-type breakdown (v2) for accurate cost calculation per category
+  var sellNewG_v2     = gramV2 ? parseFloat(gramV2.sell_new_g) || 0 : 0;
+  var tradeinNewG_v2  = gramV2 ? parseFloat(gramV2.tradein_new_g) || 0 : 0;
+  var tradeinOldG_v2  = gramV2 ? parseFloat(gramV2.tradein_old_g) || 0 : 0;
+  var exchangeNewG_v2 = gramV2 ? parseFloat(gramV2.exchange_new_g) || 0 : 0;
+  var exchangeOldG_v2 = gramV2 ? parseFloat(gramV2.exchange_old_g) || 0 : 0;
 
   var totalOldGIn = salesOldG + bbOldG;
   var totalNewGOut = salesNewG + wdNewG;
@@ -74,15 +92,30 @@ function renderAccounting(dashData, gramData, diffData, accData) {
   var wdMoney = parseFloat(withdraws.amount) || 0;
   var wdCount = parseInt(withdraws.count) || 0;
 
-  var sellCostLAK = wacPerG * salesNewG;
+  // cost = WAC × NEW gram ของ tx type นั้นๆ (สำหรับ tradein ใช้ net = new - old)
+  var sellCostLAK = wacPerG * sellNewG_v2;
   var sellDiff = sellMoney - sellCostLAK;
-  var tradeinCostLAK = wacPerG * salesNewG;
+  var tradeinCostLAK = wacPerG * (tradeinNewG_v2 - tradeinOldG_v2);
+  var tradeinDiff = tradeinMoney - tradeinCostLAK;
   var bbCostLAK = wacPerG * bbOldG;
   var bbDiff = bbMoney - bbCostLAK;
 
   var gpDiff = diffData ? parseFloat(diffData.total) || 0 : 0;
   var otherExpense = dashData ? parseFloat(dashData.other_expense) || 0 : 0;
   var pl = gpDiff - otherExpense;
+
+  // INCOMPLETE breakdown (#4)
+  var inc = incompleteData || {};
+  var incTotalMoney = parseFloat(inc.total_money) || 0;
+  var incTotalGold = parseFloat(inc.total_gold_g) || 0;
+  var incDetail = '';
+  ['sell','tradein','exchange','withdraw','buyback'].forEach(function(t) {
+    var d = inc[t];
+    if (d && parseInt(d.count) > 0) {
+      var label = t.charAt(0).toUpperCase() + t.slice(1);
+      incDetail += label + ': ' + formatNumber(Math.round(parseFloat(d.money) || 0)) + ' LAK | ' + (parseFloat(d.gold_g) || 0).toFixed(2) + ' g | ' + d.count + ' tx<br>';
+    }
+  });
 
   document.getElementById('accountingStats').innerHTML =
     '<div class="stat-card" style="margin-bottom:20px;text-align:center;border:2px solid var(--gold-primary);">' +
@@ -101,12 +134,16 @@ function renderAccounting(dashData, gramData, diffData, accData) {
 
     '<div class="stat-card"><h3 style="color:var(--gold-primary);margin-bottom:8px;">TRADE-IN</h3>' +
     '<p style="font-size:13px;color:var(--text-secondary);margin:2px 0;">ยอดรับ</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + formatNumber(Math.round(tradeinMoney)) + ' <span style="font-size:11px;">LAK</span></p>' +
-    '<p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">New Out</p><p style="font-size:14px;font-weight:bold;margin:2px 0;">' + salesNewG.toFixed(2) + ' g</p>' +
-    '<p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">Old In</p><p style="font-size:14px;font-weight:bold;margin:2px 0;">' + salesOldG.toFixed(2) + ' g</p>' +
-    '<p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">Tx</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + tradeinCount + '</p></div>' +
+    '<p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">ต้นทุน (WAC)</p><p style="font-size:14px;font-weight:bold;margin:2px 0;">' + formatNumber(Math.round(tradeinCostLAK)) + ' <span style="font-size:11px;">LAK</span></p>' +
+    '<p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">Diff</p><p style="font-size:14px;font-weight:bold;margin:2px 0;color:' + (tradeinDiff >= 0 ? '#4caf50' : '#f44336') + ';">' + formatNumber(Math.round(tradeinDiff)) + ' <span style="font-size:11px;">LAK</span></p>' +
+    '<p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">New Out</p><p style="font-size:14px;font-weight:bold;margin:2px 0;">' + tradeinNewG_v2.toFixed(2) + ' g</p>' +
+    '<p style="font-size:13px;color:var(--text-secondary);margin:4px 0 2px;">Old In</p><p style="font-size:14px;font-weight:bold;margin:2px 0;">' + tradeinOldG_v2.toFixed(2) + ' g</p>' +
+    '<p style="font-size:13px;color:var(--text-secondary);margin:4px 0 2px;">Tx</p><p style="font-size:14px;font-weight:bold;margin:2px 0;">' + tradeinCount + '</p></div>' +
 
     '<div class="stat-card"><h3 style="color:var(--gold-primary);margin-bottom:8px;">EXCHANGE</h3>' +
-    '<p style="font-size:13px;color:var(--text-secondary);margin:2px 0;">Transactions</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + exchangeCount + '</p></div>' +
+    '<p style="font-size:13px;color:var(--text-secondary);margin:2px 0;">New Out</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + exchangeNewG_v2.toFixed(2) + ' g</p>' +
+    '<p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">Old In</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + exchangeOldG_v2.toFixed(2) + ' g</p>' +
+    '<p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">Tx</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + exchangeCount + '</p></div>' +
 
     '<div class="stat-card"><h3 style="color:var(--gold-primary);margin-bottom:8px;">WITHDRAW</h3>' +
     '<p style="font-size:13px;color:var(--text-secondary);margin:2px 0;">ยอด</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + formatNumber(Math.round(wdMoney)) + ' <span style="font-size:11px;">LAK</span></p>' +
@@ -114,13 +151,18 @@ function renderAccounting(dashData, gramData, diffData, accData) {
     '<p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">Tx</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + wdCount + '</p></div>' +
     '</div>' +
 
-    '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:15px;margin-bottom:15px;">' +
+    '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:15px;margin-bottom:15px;">' +
 
     '<div class="stat-card"><h3 style="color:var(--gold-primary);margin-bottom:8px;">BUYBACK</h3>' +
     '<p style="font-size:13px;color:var(--text-secondary);margin:2px 0;">ยอดจ่าย</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + formatNumber(Math.round(bbMoney)) + ' <span style="font-size:11px;">LAK</span></p>' +
     '<p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">ต้นทุน (WAC)</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + formatNumber(Math.round(bbCostLAK)) + ' <span style="font-size:11px;">LAK</span></p>' +
     '<p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">Diff</p><p style="font-size:16px;font-weight:bold;margin:2px 0;color:' + (bbDiff >= 0 ? '#4caf50' : '#f44336') + ';">' + formatNumber(Math.round(bbDiff)) + ' <span style="font-size:11px;">LAK</span></p>' +
     '<p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">Tx</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + bbCount + '</p></div>' +
+
+    '<div class="stat-card" style="border:2px solid #c62828;background:linear-gradient(135deg,#1a1a1a 0%,#2d1a1a 100%);"><h3 style="color:#ef5350;margin-bottom:8px;">INCOMPLETE</h3>' +
+    '<p style="font-size:16px;color:#ef5350;font-weight:bold;margin:5px 0;">' + formatNumber(Math.round(incTotalMoney)) + ' <span style="font-size:11px;">LAK</span></p>' +
+    '<p style="font-size:14px;color:#ef5350;margin:3px 0;">' + incTotalGold.toFixed(2) + ' g</p>' +
+    '<div style="border-top:1px solid rgba(239,83,80,0.3);margin-top:8px;padding-top:8px;font-size:11px;color:#ef9a9a;line-height:1.8;">' + (incDetail || 'ไม่มี') + '</div></div>' +
 
     '<div class="stat-card"><h3 style="color:var(--gold-primary);margin-bottom:8px;">GP / Diff</h3><p style="font-size:20px;font-weight:bold;color:' + (gpDiff >= 0 ? '#4caf50' : '#f44336') + ';margin:10px 0;">' + formatNumber(Math.round(gpDiff)) + ' <span style="font-size:12px;">LAK</span></p></div>' +
     '<div class="stat-card"><h3 style="color:var(--gold-primary);margin-bottom:8px;">Other Expense</h3><p style="font-size:20px;font-weight:bold;color:#ff9800;margin:10px 0;">' + formatNumber(Math.round(otherExpense)) + ' <span style="font-size:12px;">LAK</span></p></div>' +

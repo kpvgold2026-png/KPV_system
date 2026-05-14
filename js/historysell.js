@@ -46,19 +46,46 @@ async function loadHistorySell() {
       var actions = '';
 
       if (r.status === 'COMPLETED' || r.status === 'PARTIAL' || r.status === 'PAID') {
+        // type-specific item slices for richer detail popup
+        var switchItems = items.filter(function(i) { return i.role === 'SWITCH'; }).map(function(i) { return { productId: i.productId, qty: i.qty }; });
+        var freeExItems = items.filter(function(i) { return i.role === 'FREE_EX'; }).map(function(i) { return { productId: i.productId, qty: i.qty }; });
+        var focItems = items.filter(function(i) { return i.role === 'FOC'; }).map(function(i) { return { productId: i.productId, qty: i.qty }; });
+        var switchStr = switchItems.length ? formatItemsForTable(JSON.stringify(switchItems)) : '-';
+        var freeExStr = freeExItems.length ? formatItemsForTable(JSON.stringify(freeExItems)) : '-';
+        var focStr = focItems.length ? formatItemsForTable(JSON.stringify(focItems)) : '-';
+
         var detailArr = [
           ['Type', typeLabel],
           ['Transaction ID', r.id],
           ['BILL ID', r.bill_id || '-'],
           ['Phone', r.phone],
           ['Old Gold', oldGoldStr],
-          ['New Gold', newGoldStr],
-          ['Total', formatNumber(total) + ' LAK'],
-          ['Customer Paid', paid > 0 ? formatNumber(paid) + ' ' + (r.currency || 'LAK') : '-'],
-          ['Date', formatDateTime(r.date)],
-          ['Status', r.status],
-          ['Sale', r.sale_nickname || '']
+          ['New Gold', newGoldStr]
         ];
+        // type-specific extras
+        if (r.type === 'TRADEIN') {
+          if (focItems.length) detailArr.push(['FOC Gold', focStr]);
+          if (r.foc_premium_deduct) detailArr.push(['FOC Premium Deduct', formatNumber(parseFloat(r.foc_premium_deduct) || 0) + ' LAK']);
+          if (r.foc_bill_ref) detailArr.push(['FOC Bill Ref', r.foc_bill_ref]);
+          if (r.diff) detailArr.push(['Difference', formatNumber(parseFloat(r.diff) || 0) + ' LAK']);
+        } else if (r.type === 'EXCHANGE') {
+          if (switchItems.length) detailArr.push(['Switch Old Gold', switchStr]);
+          if (freeExItems.length) detailArr.push(['Free Ex Old Gold', freeExStr]);
+          if (r.free_ex_bill_ref) detailArr.push(['Free Ex Bill Ref', r.free_ex_bill_ref]);
+          if (r.ex_fee) detailArr.push(['Exchange Fee', formatNumber(parseFloat(r.ex_fee) || 0) + ' LAK']);
+          if (r.switch_fee) detailArr.push(['Switch Fee', formatNumber(parseFloat(r.switch_fee) || 0) + ' LAK']);
+        } else if (r.type === 'WITHDRAW') {
+          if (r.withdraw_code) detailArr.push(['Withdraw Code', r.withdraw_code]);
+          if (r.diff) detailArr.push(['Difference', formatNumber(parseFloat(r.diff) || 0) + ' LAK']);
+        }
+        if (r.premium) detailArr.push(['Premium', formatNumber(parseFloat(r.premium) || 0) + ' LAK']);
+        detailArr.push(['Total', formatNumber(total) + ' LAK']);
+        detailArr.push(['Customer Paid', paid > 0 ? formatNumber(paid) + ' ' + (r.currency || 'LAK') : '-']);
+        if (r.note) detailArr.push(['Note', r.note]);
+        detailArr.push(['Date', formatDateTime(r.date)]);
+        detailArr.push(['Status', r.status]);
+        detailArr.push(['Sale', r.sale_nickname || '']);
+
         var detail = encodeURIComponent(JSON.stringify(detailArr));
         actions = '<button class="btn-action" onclick="viewTransactionDetail(\'' + typeLabel + '\',\'' + detail + '\')" style="background:#555;">👁 View</button>';
       } else if (r.status === 'PENDING' && isManager()) {

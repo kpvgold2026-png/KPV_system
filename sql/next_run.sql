@@ -1,17 +1,27 @@
 -- ============================================================
--- next_run.sql (Round 6)
+-- next_run.sql (Round 7)
 -- ============================================================
--- เพิ่มจาก Round 5:
---   #2  confirm_tradein/exchange/buyback_tx ใส่ cost_old_gold ใน diffs ครบ
---   #3b shift_status logic — ดู user activity (user_cashbook) แทน default OPEN
---   #1  เปลี่ยน tab notification ใน confirm_*_tx จาก 'historysell' → tab ของ tx type
---       (frontend ก็มี fallback แต่ DB ก็ใส่ให้ตรงไปเลย)
---   พร้อม RPCs ของ Round 5 ที่ยังจำเป็น (additive)
+-- แก้ตามที่ user ระบุ:
+--   - cost_old_gold ใน Diff ต้องคำนวณจาก "ราคาขายปัจจุบัน" ของ tx นั้น
+--     ไม่ใช่ WAC: cost_old_gold = (sell_1baht / 15) × old_gold_g
+--   - เก็บ sell_1baht ใน transactions เพื่อใช้ตอน confirm (กันราคาเปลี่ยน)
+--
+-- รวมทุกอย่างจาก Round 4-6 ที่ยังจำเป็น (idempotent — รันซ้ำได้)
 -- ============================================================
 
 
 -- ============================================================
--- 1) bill_sequence (จาก Round 4 — เก็บไว้)
+-- 0) ALTER TABLE — เพิ่ม column ที่ต้องใช้
+-- ============================================================
+ALTER TABLE transactions
+  ADD COLUMN IF NOT EXISTS sell_1baht NUMERIC DEFAULT 0;
+
+ALTER TABLE diffs
+  ADD COLUMN IF NOT EXISTS cost_old_gold NUMERIC DEFAULT 0;
+
+
+-- ============================================================
+-- 1) bill_sequence + generate_tx_id (Round 4)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS bill_sequence (
   year INT NOT NULL,
@@ -57,7 +67,7 @@ GRANT EXECUTE ON FUNCTION generate_tx_id(text) TO authenticated;
 
 
 -- ============================================================
--- 2) user_gold_received columns (จาก Round 4 — idempotent)
+-- 2) user_gold_received columns (Round 4)
 -- ============================================================
 ALTER TABLE user_gold_received
   ADD COLUMN IF NOT EXISTS price_per_unit NUMERIC(18,2) DEFAULT 0,
@@ -70,16 +80,253 @@ CREATE INDEX IF NOT EXISTS idx_user_gold_unsettled
 
 
 -- ============================================================
--- 3) confirm_buyback_tx — เพิ่ม cost_old_gold ใน diffs INSERT
+-- 3) create_*_tx — เก็บ p_sell_1baht ใน transactions (Round 7)
+--    (signature เดิม — เพิ่มแค่ column ใน INSERT)
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.create_sell_tx(
+  p_phone text, p_bill_id text, p_items jsonb,
+  p_total numeric, p_premium numeric, p_sell_1baht numeric
+)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER AS $function$
+DECLARE
+  v_tx_id TEXT;
+  v_user_id UUID;
+  v_item JSONB;
+  v_pid TEXT;
+  v_qty NUMERIC;
+  v_stock NUMERIC;
+BEGIN
+  v_user_id := current_user_id();
+  IF v_user_id IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'message', 'Not authenticated');
+  END IF;
+  FOR v_item IN SELECT * FROM jsonb_array_elements(p_items) LOOP
+    v_pid := v_item->>'productId';
+    v_qty := (v_item->>'qty')::numeric;
+    SELECT qty INTO v_stock FROM stock_balances WHERE product_id = v_pid AND gold_type = 'NEW';
+    IF v_stock IS NULL OR v_stock < v_qty THEN
+      RETURN jsonb_build_object('success', false,
+        'message', 'สต็อกไม่พอสำหรับ ' || v_pid || ' (มี ' || COALESCE(v_stock, 0) || ' ต้องการ ' || v_qty || ')');
+    END IF;
+  END LOOP;
+  v_tx_id := generate_tx_id('SELL');
+  INSERT INTO transactions (id, type, status, bill_id, phone, sale_user_id, total, premium, sell_1baht, currency, date)
+  VALUES (v_tx_id, 'SELL', 'PENDING', p_bill_id, p_phone, v_user_id, p_total, p_premium, COALESCE(p_sell_1baht, 0), 'LAK', NOW());
+  FOR v_item IN SELECT * FROM jsonb_array_elements(p_items) LOOP
+    INSERT INTO transaction_items (tx_id, item_role, product_id, qty)
+    VALUES (v_tx_id, 'NEW', v_item->>'productId', (v_item->>'qty')::numeric);
+  END LOOP;
+  INSERT INTO notifications (type, message, target_role, tab, ref_tx_id, created_by_id)
+  VALUES ('APPROVAL', 'New SELL waiting for review: ' || v_tx_id, 'Manager', 'sell', v_tx_id, v_user_id);
+  RETURN jsonb_build_object('success', true, 'id', v_tx_id);
+EXCEPTION WHEN OTHERS THEN
+  RETURN jsonb_build_object('success', false, 'message', SQLERRM);
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.create_buyback_tx(
+  p_phone text, p_bill_id text, p_items jsonb,
+  p_price numeric, p_fee numeric, p_sell_1baht numeric
+)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER AS $function$
+DECLARE
+  v_tx_id TEXT;
+  v_user_id UUID;
+  v_item JSONB;
+BEGIN
+  v_user_id := current_user_id();
+  IF v_user_id IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'message', 'Not authenticated');
+  END IF;
+  v_tx_id := generate_tx_id('BUYBACK');
+  INSERT INTO transactions (id, type, status, bill_id, phone, sale_user_id, total, price, fee, balance, sell_1baht, currency, date)
+  VALUES (v_tx_id, 'BUYBACK', 'PENDING', p_bill_id, p_phone, v_user_id, p_price, p_price, COALESCE(p_fee, 0), p_price, COALESCE(p_sell_1baht, 0), 'LAK', NOW());
+  FOR v_item IN SELECT * FROM jsonb_array_elements(p_items) LOOP
+    INSERT INTO transaction_items (tx_id, item_role, product_id, qty)
+    VALUES (v_tx_id, 'OLD', v_item->>'productId', (v_item->>'qty')::numeric);
+  END LOOP;
+  INSERT INTO notifications (type, message, target_role, tab, ref_tx_id, created_by_id)
+  VALUES ('PAYMENT', 'New BUYBACK waiting for payment: ' || v_tx_id, 'Manager', 'buyback', v_tx_id, v_user_id);
+  RETURN jsonb_build_object('success', true, 'id', v_tx_id);
+EXCEPTION WHEN OTHERS THEN
+  RETURN jsonb_build_object('success', false, 'message', SQLERRM);
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.create_tradein_tx(
+  p_phone text, p_bill_id text, p_old_items jsonb, p_new_items jsonb,
+  p_foc_items jsonb, p_foc_bill_ref text, p_difference numeric,
+  p_premium numeric, p_foc_premium_deduct numeric, p_total numeric, p_sell_1baht numeric
+)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER AS $function$
+DECLARE
+  v_tx_id TEXT;
+  v_user_id UUID;
+  v_item JSONB;
+  v_pid TEXT;
+  v_qty NUMERIC;
+  v_stock NUMERIC;
+BEGIN
+  v_user_id := current_user_id();
+  IF v_user_id IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'message', 'Not authenticated');
+  END IF;
+  FOR v_item IN SELECT * FROM jsonb_array_elements(p_new_items) LOOP
+    v_pid := v_item->>'productId';
+    v_qty := (v_item->>'qty')::numeric;
+    SELECT qty INTO v_stock FROM stock_balances WHERE product_id = v_pid AND gold_type = 'NEW';
+    IF v_stock IS NULL OR v_stock < v_qty THEN
+      RETURN jsonb_build_object('success', false, 'message', 'สต็อกไม่พอ ' || v_pid);
+    END IF;
+  END LOOP;
+  v_tx_id := generate_tx_id('TRADEIN');
+  INSERT INTO transactions (
+    id, type, status, bill_id, phone, sale_user_id,
+    diff_amount, premium, foc_premium_deduct, foc_bill_ref,
+    total, sell_1baht, currency, date
+  )
+  VALUES (
+    v_tx_id, 'TRADEIN', 'PENDING', p_bill_id, p_phone, v_user_id,
+    p_difference, p_premium, COALESCE(p_foc_premium_deduct, 0), NULLIF(p_foc_bill_ref, ''),
+    p_total, COALESCE(p_sell_1baht, 0), 'LAK', NOW()
+  );
+  FOR v_item IN SELECT * FROM jsonb_array_elements(p_old_items) LOOP
+    INSERT INTO transaction_items (tx_id, item_role, product_id, qty)
+    VALUES (v_tx_id, 'OLD', v_item->>'productId', (v_item->>'qty')::numeric);
+  END LOOP;
+  FOR v_item IN SELECT * FROM jsonb_array_elements(p_new_items) LOOP
+    INSERT INTO transaction_items (tx_id, item_role, product_id, qty)
+    VALUES (v_tx_id, 'NEW', v_item->>'productId', (v_item->>'qty')::numeric);
+  END LOOP;
+  IF p_foc_items IS NOT NULL THEN
+    FOR v_item IN SELECT * FROM jsonb_array_elements(p_foc_items) LOOP
+      INSERT INTO transaction_items (tx_id, item_role, product_id, qty)
+      VALUES (v_tx_id, 'FOC', v_item->>'productId', (v_item->>'qty')::numeric);
+    END LOOP;
+  END IF;
+  INSERT INTO notifications (type, message, target_role, tab, ref_tx_id, created_by_id)
+  VALUES ('APPROVAL', 'New TRADEIN waiting for review: ' || v_tx_id, 'Manager', 'tradein', v_tx_id, v_user_id);
+  RETURN jsonb_build_object('success', true, 'id', v_tx_id);
+EXCEPTION WHEN OTHERS THEN
+  RETURN jsonb_build_object('success', false, 'message', SQLERRM);
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.create_exchange_tx(
+  p_phone text, p_bill_id text, p_new_items jsonb, p_old_exchange_items jsonb,
+  p_switch_items jsonb, p_free_ex_items jsonb, p_exchange_fee numeric,
+  p_switch_fee numeric, p_premium numeric, p_total numeric,
+  p_free_ex_bill_ref text, p_sell_1baht numeric
+)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER AS $function$
+DECLARE
+  v_tx_id TEXT;
+  v_user_id UUID;
+  v_item JSONB;
+  v_pid TEXT;
+  v_qty NUMERIC;
+  v_stock NUMERIC;
+BEGIN
+  v_user_id := current_user_id();
+  IF v_user_id IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'message', 'Not authenticated');
+  END IF;
+  FOR v_item IN SELECT * FROM jsonb_array_elements(p_new_items) LOOP
+    v_pid := v_item->>'productId';
+    v_qty := (v_item->>'qty')::numeric;
+    SELECT qty INTO v_stock FROM stock_balances WHERE product_id = v_pid AND gold_type = 'NEW';
+    IF v_stock IS NULL OR v_stock < v_qty THEN
+      RETURN jsonb_build_object('success', false, 'message', 'สต็อกไม่พอ ' || v_pid);
+    END IF;
+  END LOOP;
+  v_tx_id := generate_tx_id('EXCHANGE');
+  INSERT INTO transactions (
+    id, type, status, bill_id, phone, sale_user_id,
+    ex_fee, switch_fee, premium, free_ex_bill_ref,
+    total, sell_1baht, currency, date
+  )
+  VALUES (
+    v_tx_id, 'EXCHANGE', 'PENDING', p_bill_id, p_phone, v_user_id,
+    COALESCE(p_exchange_fee, 0), COALESCE(p_switch_fee, 0), COALESCE(p_premium, 0), NULLIF(p_free_ex_bill_ref, ''),
+    p_total, COALESCE(p_sell_1baht, 0), 'LAK', NOW()
+  );
+  FOR v_item IN SELECT * FROM jsonb_array_elements(p_new_items) LOOP
+    INSERT INTO transaction_items (tx_id, item_role, product_id, qty)
+    VALUES (v_tx_id, 'NEW', v_item->>'productId', (v_item->>'qty')::numeric);
+  END LOOP;
+  IF p_old_exchange_items IS NOT NULL THEN
+    FOR v_item IN SELECT * FROM jsonb_array_elements(p_old_exchange_items) LOOP
+      INSERT INTO transaction_items (tx_id, item_role, product_id, qty)
+      VALUES (v_tx_id, 'OLD', v_item->>'productId', (v_item->>'qty')::numeric);
+    END LOOP;
+  END IF;
+  IF p_switch_items IS NOT NULL THEN
+    FOR v_item IN SELECT * FROM jsonb_array_elements(p_switch_items) LOOP
+      INSERT INTO transaction_items (tx_id, item_role, product_id, qty)
+      VALUES (v_tx_id, 'SWITCH', v_item->>'productId', (v_item->>'qty')::numeric);
+    END LOOP;
+  END IF;
+  IF p_free_ex_items IS NOT NULL THEN
+    FOR v_item IN SELECT * FROM jsonb_array_elements(p_free_ex_items) LOOP
+      INSERT INTO transaction_items (tx_id, item_role, product_id, qty)
+      VALUES (v_tx_id, 'FREE_EX', v_item->>'productId', (v_item->>'qty')::numeric);
+    END LOOP;
+  END IF;
+  INSERT INTO notifications (type, message, target_role, tab, ref_tx_id, created_by_id)
+  VALUES ('APPROVAL', 'New EXCHANGE waiting for review: ' || v_tx_id, 'Manager', 'exchange', v_tx_id, v_user_id);
+  RETURN jsonb_build_object('success', true, 'id', v_tx_id);
+EXCEPTION WHEN OTHERS THEN
+  RETURN jsonb_build_object('success', false, 'message', SQLERRM);
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.create_withdraw_tx(
+  p_phone text, p_bill_id text, p_items jsonb,
+  p_premium numeric, p_total numeric, p_withdraw_code text, p_sell_1baht numeric
+)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER AS $function$
+DECLARE
+  v_tx_id TEXT;
+  v_user_id UUID;
+  v_item JSONB;
+  v_pid TEXT;
+  v_qty NUMERIC;
+  v_stock NUMERIC;
+BEGIN
+  v_user_id := current_user_id();
+  IF v_user_id IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'message', 'Not authenticated');
+  END IF;
+  FOR v_item IN SELECT * FROM jsonb_array_elements(p_items) LOOP
+    v_pid := v_item->>'productId';
+    v_qty := (v_item->>'qty')::numeric;
+    SELECT qty INTO v_stock FROM stock_balances WHERE product_id = v_pid AND gold_type = 'NEW';
+    IF v_stock IS NULL OR v_stock < v_qty THEN
+      RETURN jsonb_build_object('success', false, 'message', 'สต็อกไม่พอ ' || v_pid);
+    END IF;
+  END LOOP;
+  v_tx_id := generate_tx_id('WITHDRAW');
+  INSERT INTO transactions (id, type, status, bill_id, phone, sale_user_id, total, premium, withdraw_code, sell_1baht, currency, date)
+  VALUES (v_tx_id, 'WITHDRAW', 'PENDING', p_bill_id, p_phone, v_user_id, p_total, COALESCE(p_premium, 0), p_withdraw_code, COALESCE(p_sell_1baht, 0), 'LAK', NOW());
+  FOR v_item IN SELECT * FROM jsonb_array_elements(p_items) LOOP
+    INSERT INTO transaction_items (tx_id, item_role, product_id, qty)
+    VALUES (v_tx_id, 'NEW', v_item->>'productId', (v_item->>'qty')::numeric);
+  END LOOP;
+  INSERT INTO notifications (type, message, target_role, tab, ref_tx_id, created_by_id)
+  VALUES ('APPROVAL', 'New WITHDRAW waiting for review: ' || v_tx_id, 'Manager', 'withdraw', v_tx_id, v_user_id);
+  RETURN jsonb_build_object('success', true, 'id', v_tx_id);
+EXCEPTION WHEN OTHERS THEN
+  RETURN jsonb_build_object('success', false, 'message', SQLERRM);
+END;
+$function$;
+
+
+-- ============================================================
+-- 4) confirm_buyback_tx — cost_old_gold = (sell_1baht/15) × old_gold_g
 -- ============================================================
 CREATE OR REPLACE FUNCTION confirm_buyback_tx(
-  p_tx_id TEXT,
-  p_paid NUMERIC,
-  p_currency currency_code,
-  p_method TEXT,
-  p_bank_id UUID,
-  p_fee NUMERIC,
-  p_change NUMERIC
+  p_tx_id TEXT, p_paid NUMERIC, p_currency currency_code,
+  p_method TEXT, p_bank_id UUID, p_fee NUMERIC, p_change NUMERIC
 )
 RETURNS JSONB AS $$
 DECLARE
@@ -98,14 +345,14 @@ DECLARE
   v_first_payment BOOLEAN;
   v_sale_user UUID;
   v_old_gold_g NUMERIC := 0;
-  v_wac_per_g NUMERIC;
+  v_sell_1baht NUMERIC := 0;
   v_old_cost NUMERIC := 0;
 BEGIN
   v_user_id := current_user_id();
   v_role := current_user_role();
 
-  SELECT t.status, t.price, t.paid, t.sale_user_id
-    INTO v_status, v_price, v_total_paid, v_sale_user
+  SELECT t.status, t.price, t.paid, t.sale_user_id, COALESCE(t.sell_1baht, 0)
+    INTO v_status, v_price, v_total_paid, v_sale_user, v_sell_1baht
   FROM transactions t WHERE t.id = p_tx_id AND t.type = 'BUYBACK';
 
   IF v_status IS NULL THEN
@@ -167,7 +414,6 @@ BEGIN
   END IF;
 
   IF v_new_status = 'COMPLETED' THEN
-    -- รวม OLD gold gram + count
     SELECT COALESCE(SUM(ti.qty), 0),
            COALESCE(SUM(ti.qty * p.weight_baht * 15), 0)
       INTO v_total_qty, v_old_gold_g
@@ -179,8 +425,8 @@ BEGIN
       v_price_per_unit := v_price / v_total_qty;
     END IF;
 
-    v_wac_per_g := get_wac_per_g();
-    v_old_cost := v_wac_per_g * v_old_gold_g;
+    -- ‼️ Round 7: cost_old_gold = (sell_1baht/15) × old_gold_g (ราคาขายปัจจุบัน ไม่ใช่ WAC)
+    v_old_cost := (v_sell_1baht / 15.0) * v_old_gold_g;
 
     FOR v_item IN SELECT product_id, qty FROM transaction_items
                   WHERE tx_id = p_tx_id AND item_role = 'OLD' LOOP
@@ -195,9 +441,8 @@ BEGIN
       );
     END LOOP;
 
-    -- diff = ที่ได้รับมา (cost_old_gold) - ที่จ่ายออก (price) - fee paid
-    -- BUYBACK: ร้านซื้อทองคืนใน WAC → cost ที่ลงบัญชี = WAC × old gram
-    --          เงินจ่ายลูกค้า = v_price → diff = v_old_cost - v_price + p_fee
+    -- BUYBACK: ร้านจ่ายเงิน v_price ให้ลูกค้า + รับทองเก่ามูลค่า v_old_cost
+    -- diff = old_cost - price + fee (กำไรของร้าน หลังบวกค่าธรรมเนียมที่ลูกค้าจ่าย)
     INSERT INTO diffs (tx_id, type, sell_value, fee, cost_old_gold, cost_diff, diff, date)
     VALUES (p_tx_id, 'BUYBACK', -v_price, COALESCE(p_fee, 0),
             v_old_cost, 0,
@@ -221,15 +466,11 @@ GRANT EXECUTE ON FUNCTION confirm_buyback_tx(TEXT, NUMERIC, currency_code, TEXT,
 
 
 -- ============================================================
--- 4) confirm_tradein_tx — ใส่ cost_old_gold + tab='tradein'
+-- 5) confirm_tradein_tx — cost_old_gold = (sell_1baht/15) × old_gold_g
 -- ============================================================
 CREATE OR REPLACE FUNCTION confirm_tradein_tx(
-  p_tx_id TEXT,
-  p_paid NUMERIC,
-  p_currency currency_code,
-  p_method TEXT,
-  p_bank_id UUID,
-  p_change NUMERIC
+  p_tx_id TEXT, p_paid NUMERIC, p_currency currency_code,
+  p_method TEXT, p_bank_id UUID, p_change NUMERIC
 )
 RETURNS JSONB AS $$
 DECLARE
@@ -240,6 +481,7 @@ DECLARE
   v_diff_amount NUMERIC;
   v_premium NUMERIC;
   v_sale_user UUID;
+  v_sell_1baht NUMERIC := 0;
   v_new_items JSONB;
   v_new_gold_g NUMERIC;
   v_old_gold_g NUMERIC := 0;
@@ -255,8 +497,8 @@ BEGIN
   v_user_id := current_user_id();
   v_role := current_user_role();
 
-  SELECT t.status, t.total, t.diff_amount, t.premium, t.sale_user_id
-    INTO v_status, v_total, v_diff_amount, v_premium, v_sale_user
+  SELECT t.status, t.total, t.diff_amount, t.premium, t.sale_user_id, COALESCE(t.sell_1baht, 0)
+    INTO v_status, v_total, v_diff_amount, v_premium, v_sale_user, v_sell_1baht
   FROM transactions t WHERE t.id = p_tx_id AND t.type = 'TRADEIN';
 
   IF v_status IS NULL THEN
@@ -271,7 +513,6 @@ BEGIN
 
   v_new_gold_g := calc_items_gold_g(v_new_items);
 
-  -- รวม OLD/FOC gram (เพื่อ cost_old_gold)
   SELECT COALESCE(SUM(ti.qty * p.weight_baht * 15), 0)
     INTO v_old_gold_g
   FROM transaction_items ti
@@ -280,7 +521,8 @@ BEGIN
 
   v_wac_per_g := get_wac_per_g();
   v_new_cost := v_new_gold_g * v_wac_per_g;
-  v_old_cost := v_old_gold_g * v_wac_per_g;
+  -- ‼️ Round 7: cost_old_gold ใช้ราคาขายปัจจุบัน (sell_1baht/15) ไม่ใช่ WAC
+  v_old_cost := (v_sell_1baht / 15.0) * v_old_gold_g;
 
   UPDATE transactions
     SET status = 'COMPLETED', paid = p_paid, change_amount = p_change,
@@ -332,8 +574,8 @@ BEGIN
     VALUES (v_ucb_id, v_user_id, 'TRADEIN', p_paid, p_currency, p_method, p_bank_id, p_tx_id, 'Tradein ' || p_tx_id, NOW());
   END IF;
 
-  -- diff = sell_value - (new_cost - old_cost) - premium
-  v_diff := COALESCE(v_diff_amount, 0) - (v_new_cost - v_old_cost) + COALESCE(v_premium, 0);
+  -- TRADEIN: diff = diff_amount + premium + cost_old_gold - new_cost
+  v_diff := COALESCE(v_diff_amount, 0) + COALESCE(v_premium, 0) + v_old_cost - v_new_cost;
   INSERT INTO diffs (tx_id, type, sell_value, premium, cost_diff, cost_old_gold, diff, date)
   VALUES (p_tx_id, 'TRADEIN', COALESCE(v_diff_amount, 0), COALESCE(v_premium, 0),
           v_new_cost, v_old_cost, v_diff, NOW())
@@ -342,7 +584,6 @@ BEGIN
         cost_diff = EXCLUDED.cost_diff, cost_old_gold = EXCLUDED.cost_old_gold,
         diff = EXCLUDED.diff;
 
-  -- tab='tradein' (Sales ไม่มี History Sell tab — ให้ไป tab Tradein ที่ Sales เห็น)
   PERFORM _notify_user('INFO', '✅ TRADE-IN ของคุณเรียบร้อย: ' || p_tx_id,
                        v_sale_user, 'tradein', p_tx_id);
 
@@ -356,15 +597,11 @@ GRANT EXECUTE ON FUNCTION confirm_tradein_tx(TEXT, NUMERIC, currency_code, TEXT,
 
 
 -- ============================================================
--- 5) confirm_exchange_tx — ใส่ cost_old_gold + tab='exchange'
+-- 6) confirm_exchange_tx — cost_old_gold = (sell_1baht/15) × old_gold_g
 -- ============================================================
 CREATE OR REPLACE FUNCTION confirm_exchange_tx(
-  p_tx_id TEXT,
-  p_paid NUMERIC,
-  p_currency currency_code,
-  p_method TEXT,
-  p_bank_id UUID,
-  p_change NUMERIC
+  p_tx_id TEXT, p_paid NUMERIC, p_currency currency_code,
+  p_method TEXT, p_bank_id UUID, p_change NUMERIC
 )
 RETURNS JSONB AS $$
 DECLARE
@@ -376,6 +613,7 @@ DECLARE
   v_switch_fee NUMERIC;
   v_premium NUMERIC;
   v_sale_user UUID;
+  v_sell_1baht NUMERIC := 0;
   v_new_items JSONB;
   v_new_gold_g NUMERIC;
   v_old_gold_g NUMERIC := 0;
@@ -391,8 +629,8 @@ BEGIN
   v_user_id := current_user_id();
   v_role := current_user_role();
 
-  SELECT t.status, t.total, t.ex_fee, t.switch_fee, t.premium, t.sale_user_id
-    INTO v_status, v_total, v_ex_fee, v_switch_fee, v_premium, v_sale_user
+  SELECT t.status, t.total, t.ex_fee, t.switch_fee, t.premium, t.sale_user_id, COALESCE(t.sell_1baht, 0)
+    INTO v_status, v_total, v_ex_fee, v_switch_fee, v_premium, v_sale_user, v_sell_1baht
   FROM transactions t WHERE t.id = p_tx_id AND t.type = 'EXCHANGE';
 
   IF v_status IS NULL THEN RETURN jsonb_build_object('success', false, 'message', 'Not found'); END IF;
@@ -411,7 +649,8 @@ BEGIN
 
   v_wac_per_g := get_wac_per_g();
   v_new_cost := v_new_gold_g * v_wac_per_g;
-  v_old_cost := v_old_gold_g * v_wac_per_g;
+  -- ‼️ Round 7: cost_old_gold ใช้ราคาขายปัจจุบัน
+  v_old_cost := (v_sell_1baht / 15.0) * v_old_gold_g;
 
   UPDATE transactions
     SET status = 'COMPLETED', paid = p_paid, change_amount = p_change,
@@ -463,8 +702,8 @@ BEGIN
     VALUES (v_ucb_id, v_user_id, 'EXCHANGE', p_paid, p_currency, p_method, p_bank_id, p_tx_id, 'Exchange ' || p_tx_id, NOW());
   END IF;
 
-  -- diff = sell_value + fees + premium - (new_cost - old_cost)
-  v_diff := v_total + COALESCE(v_ex_fee, 0) + COALESCE(v_switch_fee, 0) + COALESCE(v_premium, 0) - (v_new_cost - v_old_cost);
+  -- EXCHANGE: diff = total + fees + premium + cost_old_gold - new_cost
+  v_diff := v_total + COALESCE(v_ex_fee, 0) + COALESCE(v_switch_fee, 0) + COALESCE(v_premium, 0) + v_old_cost - v_new_cost;
   INSERT INTO diffs (tx_id, type, sell_value, ex_fee, switch_fee, premium, cost_diff, cost_old_gold, diff, date)
   VALUES (p_tx_id, 'EXCHANGE', v_total, COALESCE(v_ex_fee, 0), COALESCE(v_switch_fee, 0), COALESCE(v_premium, 0),
           v_new_cost, v_old_cost, v_diff, NOW())
@@ -474,7 +713,6 @@ BEGIN
         cost_diff = EXCLUDED.cost_diff, cost_old_gold = EXCLUDED.cost_old_gold,
         diff = EXCLUDED.diff;
 
-  -- tab='exchange'
   PERFORM _notify_user('INFO', '✅ EXCHANGE ของคุณเรียบร้อย: ' || p_tx_id,
                        v_sale_user, 'exchange', p_tx_id);
 
@@ -488,7 +726,7 @@ GRANT EXECUTE ON FUNCTION confirm_exchange_tx(TEXT, NUMERIC, currency_code, TEXT
 
 
 -- ============================================================
--- 6) approve_close_report (จาก Round 4 — เก็บไว้)
+-- 7) approve_close_report (Round 4 — เก็บไว้)
 -- ============================================================
 CREATE OR REPLACE FUNCTION approve_close_report(p_close_id TEXT, p_decision TEXT, p_note TEXT)
 RETURNS JSONB AS $$
@@ -596,15 +834,13 @@ GRANT EXECUTE ON FUNCTION approve_close_report(TEXT, TEXT, TEXT) TO authenticate
 
 
 -- ============================================================
--- 7) get_sales_gold_grams_v2 (จาก Round 5)
+-- 8) get_sales_gold_grams_v2 (Round 5)
 -- ============================================================
 CREATE OR REPLACE FUNCTION get_sales_gold_grams_v2(
-  p_date_from DATE,
-  p_date_to DATE
+  p_date_from DATE, p_date_to DATE
 )
 RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER AS $$
-DECLARE
-  v_result JSONB;
+DECLARE v_result JSONB;
 BEGIN
   WITH item_g AS (
     SELECT t.id AS tx_id, t.type AS tx_type, ti.item_role,
@@ -625,8 +861,7 @@ BEGIN
     'buyback_old_g',  COALESCE(SUM(gold_g) FILTER (WHERE tx_type='BUYBACK'  AND item_role='OLD'), 0),
     'withdraw_new_g', COALESCE(SUM(gold_g) FILTER (WHERE tx_type='WITHDRAW' AND item_role='NEW'), 0)
   )
-  INTO v_result
-  FROM item_g;
+  INTO v_result FROM item_g;
   RETURN v_result;
 END;
 $$;
@@ -634,15 +869,13 @@ GRANT EXECUTE ON FUNCTION get_sales_gold_grams_v2(DATE, DATE) TO authenticated;
 
 
 -- ============================================================
--- 8) get_incomplete_summary (จาก Round 5)
+-- 9) get_incomplete_summary (Round 5)
 -- ============================================================
 CREATE OR REPLACE FUNCTION get_incomplete_summary(
-  p_date_from DATE,
-  p_date_to DATE
+  p_date_from DATE, p_date_to DATE
 )
 RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER AS $$
-DECLARE
-  v_result JSONB;
+DECLARE v_result JSONB;
 BEGIN
   WITH tx_g AS (
     SELECT t.id AS tx_id, t.type AS tx_type, t.total,
@@ -663,8 +896,7 @@ BEGIN
     'withdraw', jsonb_build_object('money', COALESCE(SUM(total) FILTER (WHERE tx_type='WITHDRAW'),0), 'gold_g', COALESCE(SUM(gold_g) FILTER (WHERE tx_type='WITHDRAW'),0), 'count', COUNT(*) FILTER (WHERE tx_type='WITHDRAW')),
     'buyback',  jsonb_build_object('money', COALESCE(SUM(total) FILTER (WHERE tx_type='BUYBACK'),0),  'gold_g', COALESCE(SUM(gold_g) FILTER (WHERE tx_type='BUYBACK'),0),  'count', COUNT(*) FILTER (WHERE tx_type='BUYBACK'))
   )
-  INTO v_result
-  FROM tx_g;
+  INTO v_result FROM tx_g;
   RETURN v_result;
 END;
 $$;
@@ -672,11 +904,10 @@ GRANT EXECUTE ON FUNCTION get_incomplete_summary(DATE, DATE) TO authenticated;
 
 
 -- ============================================================
--- 9) get_live_report_sales_breakdown — แก้ shift_status ให้ดู user activity
+-- 10) get_live_report_sales_breakdown (Round 6)
 -- ============================================================
 CREATE OR REPLACE FUNCTION get_live_report_sales_breakdown(
-  p_date_from DATE,
-  p_date_to DATE
+  p_date_from DATE, p_date_to DATE
 )
 RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE
@@ -684,13 +915,11 @@ DECLARE
   v_today DATE := (NOW() AT TIME ZONE 'Asia/Bangkok')::date;
 BEGIN
   WITH active_sales AS (
-    -- รับทั้ง 'Sales' และ 'User' (case-insensitive)
     SELECT u.id AS user_id, u.nickname
     FROM users u
     WHERE LOWER(u.role::text) IN ('sales', 'user')
   ),
   user_activity AS (
-    -- "เปิดกะ" = วันนี้มี activity (cashbook entry) อย่างน้อย 1 row
     SELECT DISTINCT user_id FROM user_cashbook WHERE date::date = v_today
     UNION
     SELECT DISTINCT created_by_id AS user_id FROM cashbank WHERE date::date = v_today
@@ -778,7 +1007,6 @@ BEGIN
     jsonb_build_object(
       'user_id',         a.user_id,
       'nickname',        a.nickname,
-      -- shift_status logic: CLOSED/PENDING > OPEN (if activity today) > NOT_OPEN
       'shift_status',    COALESCE(cs.s, CASE WHEN ua.user_id IS NOT NULL THEN 'OPEN' ELSE 'NOT_OPEN' END),
       'sell_money',      COALESCE(tps.sell_money, 0),
       'sell_count',      COALESCE(tps.sell_count, 0),
@@ -809,7 +1037,7 @@ GRANT EXECUTE ON FUNCTION get_live_report_sales_breakdown(DATE, DATE) TO authent
 
 
 -- ============================================================
--- 10) get_close_cashbook (จาก Round 5)
+-- 11) get_close_cashbook (Round 5)
 -- ============================================================
 CREATE OR REPLACE FUNCTION get_close_cashbook(p_user_id UUID, p_date DATE)
 RETURNS TABLE (
@@ -832,8 +1060,7 @@ GRANT EXECUTE ON FUNCTION get_close_cashbook(UUID, DATE) TO authenticated;
 
 
 -- ============================================================
--- 11) get_wealth_summary — daily gold summary (carry/net/diff) 30 วันล่าสุด
---     คำนวณ on-demand จาก stock_moves (ไม่พึ่ง daily_reports table)
+-- 12) get_wealth_summary (Round 6)
 -- ============================================================
 CREATE OR REPLACE FUNCTION get_wealth_summary(p_days INT DEFAULT 30)
 RETURNS TABLE (date DATE, carry NUMERIC, net NUMERIC)
@@ -867,17 +1094,13 @@ GRANT EXECUTE ON FUNCTION get_wealth_summary(INT) TO authenticated;
 
 
 -- ============================================================
--- หมายเหตุ:
--- ============================================================
---   - daily_reports auto back-fill (#11 รอบก่อน + #5 รอบนี้) ยังต้องตั้ง pg_cron job ใน Supabase
---     หรือ frontend trigger คำนวณ on-demand
---   - ถ้า diffs table ไม่มี column `cost_old_gold` → ALTER TABLE diffs ADD COLUMN cost_old_gold NUMERIC DEFAULT 0;
---     (ใส่ก่อนรัน confirm_*_tx ใหม่)
---
--- ============================================================
 -- ทดสอบ:
 -- ============================================================
---   ALTER TABLE diffs ADD COLUMN IF NOT EXISTS cost_old_gold NUMERIC DEFAULT 0;
+--   -- ดู transactions.sell_1baht ของบิลที่ใหม่
+--   SELECT id, type, sell_1baht, total FROM transactions ORDER BY date DESC LIMIT 10;
 --
+--   -- ดู cost_old_gold ใน diffs ที่ใหม่
 --   SELECT tx_id, type, sell_value, cost_diff, cost_old_gold, diff FROM diffs ORDER BY date DESC LIMIT 10;
---   SELECT get_live_report_sales_breakdown(CURRENT_DATE, CURRENT_DATE);
+--
+--   -- (ทางเลือก) back-fill sell_1baht ของ tx เก่าจาก current pricing
+--   --   ผมไม่รู้ schema ของ pricing table → ถ้าต้องการ back-fill แจ้งมา

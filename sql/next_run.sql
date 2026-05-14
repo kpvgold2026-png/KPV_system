@@ -1,14 +1,30 @@
 -- ============================================================
--- next_run.sql (Round 4)
+-- next_run.sql (Round 4.1 — fix: format ต้องไปอยู่ที่ transactions.id ไม่ใช่ bill_id)
 -- ============================================================
--- #15 Bill ID format: SE26000001 (per-type, no reuse)
--- #16 Hide admin notification หลัง APPROVE (frontend filter)
--- #17 Old gold delay → ปิดกะถึงจะเข้า StockOld
+-- ปัญหา round 4:
+--   - ผม override `bill_id` ผ่าน trigger ผิด — bill_id คือเลขในเล่มบิลกระดาษ
+--     ที่ Sales กรอกเอง ห้ามแตะ
+--   - format SE26000001 ต้องไปอยู่ที่ `transactions.id` (PK ใช้แทน TRANSACTION_ID)
+--
+-- โครงสร้างที่พบหลังดู source ของ create_*_tx ทั้ง 5 ตัว:
+--   ทุก function เรียก `generate_tx_id('<TYPE>')` แล้วเอาค่าไป INSERT
+--   ดังนั้นแก้แค่ตัว generate_tx_id() ก็พอ — ไม่ต้องแตะ create_*_tx เลย
 -- ============================================================
 
 
 -- ============================================================
--- #15a: bill_sequence — counter ต่อปี/ประเภท (ไม่ reuse)
+-- 1) revert ของรอบ 4: ลบ trigger ที่ override bill_id
+-- ============================================================
+DROP TRIGGER IF EXISTS trg_transactions_bill_id ON transactions;
+DROP FUNCTION IF EXISTS trg_auto_bill_id();
+
+-- bill_sequence table ใช้ต่อ (counter per-year per-type)
+-- แต่ next_bill_id() ของรอบก่อน ลบทิ้ง — ใช้ generate_tx_id() เป็น single source
+DROP FUNCTION IF EXISTS next_bill_id(tx_type);
+
+
+-- ============================================================
+-- 2) bill_sequence — counter ต่อปี/ประเภท (ไม่ reuse, ไม่เคย rollback)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS bill_sequence (
   year INT NOT NULL,
@@ -18,16 +34,19 @@ CREATE TABLE IF NOT EXISTS bill_sequence (
   PRIMARY KEY (year, tx_type)
 );
 
--- RLS: ปิดทุก client access — ใช้ผ่าน next_bill_id() (SECURITY DEFINER) เท่านั้น
 ALTER TABLE bill_sequence ENABLE ROW LEVEL SECURITY;
--- ไม่สร้าง policy = deny all (เฉพาะ postgres / SECURITY DEFINER เข้าได้)
 REVOKE ALL ON bill_sequence FROM authenticated, anon;
 
 
 -- ============================================================
--- #15b: next_bill_id(tx_type) → 'SE26000001'
+-- 3) generate_tx_id(p_type) → 'SE26000001'
+--    overwrite ของเดิม (เดิมเป็น TX-YYYYMMDDHHMMSS-...)
 -- ============================================================
-CREATE OR REPLACE FUNCTION next_bill_id(p_type tx_type)
+-- รองรับทั้ง signature เก่าที่อาจรับ text หรือ tx_type
+DROP FUNCTION IF EXISTS generate_tx_id(text);
+DROP FUNCTION IF EXISTS generate_tx_id(tx_type);
+
+CREATE OR REPLACE FUNCTION generate_tx_id(p_type text)
 RETURNS TEXT
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -37,22 +56,26 @@ DECLARE
   v_year_2 TEXT;
   v_prefix TEXT;
   v_next_seq INT;
+  v_type tx_type;
 BEGIN
+  -- cast text → tx_type (รองรับ caller ส่ง 'SELL', 'BUYBACK', ...)
+  v_type := p_type::tx_type;
+
   v_year_full := EXTRACT(YEAR FROM (NOW() AT TIME ZONE 'Asia/Bangkok'))::int;
   v_year_2 := lpad((v_year_full % 100)::text, 2, '0');
 
-  v_prefix := CASE p_type
-    WHEN 'SELL' THEN 'SE'
-    WHEN 'TRADEIN' THEN 'TI'
+  v_prefix := CASE v_type
+    WHEN 'SELL'     THEN 'SE'
+    WHEN 'TRADEIN'  THEN 'TI'
     WHEN 'EXCHANGE' THEN 'EX'
-    WHEN 'BUYBACK' THEN 'BB'
+    WHEN 'BUYBACK'  THEN 'BB'
     WHEN 'WITHDRAW' THEN 'WD'
     ELSE 'XX'
   END;
 
-  -- atomic upsert + increment
+  -- atomic upsert + increment (gap-less per year+type)
   INSERT INTO bill_sequence (year, tx_type, last_seq, updated_at)
-  VALUES (v_year_full, p_type, 1, NOW())
+  VALUES (v_year_full, v_type, 1, NOW())
   ON CONFLICT (year, tx_type)
   DO UPDATE SET last_seq = bill_sequence.last_seq + 1, updated_at = NOW()
   RETURNING last_seq INTO v_next_seq;
@@ -61,47 +84,11 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION next_bill_id(tx_type) TO authenticated;
+GRANT EXECUTE ON FUNCTION generate_tx_id(text) TO authenticated;
 
 
 -- ============================================================
--- #15c: trigger auto-set bill_id ก่อน INSERT transactions
--- ============================================================
--- ทับ bill_id ที่ frontend ส่งมา → ใช้ format ใหม่เสมอ
--- (กัน reuse ID ที่ Sales เคยพิมพ์เอง)
-CREATE OR REPLACE FUNCTION trg_auto_bill_id() RETURNS TRIGGER AS $$
-BEGIN
-  NEW.bill_id := next_bill_id(NEW.type);
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-DROP TRIGGER IF EXISTS trg_transactions_bill_id ON transactions;
-CREATE TRIGGER trg_transactions_bill_id
-  BEFORE INSERT ON transactions
-  FOR EACH ROW EXECUTE FUNCTION trg_auto_bill_id();
-
-
--- ============================================================
--- (ทางเลือก) reseed bill_sequence จาก data เดิม
--- ============================================================
--- ถ้ามี tx เก่าใน DB ที่ bill_id ขึ้นต้นด้วย SE/TI/EX/BB/WD อยู่แล้ว
--- ให้ counter เริ่มจาก max+1 ของแต่ละ year+type
--- (ที่นี่ไม่มี data เก่าน่ากังวลแล้ว reset แล้ว → comment ไว้เผื่อใช้)
--- INSERT INTO bill_sequence (year, tx_type, last_seq)
--- SELECT
---   EXTRACT(YEAR FROM date)::int,
---   type,
---   MAX(NULLIF(regexp_replace(bill_id, '^[A-Z]+\d{2}', ''), '')::int)
--- FROM transactions
--- WHERE bill_id ~ '^(SE|TI|EX|BB|WD)\d{2}\d{6}$'
--- GROUP BY 1, 2
--- ON CONFLICT (year, tx_type) DO UPDATE
---   SET last_seq = GREATEST(bill_sequence.last_seq, EXCLUDED.last_seq);
-
-
--- ============================================================
--- #17a: user_gold_received — เพิ่ม column สำหรับ delay ปิดกะ
+-- 4) Old gold delay flow — ทำเหมือนเดิม (รอบ 4 ใช้ได้แล้ว ไม่แตะ)
 -- ============================================================
 ALTER TABLE user_gold_received
   ADD COLUMN IF NOT EXISTS price_per_unit NUMERIC(18,2) DEFAULT 0,
@@ -114,8 +101,7 @@ CREATE INDEX IF NOT EXISTS idx_user_gold_unsettled
 
 
 -- ============================================================
--- #17b: confirm_buyback_tx — ลบ stock_balances OLD insert
---                            + เก็บ price_per_unit ลง user_gold_received
+-- 5) confirm_buyback_tx — เหมือนรอบ 4 (ไม่เปลี่ยน)
 -- ============================================================
 CREATE OR REPLACE FUNCTION confirm_buyback_tx(
   p_tx_id TEXT,
@@ -209,7 +195,6 @@ BEGIN
   END IF;
 
   IF v_new_status = 'COMPLETED' THEN
-    -- คำนวณ price_per_unit สำหรับแต่ละชิ้น (เฉลี่ยจาก tx.price)
     SELECT COALESCE(SUM(qty), 0) INTO v_total_qty
     FROM transaction_items WHERE tx_id = p_tx_id AND item_role = 'OLD';
 
@@ -217,8 +202,6 @@ BEGIN
       v_price_per_unit := v_price / v_total_qty;
     END IF;
 
-    -- ‼️ NEW: ไม่ insert stock_balances/stock_moves OLD ที่นี่อีกแล้ว
-    -- ทองเก่าจะไปอยู่ใน user_gold_received → รอ approve_close_report materialize
     FOR v_item IN SELECT product_id, qty FROM transaction_items
                   WHERE tx_id = p_tx_id AND item_role = 'OLD' LOOP
       INSERT INTO user_gold_received (
@@ -251,7 +234,7 @@ GRANT EXECUTE ON FUNCTION confirm_buyback_tx(TEXT, NUMERIC, currency_code, TEXT,
 
 
 -- ============================================================
--- #17c: confirm_tradein_tx — ลบ stock_balances OLD insert
+-- 6) confirm_tradein_tx — เหมือนรอบ 4
 -- ============================================================
 CREATE OR REPLACE FUNCTION confirm_tradein_tx(
   p_tx_id TEXT,
@@ -309,7 +292,6 @@ BEGIN
   INSERT INTO transaction_payments (tx_id, amount, currency, method, bank_id, paid_by_id)
   VALUES (p_tx_id, p_paid, p_currency, p_method, p_bank_id, v_user_id);
 
-  -- NEW gold OUT (ยังคงเดิม)
   INSERT INTO stock_moves (ref_id, gold_type, type, direction, gold_g, price, wac_per_g, wac_per_baht, fulfilled, user_id, date)
   VALUES (p_tx_id, 'NEW', 'TRADEIN', 'OUT', v_new_gold_g, v_total, v_wac_per_g, v_wac_per_g * 15, TRUE, v_user_id, NOW())
   RETURNING id INTO v_move_id;
@@ -321,7 +303,6 @@ BEGIN
     WHERE product_id = v_item.product_id AND gold_type = 'NEW';
   END LOOP;
 
-  -- ‼️ OLD/FOC gold IN → user_gold_received เท่านั้น (ไม่เข้า stock_balances)
   FOR v_item IN SELECT product_id, qty FROM transaction_items
                 WHERE tx_id = p_tx_id AND item_role IN ('OLD', 'FOC') LOOP
     INSERT INTO user_gold_received (
@@ -373,7 +354,7 @@ GRANT EXECUTE ON FUNCTION confirm_tradein_tx(TEXT, NUMERIC, currency_code, TEXT,
 
 
 -- ============================================================
--- #17d: confirm_exchange_tx — ลบ stock_balances OLD insert
+-- 7) confirm_exchange_tx — เหมือนรอบ 4
 -- ============================================================
 CREATE OR REPLACE FUNCTION confirm_exchange_tx(
   p_tx_id TEXT,
@@ -428,7 +409,6 @@ BEGIN
   INSERT INTO transaction_payments (tx_id, amount, currency, method, bank_id, paid_by_id)
   VALUES (p_tx_id, p_paid, p_currency, p_method, p_bank_id, v_user_id);
 
-  -- NEW gold OUT
   INSERT INTO stock_moves (ref_id, gold_type, type, direction, gold_g, price, wac_per_g, wac_per_baht, fulfilled, user_id, date)
   VALUES (p_tx_id, 'NEW', 'EXCHANGE', 'OUT', v_new_gold_g, v_total, v_wac_per_g, v_wac_per_g * 15, TRUE, v_user_id, NOW())
   RETURNING id INTO v_move_id;
@@ -440,7 +420,6 @@ BEGIN
     WHERE product_id = v_item.product_id AND gold_type = 'NEW';
   END LOOP;
 
-  -- ‼️ OLD/SWITCH/FREE_EX gold IN → user_gold_received เท่านั้น
   FOR v_item IN SELECT product_id, qty FROM transaction_items
                 WHERE tx_id = p_tx_id AND item_role IN ('OLD', 'SWITCH', 'FREE_EX') LOOP
     INSERT INTO user_gold_received (
@@ -493,11 +472,8 @@ GRANT EXECUTE ON FUNCTION confirm_exchange_tx(TEXT, NUMERIC, currency_code, TEXT
 
 
 -- ============================================================
--- #17e: approve_close_report — materialize unsettled old gold
+-- 8) approve_close_report — เหมือนรอบ 4 (materialize old gold)
 -- ============================================================
--- ตอน Manager/Admin approve การปิดกะของ Sales →
--- ย้ายทองเก่าทั้งหมดของ Sales เข้า StockOld (1 stock_moves + N stock_balances)
--- ref_id = 'CLOSE-<nickname>-<YYYYMMDD>'
 CREATE OR REPLACE FUNCTION approve_close_report(p_close_id TEXT, p_decision TEXT, p_note TEXT)
 RETURNS JSONB AS $$
 DECLARE
@@ -535,7 +511,6 @@ BEGIN
                     approved_at = NOW(), approval_note = p_note
     WHERE id = p_close_id;
 
-  -- ถ้า REJECT → ไม่ต้อง materialize
   IF v_new_status = 'REJECTED' THEN
     PERFORM _notify_user('WARNING', '❌ ปิดกะถูกปฏิเสธ: ' || p_close_id ||
                          CASE WHEN p_note IS NOT NULL THEN ' (' || p_note || ')' ELSE '' END,
@@ -543,11 +518,9 @@ BEGIN
     RETURN jsonb_build_object('success', true);
   END IF;
 
-  -- APPROVE → materialize ทองเก่าของ Sales เข้า StockOld
   v_ref_id := 'CLOSE-' || COALESCE(v_nickname, 'unknown') || '-'
               || to_char(v_close_date, 'YYYYMMDD');
 
-  -- รวม qty + value ทั้งหมด (เพื่อสร้าง stock_moves 1 row)
   SELECT
     COALESCE(SUM(ug.qty), 0),
     COALESCE(SUM(ug.qty * p.weight_baht * 15), 0),
@@ -559,12 +532,10 @@ BEGIN
     AND ug.settled = FALSE;
 
   IF v_total_qty > 0 THEN
-    -- stock_moves header
     INSERT INTO stock_moves (ref_id, gold_type, type, direction, gold_g, price, fulfilled, user_id, date)
     VALUES (v_ref_id, 'OLD', 'STOCK_IN', 'IN', v_total_gold_g, v_total_value, TRUE, v_close_user, NOW())
     RETURNING id INTO v_move_id;
 
-    -- aggregate per product → stock_move_items + stock_balances
     FOR v_item IN
       SELECT product_id, SUM(qty) AS qty
       FROM user_gold_received
@@ -580,14 +551,12 @@ BEGIN
       DO UPDATE SET qty = stock_balances.qty + v_item.qty, updated_at = NOW();
     END LOOP;
 
-    -- WAC: เพิ่ม old_gold_g + old_value
     UPDATE wac_state
       SET old_gold_g = COALESCE(old_gold_g, 0) + v_total_gold_g,
           old_value  = COALESCE(old_value, 0) + v_total_value,
           updated_at = NOW()
       WHERE id = 1;
 
-    -- mark settled
     UPDATE user_gold_received
       SET settled = TRUE, settled_at = NOW(), settled_close_id = p_close_id
       WHERE user_id = v_close_user AND settled = FALSE;
@@ -613,15 +582,12 @@ GRANT EXECUTE ON FUNCTION approve_close_report(TEXT, TEXT, TEXT) TO authenticate
 -- ============================================================
 -- ทดสอบหลังรัน
 -- ============================================================
---   -- bill_id auto: สร้าง tx ใหม่ ดู bill_id format
---   SELECT id, bill_id, type FROM transactions ORDER BY date DESC LIMIT 5;
+--   -- สร้าง tx ใหม่ → id ควรเป็น SE26000001 / BB26000001 / etc.
+--   SELECT id, bill_id, type, date FROM transactions ORDER BY date DESC LIMIT 10;
 --
---   -- counter table
+--   -- counter table ดูความเดิน
 --   SELECT * FROM bill_sequence ORDER BY year DESC, tx_type;
 --
---   -- user_gold_received unsettled
---   SELECT user_id, COUNT(*), SUM(qty), SUM(qty*price_per_unit) AS total_value
---   FROM user_gold_received WHERE settled = FALSE GROUP BY user_id;
---
---   -- หลัง approve close → stock_moves ใหม่ + stock_balances อัปเดต
---   SELECT * FROM stock_moves WHERE ref_id LIKE 'CLOSE-%' ORDER BY date DESC;
+--   -- ลบบิลแล้วสร้างใหม่ → id ไม่ reuse
+--   --   DELETE FROM transactions WHERE id = 'SE26000005';
+--   --   (สร้าง SELL ใหม่) → ได้ id = SE26000006 ไม่ใช่ 000005

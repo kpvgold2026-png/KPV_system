@@ -3,12 +3,20 @@ let reportsChartInstance = null;
 async function loadReports() {
   try {
     showLoading();
-    var data = await dbSelect('daily_reports', {
-      select: 'date,carry,net',
-      order: 'date.desc',
-      limit: 30,
-      useCache: false
-    });
+    // ใช้ get_wealth_summary RPC ที่คำนวณจาก stock_moves on-demand
+    // (ไม่พึ่ง daily_reports table ซึ่งอาจว่างถ้าไม่มี scheduled job ทำ back-fill)
+    var data = null;
+    try {
+      data = await dbRpc('get_wealth_summary', { p_days: 30 });
+    } catch(e) {
+      console.warn('get_wealth_summary not available, fallback to daily_reports table:', e);
+      data = await dbSelect('daily_reports', {
+        select: 'date,carry,net',
+        order: 'date.desc',
+        limit: 30,
+        useCache: false
+      });
+    }
 
     var tbody = document.getElementById('reportsTable');
     if (!data || data.length === 0) {

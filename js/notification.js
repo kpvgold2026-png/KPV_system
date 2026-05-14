@@ -92,6 +92,13 @@ async function pollNotifications() {
       var tab = n.tab || '';
       if (isManager()) {
         if (tab !== 'buyback') tab = 'historysell';
+      } else {
+        // Sales: ไม่มี History Sell tab — map tab=historysell → tab ของ tx type ตาม ref_tx_id prefix
+        if (tab === 'historysell' && n.ref_tx_id) {
+          var prefix = String(n.ref_tx_id).substring(0, 2).toUpperCase();
+          var prefixMap = { 'SE': 'sell', 'TI': 'tradein', 'EX': 'exchange', 'BB': 'buyback', 'WD': 'withdraw' };
+          if (prefixMap[prefix]) tab = prefixMap[prefix];
+        }
       }
       return {
         id: n.id,

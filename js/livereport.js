@@ -68,7 +68,7 @@ async function loadLiveReport() {
   }
 }
 
-// per-sales breakdown: shift status + sell/buyback/withdraw + per-product old gold + cash buttons
+// per-sales simplified card: shift status + เงินที่ถือ + ทองเก่า (เท่านั้น)
 function renderLRSalesStatusV2(rows) {
   var container = document.getElementById('lrSalesStatus');
   if (!container) return;
@@ -85,11 +85,12 @@ function renderLRSalesStatusV2(rows) {
 
   rows.forEach(function(r) {
     var name = r.nickname || 'Unknown';
-    var status = r.shift_status || 'OPEN';
+    var status = r.shift_status || 'NOT_OPEN';
     var statusText, statusColor;
     if (status === 'CLOSED') { statusText = '🔴 ปิดกะแล้ว'; statusColor = '#f44336'; }
     else if (status === 'PENDING') { statusText = '⏳ รอ Manager ยืนยัน'; statusColor = '#d4af37'; }
-    else { statusText = '🟢 เปิดกะอยู่'; statusColor = '#4caf50'; }
+    else if (status === 'OPEN') { statusText = '🟢 เปิดกะอยู่'; statusColor = '#4caf50'; }
+    else { statusText = '⚪ ยังไม่เปิดกะ'; statusColor = '#888'; }
 
     // build per-product goldQty map
     var goldQty = {};
@@ -100,16 +101,6 @@ function renderLRSalesStatusV2(rows) {
     });
     window._lrSalesGold[name] = goldQty;
     window._lrSalesCash[name] = r.cash_breakdown || {};
-
-    var sellLAK = parseFloat(r.sell_money) || 0;
-    var sellG = parseFloat(r.sell_gold_g) || 0;
-    var sellCount = parseInt(r.sell_count) || 0;
-    var bbLAK = parseFloat(r.buyback_money) || 0;
-    var bbG = parseFloat(r.buyback_gold_g) || 0;
-    var bbCount = parseInt(r.buyback_count) || 0;
-    var wdLAK = parseFloat(r.withdraw_money) || 0;
-    var wdG = parseFloat(r.withdraw_gold_g) || 0;
-    var wdCount = parseInt(r.withdraw_count) || 0;
 
     var cashLAK = 0, cashTHB = 0, cashUSD = 0;
     var cb = r.cash_breakdown || {};
@@ -127,18 +118,15 @@ function renderLRSalesStatusV2(rows) {
     });
 
     html += '<div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:12px;padding:16px;margin-bottom:12px;">';
-    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">';
+    html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px;">';
     html += '<span style="font-weight:700;font-size:16px;color:var(--gold-primary);">' + name + '</span>';
     html += '<div style="display:flex;gap:10px;align-items:center;">';
-    html += '<button onclick="showLROldGoldModal(\'' + name.replace(/'/g, "\\'") + '\')" style="background:var(--gold-primary);color:#000;border:none;border-radius:6px;padding:4px 12px;font-size:12px;font-weight:600;cursor:pointer;">View ทองเก่า</button>';
+    html += '<button onclick="showLROldGoldModal(\'' + name.replace(/'/g, "\\'") + '\')" style="background:var(--gold-primary);color:#000;border:none;border-radius:6px;padding:4px 12px;font-size:12px;font-weight:600;cursor:pointer;">รายละเอียด</button>';
     html += '<span style="font-size:13px;color:' + statusColor + ';font-weight:600;">' + statusText + '</span>';
     html += '</div></div>';
-    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;font-size:13px;">';
-    html += '<div><span style="color:var(--text-secondary);">Sales:</span> ' + formatNumber(sellLAK) + ' LAK | ' + sellG.toFixed(2) + 'g | ' + sellCount + ' บิล</div>';
-    html += '<div><span style="color:var(--text-secondary);">Withdraw:</span> ' + formatNumber(wdLAK) + ' LAK | ' + wdG.toFixed(2) + 'g | ' + wdCount + ' บิล</div>';
-    html += '<div><span style="color:var(--text-secondary);">Buyback:</span> ' + formatNumber(bbLAK) + ' LAK | ' + bbG.toFixed(2) + 'g | ' + bbCount + ' บิล</div>';
-    html += '<div><span style="color:var(--text-secondary);">เงินสด:</span> ' + formatNumber(cashLAK) + ' LAK | ' + formatCurrency(cashTHB,'THB') + ' THB | ' + formatCurrency(cashUSD,'USD') + ' USD</div>';
-    html += '<div><span style="color:var(--text-secondary);">ทองเก่า:</span> ' + oldGoldG.toFixed(2) + ' g</div>';
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;font-size:13px;">';
+    html += '<div><span style="color:var(--text-secondary);">💵 เงินที่ถือ:</span> ' + formatNumber(cashLAK) + ' LAK | ' + formatCurrency(cashTHB,'THB') + ' THB | ' + formatCurrency(cashUSD,'USD') + ' USD</div>';
+    html += '<div><span style="color:var(--text-secondary);">🥇 ทองเก่า:</span> ' + oldGoldG.toFixed(2) + ' g</div>';
     html += '</div></div>';
   });
   container.innerHTML = html;
@@ -154,7 +142,8 @@ function renderLRPaymentsBreakdownV2(rows) {
   function renderTable(title, methodKeys, totalsKey) {
     var html = '<div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:12px;padding:16px;margin-bottom:15px;">';
     html += '<h3 style="color:var(--gold-primary);font-size:15px;margin-bottom:10px;">' + title + '</h3>';
-    html += '<table style="width:100%;border-collapse:collapse;">';
+    html += '<div class="table-container" style="overflow-x:auto;-webkit-overflow-scrolling:touch;">';
+    html += '<table style="width:100%;border-collapse:collapse;min-width:600px;">';
     html += '<thead><tr>';
     html += '<th style="' + thS + 'text-align:left;">Sales</th>';
     methodKeys.forEach(function(m) {
@@ -181,7 +170,7 @@ function renderLRPaymentsBreakdownV2(rows) {
       });
       html += '</tr>';
     });
-    html += '</tbody></table></div>';
+    html += '</tbody></table></div></div>';
     return html;
   }
 

@@ -441,16 +441,18 @@ BEGIN
       );
     END LOOP;
 
-    -- BUYBACK: ร้านจ่ายเงิน v_price ให้ลูกค้า + รับทองเก่ามูลค่า v_old_cost
-    -- diff = old_cost - price + fee (กำไรของร้าน หลังบวกค่าธรรมเนียมที่ลูกค้าจ่าย)
-    INSERT INTO diffs (tx_id, type, sell_value, fee, cost_old_gold, cost_diff, diff, date)
-    VALUES (p_tx_id, 'BUYBACK', -v_price, COALESCE(p_fee, 0),
-            v_old_cost, 0,
-            (v_old_cost - v_price + COALESCE(p_fee, 0)), NOW())
+    -- ‼️ สูตรเดียวกันทุก type (Round 7.1):
+    --   diff = sell_value + ex_fee + switch_fee + premium − cost_diff − cost_old_gold
+    -- BUYBACK: sell_value = -v_price (ร้านจ่ายออก = ค่าลบ), no fees/premium, no cost_diff (no new gold)
+    INSERT INTO diffs (tx_id, type, sell_value, ex_fee, switch_fee, premium, fee, cost_diff, cost_old_gold, diff, date)
+    VALUES (p_tx_id, 'BUYBACK', -v_price, 0, 0, 0, COALESCE(p_fee, 0),
+            0, v_old_cost,
+            ((-v_price) + 0 + 0 + 0 - 0 - v_old_cost), NOW())
     ON CONFLICT (tx_id) DO UPDATE
-      SET sell_value = EXCLUDED.sell_value, fee = EXCLUDED.fee,
-          cost_old_gold = EXCLUDED.cost_old_gold,
-          cost_diff = EXCLUDED.cost_diff, diff = EXCLUDED.diff;
+      SET sell_value = EXCLUDED.sell_value, ex_fee = EXCLUDED.ex_fee,
+          switch_fee = EXCLUDED.switch_fee, premium = EXCLUDED.premium,
+          fee = EXCLUDED.fee, cost_diff = EXCLUDED.cost_diff,
+          cost_old_gold = EXCLUDED.cost_old_gold, diff = EXCLUDED.diff;
 
     PERFORM _notify_user('PAYMENT', '💰 BUYBACK ของคุณจ่ายเงินเรียบร้อย: ' || p_tx_id,
                          v_sale_user, 'buyback', p_tx_id);
@@ -574,13 +576,15 @@ BEGIN
     VALUES (v_ucb_id, v_user_id, 'TRADEIN', p_paid, p_currency, p_method, p_bank_id, p_tx_id, 'Tradein ' || p_tx_id, NOW());
   END IF;
 
-  -- TRADEIN: diff = diff_amount + premium + cost_old_gold - new_cost
-  v_diff := COALESCE(v_diff_amount, 0) + COALESCE(v_premium, 0) + v_old_cost - v_new_cost;
-  INSERT INTO diffs (tx_id, type, sell_value, premium, cost_diff, cost_old_gold, diff, date)
-  VALUES (p_tx_id, 'TRADEIN', COALESCE(v_diff_amount, 0), COALESCE(v_premium, 0),
+  -- ‼️ สูตรเดียวกัน (Round 7.1):
+  --   diff = sell_value(=diff_amount) + ex_fee + switch_fee + premium − cost_diff − cost_old_gold
+  v_diff := COALESCE(v_diff_amount, 0) + 0 + 0 + COALESCE(v_premium, 0) - v_new_cost - v_old_cost;
+  INSERT INTO diffs (tx_id, type, sell_value, ex_fee, switch_fee, premium, cost_diff, cost_old_gold, diff, date)
+  VALUES (p_tx_id, 'TRADEIN', COALESCE(v_diff_amount, 0), 0, 0, COALESCE(v_premium, 0),
           v_new_cost, v_old_cost, v_diff, NOW())
   ON CONFLICT (tx_id) DO UPDATE
-    SET sell_value = EXCLUDED.sell_value, premium = EXCLUDED.premium,
+    SET sell_value = EXCLUDED.sell_value, ex_fee = EXCLUDED.ex_fee,
+        switch_fee = EXCLUDED.switch_fee, premium = EXCLUDED.premium,
         cost_diff = EXCLUDED.cost_diff, cost_old_gold = EXCLUDED.cost_old_gold,
         diff = EXCLUDED.diff;
 
@@ -702,8 +706,9 @@ BEGIN
     VALUES (v_ucb_id, v_user_id, 'EXCHANGE', p_paid, p_currency, p_method, p_bank_id, p_tx_id, 'Exchange ' || p_tx_id, NOW());
   END IF;
 
-  -- EXCHANGE: diff = total + fees + premium + cost_old_gold - new_cost
-  v_diff := v_total + COALESCE(v_ex_fee, 0) + COALESCE(v_switch_fee, 0) + COALESCE(v_premium, 0) + v_old_cost - v_new_cost;
+  -- ‼️ สูตรเดียวกัน (Round 7.1):
+  --   diff = sell_value(=total) + ex_fee + switch_fee + premium − cost_diff − cost_old_gold
+  v_diff := v_total + COALESCE(v_ex_fee, 0) + COALESCE(v_switch_fee, 0) + COALESCE(v_premium, 0) - v_new_cost - v_old_cost;
   INSERT INTO diffs (tx_id, type, sell_value, ex_fee, switch_fee, premium, cost_diff, cost_old_gold, diff, date)
   VALUES (p_tx_id, 'EXCHANGE', v_total, COALESCE(v_ex_fee, 0), COALESCE(v_switch_fee, 0), COALESCE(v_premium, 0),
           v_new_cost, v_old_cost, v_diff, NOW())

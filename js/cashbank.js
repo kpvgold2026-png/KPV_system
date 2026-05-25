@@ -44,7 +44,7 @@ async function loadCashBank() {
     document.getElementById('otherBankUSD').textContent = formatCurrency(balances.other.USD, 'USD');
 
     var rows = await dbSelect('cashbank', {
-      select: 'id,type,amount,currency,method,bank_id,note,date,ref_tx_id,bank:banks!bank_id(name)',
+      select: 'id,type,amount,currency,rate,method,bank_id,note,date,ref_tx_id,bank:banks!bank_id(name)',
       filters: { type: 'in.(' + _cashbankFilteredTypes.join(',') + ')' },
       order: 'date.desc',
       limit: 500,
@@ -61,7 +61,8 @@ async function loadCashBank() {
         r.bank ? r.bank.name : '',
         r.note || '',
         r.date,
-        r.ref_tx_id || ''
+        r.ref_tx_id || '',
+        parseFloat(r.rate) || 1
       ];
     });
 
@@ -88,11 +89,18 @@ function renderCashBankTable(rows) {
     return;
   }
   tbody.innerHTML = rows.map(function(row) {
+    var amount = parseFloat(row[2]) || 0;
+    var currency = row[3] || '-';
+    var rate = parseFloat(row[9]) || 1;
+    var amountCell = formatCurrency(row[2], row[3]);
+    if (currency !== 'LAK' && currency !== '-') {
+      amountCell += '<div style="font-size:11px;color:var(--gold-primary);">× ' + formatNumber(rate) + ' = ' + formatNumber(Math.round(amount * rate)) + ' LAK</div>';
+    }
     return '<tr>' +
       '<td>' + row[0] + '</td>' +
       '<td>' + row[1] + '</td>' +
-      '<td>' + formatCurrency(row[2], row[3]) + '</td>' +
-      '<td>' + (row[3] || '-') + '</td>' +
+      '<td>' + amountCell + '</td>' +
+      '<td>' + currency + '</td>' +
       '<td>' + row[4] + '</td>' +
       '<td>' + (row[5] || '-') + '</td>' +
       '<td>' + (row[6] || '-') + '</td>' +
@@ -138,9 +146,42 @@ function toggleOtherExpenseBank() {
   document.getElementById('otherExpenseBankGroup').style.display = method === 'BANK' ? 'block' : 'none';
 }
 
-async function _submitCashBankEntry(type, amount, currency, method, bank, note) {
+function updateCashbankRate(prefix) {
+  var currencyEl = document.getElementById(prefix + 'Currency');
+  var amountEl = document.getElementById(prefix + 'Amount');
+  var rateEl = document.getElementById(prefix + 'Rate');
+  var rateGroup = document.getElementById(prefix + 'RateGroup');
+  var rateCurrSpan = document.getElementById(prefix + 'RateCurrency');
+  var lakSpan = document.getElementById(prefix + 'RateLakPreview');
+  if (!currencyEl || !rateGroup) return;
+  var currency = currencyEl.value;
+  if (currency === 'LAK') {
+    rateGroup.style.display = 'none';
+    if (rateEl) rateEl.value = '';
+  } else {
+    rateGroup.style.display = 'block';
+    if (rateCurrSpan) rateCurrSpan.textContent = currency;
+    var amt = parseFloat(String((amountEl && amountEl.value) || '').replace(/,/g, '')) || 0;
+    var rate = parseFloat((rateEl && rateEl.value) || '') || 0;
+    if (lakSpan) lakSpan.textContent = formatNumber(Math.round(amt * rate));
+  }
+}
+
+function _readCashbankRate(prefix) {
+  var currencyEl = document.getElementById(prefix + 'Currency');
+  var rateEl = document.getElementById(prefix + 'Rate');
+  if (!currencyEl) return 1;
+  if (currencyEl.value === 'LAK') return 1;
+  return parseFloat((rateEl && rateEl.value) || '') || 0;
+}
+
+async function _submitCashBankEntry(type, amount, currency, method, bank, note, rate) {
   if (!amount || amount <= 0) {
     alert('Please enter amount');
+    return false;
+  }
+  if (currency !== 'LAK' && (!rate || rate <= 0)) {
+    alert('กรุณากรอก Rate สำหรับสกุล ' + currency);
     return false;
   }
   showLoading();
@@ -151,7 +192,8 @@ async function _submitCashBankEntry(type, amount, currency, method, bank, note) 
       p_currency: currency,
       p_method: method,
       p_bank_name: bank || null,
-      p_note: note
+      p_note: note,
+      p_rate: currency === 'LAK' ? 1 : rate
     });
     hideLoading();
     if (result && result.success) {
@@ -168,18 +210,28 @@ async function _submitCashBankEntry(type, amount, currency, method, bank, note) 
   }
 }
 
+function _resetCashbankModal(prefix) {
+  var amountEl = document.getElementById(prefix + 'Amount');
+  var noteEl = document.getElementById(prefix + 'Note');
+  var rateEl = document.getElementById(prefix + 'Rate');
+  if (amountEl) amountEl.value = '';
+  if (noteEl) noteEl.value = '';
+  if (rateEl) rateEl.value = '';
+  updateCashbankRate(prefix);
+}
+
 async function submitCash() {
   var type = document.getElementById('cashType').value;
   var amountEl = document.getElementById('cashAmount');
   var amount = amountEl.numericValue || parseFloat(String(amountEl.value).replace(/,/g, '')) || 0;
   var currency = document.getElementById('cashCurrency').value;
   var note = document.getElementById('cashNote').value;
+  var rate = _readCashbankRate('cash');
   var dbType = type === 'IN' ? 'CASH_IN' : 'CASH_OUT';
-  var ok = await _submitCashBankEntry(dbType, amount, currency, 'CASH', '', note);
+  var ok = await _submitCashBankEntry(dbType, amount, currency, 'CASH', '', note, rate);
   if (ok) {
     closeModal('cashModal');
-    document.getElementById('cashAmount').value = '';
-    document.getElementById('cashNote').value = '';
+    _resetCashbankModal('cash');
     loadCashBank();
   }
 }
@@ -191,12 +243,12 @@ async function submitBank() {
   var amount = amountEl.numericValue || parseFloat(String(amountEl.value).replace(/,/g, '')) || 0;
   var currency = document.getElementById('bankCurrency').value;
   var note = document.getElementById('bankNote').value;
+  var rate = _readCashbankRate('bank');
   var dbType = type === 'DEPOSIT' ? 'BANK_DEPOSIT' : 'BANK_WITHDRAW';
-  var ok = await _submitCashBankEntry(dbType, amount, currency, 'BANK', bank, note);
+  var ok = await _submitCashBankEntry(dbType, amount, currency, 'BANK', bank, note, rate);
   if (ok) {
     closeModal('bankModal');
-    document.getElementById('bankAmount').value = '';
-    document.getElementById('bankNote').value = '';
+    _resetCashbankModal('bank');
     loadCashBank();
   }
 }
@@ -208,11 +260,11 @@ async function submitOtherIncome() {
   var amount = amountEl.numericValue || parseFloat(String(amountEl.value).replace(/,/g, '')) || 0;
   var currency = document.getElementById('otherIncomeCurrency').value;
   var note = document.getElementById('otherIncomeNote').value;
-  var ok = await _submitCashBankEntry('OTHER_INCOME', amount, currency, method, bank, note);
+  var rate = _readCashbankRate('otherIncome');
+  var ok = await _submitCashBankEntry('OTHER_INCOME', amount, currency, method, bank, note, rate);
   if (ok) {
     closeModal('otherIncomeModal');
-    document.getElementById('otherIncomeAmount').value = '';
-    document.getElementById('otherIncomeNote').value = '';
+    _resetCashbankModal('otherIncome');
     loadCashBank();
   }
 }
@@ -224,11 +276,11 @@ async function submitOtherExpense() {
   var amount = amountEl.numericValue || parseFloat(String(amountEl.value).replace(/,/g, '')) || 0;
   var currency = document.getElementById('otherExpenseCurrency').value;
   var note = document.getElementById('otherExpenseNote').value;
-  var ok = await _submitCashBankEntry('OTHER_EXPENSE', amount, currency, method, bank, note);
+  var rate = _readCashbankRate('otherExpense');
+  var ok = await _submitCashBankEntry('OTHER_EXPENSE', amount, currency, method, bank, note, rate);
   if (ok) {
     closeModal('otherExpenseModal');
-    document.getElementById('otherExpenseAmount').value = '';
-    document.getElementById('otherExpenseNote').value = '';
+    _resetCashbankModal('otherExpense');
     loadCashBank();
   }
 }

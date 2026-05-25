@@ -1678,15 +1678,20 @@
       </div>
       <div class="form-group">
         <label class="form-label">Amount</label>
-        <input type="number" class="form-input" id="cashAmount" placeholder="Amount" step="1000">
+        <input type="number" class="form-input" id="cashAmount" placeholder="Amount" step="1000" oninput="updateCashbankRate('cash')">
       </div>
       <div class="form-group">
         <label class="form-label">Currency</label>
-        <select class="form-select" id="cashCurrency">
+        <select class="form-select" id="cashCurrency" onchange="updateCashbankRate('cash')">
           <option value="LAK">LAK</option>
           <option value="THB">THB</option>
           <option value="USD">USD</option>
         </select>
+      </div>
+      <div class="form-group" id="cashRateGroup" style="display:none;">
+        <label class="form-label">Rate (1 <span id="cashRateCurrency">THB</span> = ? LAK)</label>
+        <input type="number" class="form-input" id="cashRate" placeholder="Rate" oninput="updateCashbankRate('cash')">
+        <div style="font-size:12px;color:var(--gold-primary);margin-top:4px;">= <span id="cashRateLakPreview">0</span> LAK</div>
       </div>
       <div class="form-group">
         <label class="form-label">Note</label>
@@ -1722,15 +1727,20 @@
       </div>
       <div class="form-group">
         <label class="form-label">Amount</label>
-        <input type="number" class="form-input" id="bankAmount" placeholder="Amount" step="1000">
+        <input type="number" class="form-input" id="bankAmount" placeholder="Amount" step="1000" oninput="updateCashbankRate('bank')">
       </div>
       <div class="form-group">
         <label class="form-label">Currency</label>
-        <select class="form-select" id="bankCurrency">
+        <select class="form-select" id="bankCurrency" onchange="updateCashbankRate('bank')">
           <option value="LAK">LAK</option>
           <option value="THB">THB</option>
           <option value="USD">USD</option>
         </select>
+      </div>
+      <div class="form-group" id="bankRateGroup" style="display:none;">
+        <label class="form-label">Rate (1 <span id="bankRateCurrency">THB</span> = ? LAK)</label>
+        <input type="number" class="form-input" id="bankRate" placeholder="Rate" oninput="updateCashbankRate('bank')">
+        <div style="font-size:12px;color:var(--gold-primary);margin-top:4px;">= <span id="bankRateLakPreview">0</span> LAK</div>
       </div>
       <div class="form-group">
         <label class="form-label">Note</label>
@@ -1766,15 +1776,20 @@
       </div>
       <div class="form-group">
         <label class="form-label">Amount</label>
-        <input type="number" class="form-input" id="otherIncomeAmount" placeholder="Amount" step="1000">
+        <input type="number" class="form-input" id="otherIncomeAmount" placeholder="Amount" step="1000" oninput="updateCashbankRate('otherIncome')">
       </div>
       <div class="form-group">
         <label class="form-label">Currency</label>
-        <select class="form-select" id="otherIncomeCurrency">
+        <select class="form-select" id="otherIncomeCurrency" onchange="updateCashbankRate('otherIncome')">
           <option value="LAK">LAK</option>
           <option value="THB">THB</option>
           <option value="USD">USD</option>
         </select>
+      </div>
+      <div class="form-group" id="otherIncomeRateGroup" style="display:none;">
+        <label class="form-label">Rate (1 <span id="otherIncomeRateCurrency">THB</span> = ? LAK)</label>
+        <input type="number" class="form-input" id="otherIncomeRate" placeholder="Rate" oninput="updateCashbankRate('otherIncome')">
+        <div style="font-size:12px;color:var(--gold-primary);margin-top:4px;">= <span id="otherIncomeRateLakPreview">0</span> LAK</div>
       </div>
       <div class="form-group">
         <label class="form-label">Note</label>
@@ -1810,15 +1825,20 @@
       </div>
       <div class="form-group">
         <label class="form-label">Amount</label>
-        <input type="number" class="form-input" id="otherExpenseAmount" placeholder="Amount" step="1000">
+        <input type="number" class="form-input" id="otherExpenseAmount" placeholder="Amount" step="1000" oninput="updateCashbankRate('otherExpense')">
       </div>
       <div class="form-group">
         <label class="form-label">Currency</label>
-        <select class="form-select" id="otherExpenseCurrency">
+        <select class="form-select" id="otherExpenseCurrency" onchange="updateCashbankRate('otherExpense')">
           <option value="LAK">LAK</option>
           <option value="THB">THB</option>
           <option value="USD">USD</option>
         </select>
+      </div>
+      <div class="form-group" id="otherExpenseRateGroup" style="display:none;">
+        <label class="form-label">Rate (1 <span id="otherExpenseRateCurrency">THB</span> = ? LAK)</label>
+        <input type="number" class="form-input" id="otherExpenseRate" placeholder="Rate" oninput="updateCashbankRate('otherExpense')">
+        <div style="font-size:12px;color:var(--gold-primary);margin-top:4px;">= <span id="otherExpenseRateLakPreview">0</span> LAK</div>
       </div>
       <div class="form-group">
         <label class="form-label">Note</label>

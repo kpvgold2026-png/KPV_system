@@ -64,7 +64,7 @@ async function loadStockOldFiltered() {
     var carry = {}, qtyIn = {}, qtyOut = {};
     FIXED_PRODUCTS.forEach(function(p) { carry[p.id] = 0; qtyIn[p.id] = 0; qtyOut[p.id] = 0; });
     renderStockOldSummary(carry, qtyIn, qtyOut);
-    renderFilteredMoves('stockOldMovementTable', moves, stockOldDateFrom, stockOldDateTo);
+    renderFilteredMoves('stockOldMovementTable', moves, stockOldDateFrom, stockOldDateTo, 'OLD');
     document.getElementById('stockOldGoldG').textContent = '-';
     document.getElementById('stockOldCostValue').textContent = '-';
   } catch(e) { console.error('Error loading stock old filtered:', e); }
@@ -131,7 +131,7 @@ function renderStockOldMovements(moves, prevW, prevC, showRunning) {
     '<td style="color:#4caf50;">' + (m.priceIn > 0 ? formatNumber(m.priceIn) : '-') + '</td>' +
     '<td style="color:#f44336;">' + (m.priceOut > 0 ? formatNumber(m.priceOut) : '-') + '</td>' +
     '<td style="font-weight:bold;">' + formatNumber(Math.round(m.c)) + '</td>' +
-    '<td><button class="btn-action" onclick="viewBillDetail(\'' + m.id + '\',\'' + m.type + '\')">📋</button></td>' +
+    '<td><button class="btn-action" onclick="viewBillDetail(\'' + m.id + '\',\'' + m.type + '\',\'OLD\')">📋</button></td>' +
     '</tr>'; }).join('');
 
   movBody.innerHTML = rows;
@@ -155,18 +155,18 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 });
 
-async function viewBillDetail(id, type) {
+async function viewBillDetail(id, type, goldType) {
   try {
     showLoading();
 
-    var html = '<div style="margin-bottom:15px;"><span style="font-size:12px;color:var(--text-secondary);">Reference ID</span><br><span style="font-size:18px;font-weight:bold;color:var(--gold-primary);">' + id + '</span></div>';
-    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:15px;">';
-    html += '<div><span style="color:var(--text-secondary);font-size:12px;">ประเภท</span><br><span class="status-badge">' + type + '</span></div>';
+    var html = '<div style="margin-bottom:15px;"><span style="font-size:12px;color:var(--text-secondary);">Transaction ID</span><br><span style="font-size:18px;font-weight:bold;color:var(--gold-primary);">' + id + '</span></div>';
 
     var txTypes = ['SELL', 'BUYBACK', 'TRADEIN', 'EXCHANGE', 'WITHDRAW'];
-    var isStockMove = (type === 'STOCK_IN' || type === 'STOCK_OUT' || type === 'TRANSFER');
+    var isStockMove = (type === 'STOCK_IN' || type === 'STOCK_OUT' || type === 'TRANSFER' || type === 'CLOSE');
 
     if (txTypes.indexOf(type) !== -1 || txTypes.indexOf(type.replace('-', '')) !== -1) {
+      html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:15px;">';
+      html += '<div><span style="color:var(--text-secondary);font-size:12px;">ประเภท</span><br><span class="status-badge">' + type + '</span></div>';
       var txRows = await dbSelect('transactions', {
         select: '*,items:transaction_items(product_id,qty,item_role)',
         filters: { id: 'eq.' + id },
@@ -183,26 +183,14 @@ async function viewBillDetail(id, type) {
         html += '<div></div></div><p style="text-align:center;color:var(--text-secondary);">ไม่พบข้อมูล</p>';
       }
     } else if (isStockMove) {
-      var moveDetail = await dbRpc('get_stock_move_detail', { p_ref_id: id });
-      if (moveDetail && moveDetail.ref_id) {
-        html += '<div><span style="color:var(--text-secondary);font-size:12px;">Direction</span><br><span class="status-badge">' + (moveDetail.direction || '') + '</span></div></div>';
-        var items = moveDetail.items || [];
-        html += '<div style="margin-bottom:15px;"><table class="data-table" style="width:100%;"><thead><tr><th>สินค้า</th><th>จำนวน</th></tr></thead><tbody>' + fmtItemsList(items) + '</tbody></table></div>';
-        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">';
-        html += '<div class="stat-card" style="padding:10px;"><div style="color:var(--text-secondary);font-size:11px;">น้ำหนัก</div><div style="font-weight:bold;">' + formatWeight(parseFloat(moveDetail.gold_g) || 0) + ' g</div></div>';
-        html += '<div class="stat-card" style="padding:10px;"><div style="color:var(--text-secondary);font-size:11px;">มูลค่า</div><div style="font-weight:bold;color:var(--gold-primary);">' + formatNumber(parseFloat(moveDetail.price) || 0) + ' LAK</div></div></div>';
-
-        if (moveDetail.note) {
-          html += '<div style="margin-top:15px;padding:12px;background:rgba(255,255,255,0.05);border-radius:8px;border:1px solid var(--border-color);">';
-          html += '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:4px;">📝 Note</div>';
-          html += '<div style="font-size:13px;">' + moveDetail.note + '</div>';
-          html += '</div>';
-        }
+      var moveDetail = await dbRpc('get_stock_move_detail', { p_ref_id: id, p_gold_type: goldType || null });
+      if (moveDetail && moveDetail.found) {
+        html += renderStockMoveDetailHtml(moveDetail, type);
       } else {
-        html += '<div></div></div><p style="text-align:center;color:var(--text-secondary);">ไม่พบข้อมูล</p>';
+        html += '<p style="text-align:center;color:var(--text-secondary);">ไม่พบข้อมูล</p>';
       }
     } else {
-      html += '<div></div></div><p style="text-align:center;color:var(--text-secondary);">ไม่รองรับประเภทนี้</p>';
+      html += '<p style="text-align:center;color:var(--text-secondary);">ไม่รองรับประเภทนี้</p>';
     }
 
     hideLoading();
@@ -211,6 +199,80 @@ async function viewBillDetail(id, type) {
     hideLoading();
     showBillModal('Error', '', '<p style="color:#f44336;">' + e.message + '</p>');
   }
+}
+
+function renderStockMoveDetailHtml(d, type) {
+  var html = '';
+  var items = d.items || [];
+  var goldG = parseFloat(d.gold_g) || 0;
+  var price = parseFloat(d.price) || 0;
+  var ppg = parseFloat(d.price_per_g) || 0;
+  var ppb = parseFloat(d.price_per_baht) || 0;
+  var wpg = parseFloat(d.wac_per_g) || 0;
+  var wpb = parseFloat(d.wac_per_baht) || 0;
+
+  // ประเภท + Direction
+  html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:15px;">';
+  html += '<div><span style="color:var(--text-secondary);font-size:12px;">ประเภท</span><br><span class="status-badge">' + (d.type || type) + '</span></div>';
+  html += '<div><span style="color:var(--text-secondary);font-size:12px;">Direction</span><br><span class="status-badge">' + (d.direction || '-') + '</span></div>';
+  html += '</div>';
+
+  // items table
+  html += '<div style="margin-bottom:15px;"><table class="data-table" style="width:100%;"><thead><tr><th>สินค้า</th><th style="text-align:right;">จำนวน</th></tr></thead><tbody>'
+       + fmtItemsList(items) + '</tbody></table></div>';
+
+  // น้ำหนัก / มูลค่า
+  html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">';
+  html += '<div class="stat-card" style="padding:10px;"><div style="color:var(--text-secondary);font-size:11px;">น้ำหนัก</div><div style="font-weight:bold;">' + formatWeight(goldG) + ' g</div></div>';
+  html += '<div class="stat-card" style="padding:10px;"><div style="color:var(--text-secondary);font-size:11px;">มูลค่า</div><div style="font-weight:bold;color:var(--gold-primary);">' + formatNumber(Math.round(price)) + ' LAK</div></div>';
+  html += '</div>';
+
+  // มูลค่า/g / มูลค่า/บาท
+  html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:15px;">';
+  html += '<div class="stat-card" style="padding:10px;"><div style="color:var(--text-secondary);font-size:11px;">มูลค่า/g</div><div style="font-weight:bold;color:#4fc3f7;">' + formatNumber(Math.round(ppg)) + ' LAK</div></div>';
+  html += '<div class="stat-card" style="padding:10px;"><div style="color:var(--text-secondary);font-size:11px;">มูลค่า/บาท</div><div style="font-weight:bold;color:#4fc3f7;">' + formatNumber(Math.round(ppb)) + ' LAK</div></div>';
+  html += '</div>';
+
+  // WAC box
+  if (wpg > 0 || wpb > 0) {
+    html += '<div style="margin-bottom:15px;padding:12px;background:rgba(212,175,55,0.08);border:1px solid var(--gold-primary);border-radius:8px;">';
+    html += '<div style="font-size:13px;color:var(--gold-primary);font-weight:bold;margin-bottom:8px;">🟡 WAC ณ เวลาทำรายการ</div>';
+    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">';
+    html += '<div><div style="font-size:11px;color:var(--text-secondary);">WAC/g</div><div style="font-weight:bold;">' + formatNumber(Math.round(wpg)) + ' LAK</div></div>';
+    html += '<div><div style="font-size:11px;color:var(--text-secondary);">WAC/บาท</div><div style="font-weight:bold;">' + formatNumber(Math.round(wpb)) + ' LAK</div></div>';
+    html += '</div></div>';
+  }
+
+  // payments breakdown (pic2.png)
+  var payments = d.payments || [];
+  if (payments.length > 0) {
+    html += '<div style="margin-bottom:15px;padding:12px;background:rgba(79,195,247,0.06);border:1px solid var(--border-color);border-radius:8px;">';
+    html += '<div style="font-size:13px;color:#4fc3f7;font-weight:bold;margin-bottom:10px;">💰 ค่าเงินที่กรอกตอนทำรายการ</div>';
+    html += payments.map(function(p) {
+      var icon = p.method === 'Cash' || p.method === 'CASH' ? '🟢' : '🏦';
+      var head = p.method === 'Cash' || p.method === 'CASH' ? 'Cash' : (p.bank || 'Bank');
+      var amt = parseFloat(p.amount) || 0;
+      var rate = parseFloat(p.rate) || 1;
+      var lak = parseFloat(p.lak) || amt * rate;
+      var line = p.currency + ': ' + formatNumber(amt)
+               + ' × ' + formatNumber(rate)
+               + ' = ' + formatNumber(Math.round(lak)) + ' LAK';
+      return '<div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px dashed var(--border-color);">'
+           + '<div style="font-size:12px;color:var(--text-secondary);">' + icon + ' ' + head + '</div>'
+           + '<div style="font-size:13px;">' + line + '</div>'
+           + '</div>';
+    }).join('');
+    html += '</div>';
+  }
+
+  if (d.note) {
+    html += '<div style="padding:12px;background:rgba(255,255,255,0.05);border-radius:8px;border:1px solid var(--border-color);">';
+    html += '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:4px;">📝 Note</div>';
+    html += '<div style="font-size:13px;">' + d.note + '</div>';
+    html += '</div>';
+  }
+
+  return html;
 }
 
 function fmtItemsList(items) {
@@ -235,12 +297,13 @@ function showBillModal(id, type, contentHtml) {
   openModal('billDetailModal');
 }
 
-function renderFilteredMoves(tableId, moves, from, to) {
+function renderFilteredMoves(tableId, moves, from, to, goldType) {
   var movBody = document.getElementById(tableId);
   if (moves.length === 0) {
     movBody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;">ไม่มีรายการในช่วงนี้</td></tr>';
     return;
   }
+  var gt = goldType || (tableId && tableId.indexOf('Old') !== -1 ? 'OLD' : 'NEW');
   var w = 0, c = 0;
   var rows = moves.map(function(m) {
     var goldG = parseFloat(m.goldG) || 0;
@@ -260,7 +323,7 @@ function renderFilteredMoves(tableId, moves, from, to) {
       '<td style="color:#4caf50;">' + (pIn > 0 ? formatNumber(pIn) : '-') + '</td>' +
       '<td style="color:#f44336;">' + (pOut > 0 ? formatNumber(pOut) : '-') + '</td>' +
       '<td style="font-weight:bold;">' + formatNumber(Math.round(c)) + '</td>' +
-      '<td><button class="btn-action" onclick="viewBillDetail(\'' + m.id + '\',\'' + m.type + '\')">📋</button></td>' +
+      '<td><button class="btn-action" onclick="viewBillDetail(\'' + m.id + '\',\'' + m.type + '\',\'' + gt + '\')">📋</button></td>' +
       '</tr>';
   }).join('');
   movBody.innerHTML = rows;

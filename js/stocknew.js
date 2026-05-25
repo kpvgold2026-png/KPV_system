@@ -66,7 +66,7 @@ async function loadStockNewFiltered() {
     var carry = {}, qtyIn = {}, qtyOut = {};
     FIXED_PRODUCTS.forEach(function(p) { carry[p.id] = 0; qtyIn[p.id] = 0; qtyOut[p.id] = 0; });
     renderStockNewSummary(carry, qtyIn, qtyOut);
-    renderFilteredMoves('stockNewMovementTable', filtered, stockNewDateFrom, stockNewDateTo);
+    renderFilteredMoves('stockNewMovementTable', filtered, stockNewDateFrom, stockNewDateTo, 'NEW');
     document.getElementById('stockNewGoldG').textContent = '-';
     document.getElementById('stockNewCostValue').textContent = '-';
   } catch(e) { console.error('Error loading stock new filtered:', e); }
@@ -129,7 +129,7 @@ function renderStockNewMovements(moves, prevW, prevC) {
       '<td style="color:#4caf50;">' + (m.priceIn > 0 ? formatNumber(m.priceIn) : '-') + '</td>' +
       '<td style="color:#f44336;">' + (m.priceOut > 0 ? formatNumber(m.priceOut) : '-') + '</td>' +
       '<td style="font-weight:bold;">' + formatNumber(Math.round(m.c)) + '</td>' +
-      '<td><button class="btn-action" onclick="viewBillDetail(\'' + m.id + '\',\'' + m.type + '\')">📋</button></td>' +
+      '<td><button class="btn-action" onclick="viewBillDetail(\'' + m.id + '\',\'' + m.type + '\',\'NEW\')">📋</button></td>' +
       '</tr>'; }).join('');
     movBody.innerHTML = rows;
   }

@@ -125,6 +125,8 @@ async function pollNotifications() {
           (completedRows || []).forEach(function(t) { statusMap[t.id] = t.status; });
           filtered = filtered.filter(function(n) {
             if (!n.txId) return true;
+            // BILL_DUP: keep ค้างไว้จนกว่าจะกดอ่าน (ไม่ผูกกับ tx status)
+            if (n.type === 'BILL_DUP') return true;
             var status = statusMap[n.txId];
             if (!status) return false;
             // Sales-targeted (INFO/PAYMENT to user): แสดงจนกว่า tx COMPLETED/REJECTED
@@ -186,16 +188,84 @@ function renderNotifList() {
     else if (n.type === 'CLOSE') icon = '🔒';
     else if (n.type === 'TRANSFER') icon = '🔄';
     else if (n.type === 'STOCK') icon = '📦';
+    else if (n.type === 'BILL_DUP') icon = '🔁';
 
     var time = '';
     try { time = formatDateTime(n.createdAt); } catch(e) {}
     var bg = n.read ? 'transparent' : 'rgba(212,175,55,0.08)';
 
-    return '<div onclick="goToNotifTab(\'' + n.tab + '\')" style="padding:10px 15px;border-bottom:1px solid var(--border-color);cursor:pointer;background:' + bg + ';">' +
+    var clickAttr;
+    if (n.type === 'BILL_DUP') {
+      var billId = '';
+      var m = (n.message || '').match(/Bill ID ซ้ำ:\s*([^\s\(]+)/);
+      if (m) billId = m[1];
+      clickAttr = 'onclick="showBillDupPopup(\'' + billId.replace(/'/g, "\\'") + '\')"';
+    } else {
+      clickAttr = 'onclick="goToNotifTab(\'' + n.tab + '\')"';
+    }
+
+    return '<div ' + clickAttr + ' style="padding:10px 15px;border-bottom:1px solid var(--border-color);cursor:pointer;background:' + bg + ';">' +
       '<div style="font-size:13px;">' + icon + ' ' + n.message + '</div>' +
       '<div style="font-size:11px;color:var(--text-secondary);margin-top:3px;">' + time + '</div>' +
       '</div>';
   }).join('');
+}
+
+async function showBillDupPopup(billId) {
+  if (!billId) { alert('ไม่พบ Bill ID'); return; }
+  var dropdown = document.getElementById('notifDropdown');
+  if (dropdown) { dropdown.style.display = 'none'; _notifDropdownOpen = false; }
+
+  try {
+    showLoading();
+    var data = await dbRpc('get_bill_dup_detail', { p_bill_id: billId });
+    hideLoading();
+    var txs = (data && data.txs) || [];
+
+    var html = '<div style="padding:20px;">';
+    html += '<h3 style="color:#f44336;margin-bottom:10px;">🔁 Bill ID ซ้ำ: ' + billId + '</h3>';
+    html += '<p style="font-size:13px;color:var(--text-secondary);margin-bottom:15px;">พบ ' + txs.length + ' รายการที่ใช้ Bill ID เดียวกัน</p>';
+
+    if (txs.length === 0) {
+      html += '<p>ไม่พบข้อมูล</p>';
+    } else {
+      html += '<table style="width:100%;border-collapse:collapse;">';
+      html += '<thead><tr style="background:rgba(212,175,55,0.1);">' +
+        '<th style="padding:8px;text-align:left;border-bottom:2px solid var(--gold-primary);">Tx ID</th>' +
+        '<th style="padding:8px;text-align:left;border-bottom:2px solid var(--gold-primary);">ประเภท</th>' +
+        '<th style="padding:8px;text-align:left;border-bottom:2px solid var(--gold-primary);">Sales</th>' +
+        '<th style="padding:8px;text-align:right;border-bottom:2px solid var(--gold-primary);">Total</th>' +
+        '<th style="padding:8px;text-align:left;border-bottom:2px solid var(--gold-primary);">สถานะ</th>' +
+        '<th style="padding:8px;text-align:left;border-bottom:2px solid var(--gold-primary);">วันที่</th>' +
+        '</tr></thead><tbody>';
+      txs.forEach(function(t) {
+        html += '<tr style="border-bottom:1px solid var(--border-color);">' +
+          '<td style="padding:8px;font-weight:bold;color:var(--gold-primary);">' + (t.id || '-') + '</td>' +
+          '<td style="padding:8px;">' + (t.type || '-') + '</td>' +
+          '<td style="padding:8px;">' + (t.sales_nickname || '-') + '</td>' +
+          '<td style="padding:8px;text-align:right;">' + formatNumber(parseFloat(t.total) || 0) + ' LAK</td>' +
+          '<td style="padding:8px;">' + (t.status || '-') + '</td>' +
+          '<td style="padding:8px;font-size:11px;">' + formatDateTime(t.created_at) + '</td>' +
+          '</tr>';
+      });
+      html += '</tbody></table>';
+    }
+    html += '</div>';
+
+    var modal = document.getElementById('billDupModal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'billDupModal';
+      modal.className = 'modal';
+      modal.innerHTML = '<div class="modal-content" style="max-width:720px;"><div id="billDupContent"></div><div style="text-align:right;padding:0 20px 20px;"><button class="btn-secondary" onclick="closeModal(\'billDupModal\')">ปิด</button></div></div>';
+      document.body.appendChild(modal);
+    }
+    document.getElementById('billDupContent').innerHTML = html;
+    openModal('billDupModal');
+  } catch(e) {
+    hideLoading();
+    alert('❌ โหลดข้อมูลไม่สำเร็จ: ' + e.message);
+  }
 }
 
 function goToNotifTab(tab) {

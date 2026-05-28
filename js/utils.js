@@ -340,6 +340,27 @@ function roundTo1000(num) {
   return Math.ceil(num / 1000) * 1000;
 }
 
+// ทอนเงินให้ลูกค้า (LAK): <1000 → 0, ≥1000 → ปัดหลักพันใกล้สุด
+// 22500 → 23000, 22490 → 22000, 999 → 0, 1500 → 2000
+// สำหรับ THB/USD ให้แปลง×rate→LAK ก่อนเรียก
+function roundChangeLak(lak) {
+  var n = parseFloat(lak) || 0;
+  if (n < 1000) return 0;
+  return Math.round(n / 1000) * 1000;
+}
+
+// DD/MM HH:MM
+function formatTimeShort(dateStr) {
+  if (!dateStr) return '-';
+  var d = new Date(dateStr);
+  if (isNaN(d.getTime())) return '-';
+  var hh = String(d.getHours()).padStart(2, '0');
+  var mm = String(d.getMinutes()).padStart(2, '0');
+  var dd = String(d.getDate()).padStart(2, '0');
+  var mo = String(d.getMonth() + 1).padStart(2, '0');
+  return dd + '/' + mo + ' ' + hh + ':' + mm;
+}
+
 function calculateSellPrice(productId, sell1Baht) {
   var price = 0;
   switch(productId) {

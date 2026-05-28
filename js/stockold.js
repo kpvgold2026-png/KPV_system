@@ -11,7 +11,7 @@ async function loadStockOld() {
 
   var _tblSpinnerOld = '<div style="display:inline-block;width:20px;height:20px;border:3px solid var(--border-color);border-top:3px solid var(--gold-primary);border-radius:50%;animation:spin 0.8s linear infinite;"></div>';
   document.getElementById('stockOldSummaryTable').innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;">' + _tblSpinnerOld + '</td></tr>';
-  document.getElementById('stockOldMovementTable').innerHTML = '<tr><td colspan="9" style="text-align:center;padding:20px;">' + _tblSpinnerOld + '</td></tr>';
+  document.getElementById('stockOldMovementTable').innerHTML = '<tr><td colspan="10" style="text-align:center;padding:20px;">' + _tblSpinnerOld + '</td></tr>';
   document.getElementById('stockOldGoldG').textContent = '...';
   document.getElementById('stockOldCostValue').textContent = '...';
 
@@ -90,7 +90,7 @@ function renderStockOldMovements(moves, prevW, prevC, showRunning) {
     var gOut = m.dir === 'OUT' ? goldG : 0;
     var pIn = m.dir === 'IN' ? price : 0;
     var pOut = m.dir === 'OUT' ? price : 0;
-    return { id: m.id, type: m.type, goldIn: gIn, goldOut: gOut, priceIn: pIn, priceOut: pOut };
+    return { id: m.id, type: m.type, date: m.date, goldIn: gIn, goldOut: gOut, priceIn: pIn, priceOut: pOut };
   });
 
   var w = prevW, c = prevC;
@@ -110,7 +110,7 @@ function renderStockOldMovements(moves, prevW, prevC, showRunning) {
 
   if (prevW !== 0 || prevC !== 0) {
     rows += '<tr style="background:rgba(212,175,55,0.06);">' +
-      '<td colspan="4" style="font-style:italic;color:var(--gold-primary);">📌 ยกมา</td>' +
+      '<td colspan="5" style="font-style:italic;color:var(--gold-primary);">📌 ยกมา</td>' +
       '<td style="font-weight:bold;">' + formatWeight(prevW) + '</td>' +
       '<td colspan="2"></td>' +
       '<td style="font-weight:bold;">' + formatNumber(Math.round(prevC)) + '</td>' +
@@ -118,12 +118,13 @@ function renderStockOldMovements(moves, prevW, prevC, showRunning) {
   }
 
   if (todayMovements.length === 0 && rows === '') {
-    movBody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;">ไม่มีรายการวันนี้</td></tr>';
+    movBody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:40px;">ไม่มีรายการวันนี้</td></tr>';
     return;
   }
 
   rows += todayMovements.map(function(m) { return '<tr>' +
     '<td>' + m.id + '</td>' +
+    '<td style="font-size:11px;color:var(--text-secondary);white-space:nowrap;">' + formatTimeShort(m.date) + '</td>' +
     '<td><span class="status-badge">' + m.type + '</span></td>' +
     '<td style="color:#4caf50;">' + (m.goldIn > 0 ? formatWeight(m.goldIn) : '-') + '</td>' +
     '<td style="color:#f44336;">' + (m.goldOut > 0 ? formatWeight(m.goldOut) : '-') + '</td>' +
@@ -300,7 +301,7 @@ function showBillModal(id, type, contentHtml) {
 function renderFilteredMoves(tableId, moves, from, to, goldType) {
   var movBody = document.getElementById(tableId);
   if (moves.length === 0) {
-    movBody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;">ไม่มีรายการในช่วงนี้</td></tr>';
+    movBody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:40px;">ไม่มีรายการในช่วงนี้</td></tr>';
     return;
   }
   var gt = goldType || (tableId && tableId.indexOf('Old') !== -1 ? 'OLD' : 'NEW');
@@ -316,6 +317,7 @@ function renderFilteredMoves(tableId, moves, from, to, goldType) {
     c += pIn - pOut;
     return '<tr>' +
       '<td>' + m.id + '</td>' +
+      '<td style="font-size:11px;color:var(--text-secondary);white-space:nowrap;">' + formatTimeShort(m.date) + '</td>' +
       '<td><span class="status-badge">' + m.type + '</span></td>' +
       '<td style="color:#4caf50;">' + (gIn > 0 ? formatWeight(gIn) : '-') + '</td>' +
       '<td style="color:#f44336;">' + (gOut > 0 ? formatWeight(gOut) : '-') + '</td>' +
@@ -369,6 +371,7 @@ function addTransferProduct() {
 }
 
 async function confirmTransfer() {
+  if (_isSubmitting) return;
   try {
     var rows = document.querySelectorAll('#transferOldProducts .product-row');
     var items = [];
@@ -379,6 +382,7 @@ async function confirmTransfer() {
     }
     if (items.length === 0) { alert('กรุณาเพิ่มสินค้าอย่างน้อย 1 รายการ'); return; }
     if (!confirm('ยืนยันการโอนทองเก่าไปทองใหม่ ' + items.length + ' รายการ?')) return;
+    _isSubmitting = true;
     showLoading();
     var result = await dbRpc('transfer_old_to_new_tx', { p_items: mergeItems(items) });
     hideLoading();
@@ -412,6 +416,7 @@ function addStockOutProduct() {
 }
 
 async function confirmStockOut() {
+  if (_isSubmitting) return;
   try {
     var rows = document.querySelectorAll('#stockOutProducts .product-row');
     var items = [];
@@ -423,6 +428,7 @@ async function confirmStockOut() {
     if (items.length === 0) { alert('กรุณาเพิ่มสินค้าอย่างน้อย 1 รายการ'); return; }
     var note = document.getElementById('stockOutNote').value.trim();
     if (!confirm('ยืนยันการ Stock Out (OLD) ' + items.length + ' รายการ?')) return;
+    _isSubmitting = true;
     showLoading();
     var result = await dbRpc('stock_out_old_tx', { p_items: mergeItems(items), p_note: note });
     hideLoading();

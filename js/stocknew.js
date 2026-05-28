@@ -11,7 +11,7 @@ async function loadStockNew() {
   }
 
   document.getElementById('stockNewSummaryTable').innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;">' + _tblSpinner + '</td></tr>';
-  document.getElementById('stockNewMovementTable').innerHTML = '<tr><td colspan="9" style="text-align:center;padding:20px;">' + _tblSpinner + '</td></tr>';
+  document.getElementById('stockNewMovementTable').innerHTML = '<tr><td colspan="10" style="text-align:center;padding:20px;">' + _tblSpinner + '</td></tr>';
   document.getElementById('stockNewGoldG').textContent = '...';
   document.getElementById('stockNewCostValue').textContent = '...';
 
@@ -97,7 +97,7 @@ function renderStockNewMovements(moves, prevW, prevC) {
     w += gIn - gOut;
     c += pIn - pOut;
     if (m.type === 'TRANSFER' || m.type === 'STOCK_IN') {
-      todayMovements.push({ id: m.id, type: m.type, goldIn: gIn, goldOut: gOut, priceIn: pIn, priceOut: pOut, w: w, c: c });
+      todayMovements.push({ id: m.id, type: m.type, date: m.date, goldIn: gIn, goldOut: gOut, priceIn: pIn, priceOut: pOut, w: w, c: c });
     }
   });
 
@@ -110,7 +110,7 @@ function renderStockNewMovements(moves, prevW, prevC) {
 
   if (prevW !== 0 || prevC !== 0) {
     rows += '<tr style="background:rgba(212,175,55,0.06);">' +
-      '<td colspan="4" style="font-style:italic;color:var(--gold-primary);">📌 ยกมา</td>' +
+      '<td colspan="5" style="font-style:italic;color:var(--gold-primary);">📌 ยกมา</td>' +
       '<td style="font-weight:bold;">' + formatWeight(prevW) + '</td>' +
       '<td colspan="2"></td>' +
       '<td style="font-weight:bold;">' + formatNumber(Math.round(prevC)) + '</td>' +
@@ -118,10 +118,11 @@ function renderStockNewMovements(moves, prevW, prevC) {
   }
 
   if (todayMovements.length === 0 && rows === '') {
-    movBody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:40px;">ไม่มีรายการวันนี้</td></tr>';
+    movBody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:40px;">ไม่มีรายการวันนี้</td></tr>';
   } else {
     rows += todayMovements.map(function(m) { return '<tr>' +
       '<td>' + m.id + '</td>' +
+      '<td style="font-size:11px;color:var(--text-secondary);white-space:nowrap;">' + formatTimeShort(m.date) + '</td>' +
       '<td><span class="status-badge">' + m.type + '</span></td>' +
       '<td style="color:#4caf50;">' + (m.goldIn > 0 ? formatWeight(m.goldIn) : '-') + '</td>' +
       '<td style="color:#f44336;">' + (m.goldOut > 0 ? formatWeight(m.goldOut) : '-') + '</td>' +
@@ -388,6 +389,7 @@ function updateStockInRemain() {
 }
 
 async function confirmStockInNew() {
+  if (_isSubmitting) return;
   try {
     var rows = document.querySelectorAll('#stockInNewProducts .product-row');
     var items = [];
@@ -430,6 +432,7 @@ async function confirmStockInNew() {
     if (!confirm('ยืนยัน Stock In (NEW) ' + items.length + ' รายการ ต้นทุน ' + formatNumber(costRound) + ' LAK' + (totalFee > 0 ? ' + Fee ' + formatNumber(totalFee) + ' LAK' : '') + '?')) return;
 
     var note = document.getElementById('stockInNewNote').value.trim();
+    _isSubmitting = true;
     showLoading();
     var result = await dbRpc('stock_in_new_tx', {
       p_items: mergeItems(items),

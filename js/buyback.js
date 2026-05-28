@@ -173,6 +173,7 @@ async function calculateBuyback() {
     if (result && result.success) {
       endSubmit();
       showToast('✅ สร้างรายการรับซื้อสำเร็จ!');
+      try { if (billId) await dbRpc('check_duplicate_bill_id', { p_bill_id: billId }); } catch(e) {}
       closeModal('buybackModal');
       document.getElementById('buybackPhone').value = '';
       document.getElementById('buybackBillId').value = '';

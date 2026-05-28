@@ -176,6 +176,7 @@ async function calculateWithdraw() {
     if (result && result.success) {
       endSubmit();
       showToast('✅ สร้างรายการถอนทองสำเร็จ!');
+      try { if (billId) await dbRpc('check_duplicate_bill_id', { p_bill_id: billId }); } catch(e) {}
       closeModal('withdrawModal');
       document.getElementById('withdrawPhone').value = '';
       document.getElementById('withdrawBillId').value = '';

@@ -285,6 +285,7 @@ async function calculateTradein() {
     if (result && result.success) {
       endSubmit();
       showToast('✅ สร้างรายการแลกเปลี่ยนสำเร็จ!');
+      try { if (billId) await dbRpc('check_duplicate_bill_id', { p_bill_id: billId }); } catch(e) {}
       closeModal('tradeinModal');
       document.getElementById('tradeinPhone').value = '';
       if (document.getElementById('tradeinBillId')) document.getElementById('tradeinBillId').value = '';

@@ -184,6 +184,7 @@ async function _submitCashBankEntry(type, amount, currency, method, bank, note, 
     alert('กรุณากรอก Rate สำหรับสกุล ' + currency);
     return false;
   }
+  _isSubmitting = true;
   showLoading();
   try {
     var result = await dbRpc('add_cashbank_entry', {
@@ -221,6 +222,7 @@ function _resetCashbankModal(prefix) {
 }
 
 async function submitCash() {
+  if (_isSubmitting) return;
   var type = document.getElementById('cashType').value;
   var amountEl = document.getElementById('cashAmount');
   var amount = amountEl.numericValue || parseFloat(String(amountEl.value).replace(/,/g, '')) || 0;
@@ -237,6 +239,7 @@ async function submitCash() {
 }
 
 async function submitBank() {
+  if (_isSubmitting) return;
   var type = document.getElementById('bankType').value;
   var bank = document.getElementById('bankName').value;
   var amountEl = document.getElementById('bankAmount');
@@ -254,6 +257,7 @@ async function submitBank() {
 }
 
 async function submitOtherIncome() {
+  if (_isSubmitting) return;
   var method = document.getElementById('otherIncomeMethod').value;
   var bank = method === 'BANK' ? document.getElementById('otherIncomeBank').value : '';
   var amountEl = document.getElementById('otherIncomeAmount');
@@ -270,6 +274,7 @@ async function submitOtherIncome() {
 }
 
 async function submitOtherExpense() {
+  if (_isSubmitting) return;
   var method = document.getElementById('otherExpenseMethod').value;
   var bank = method === 'BANK' ? document.getElementById('otherExpenseBank').value : '';
   var amountEl = document.getElementById('otherExpenseAmount');

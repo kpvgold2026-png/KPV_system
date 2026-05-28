@@ -233,9 +233,7 @@ function updatePaymentSummary() {
     document.getElementById('multiPaymentRemaining').style.color = '#4caf50';
 
     if (!isBuyback) {
-      var ch = Math.max(0, change);
-      ch = Math.round(ch / 1000) * 1000;
-      if (ch < 1000) ch = 0;
+      var ch = roundChangeLak(Math.max(0, change));
       changeEl.textContent = formatNumber(ch) + ' LAK';
 
       var overLimit = false;
@@ -309,9 +307,7 @@ async function confirmMultiPayment() {
   
   var change = 0;
   if (currentPaymentData.type !== 'BUYBACK') {
-    change = Math.max(0, totalPaid - total);
-    change = Math.round(change / 1000) * 1000;
-    if (change < 1000) change = 0;
+    change = roundChangeLak(Math.max(0, totalPaid - total));
   }
 
   if (change > 0) {

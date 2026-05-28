@@ -187,6 +187,7 @@ async function submitSell() {
     if (result && result.success) {
       endSubmit();
       showToast('✅ สร้างรายการขายสำเร็จ!');
+      try { if (billId) await dbRpc('check_duplicate_bill_id', { p_bill_id: billId }); } catch(e) {}
       closeModal('sellModal');
       document.getElementById('sellPhone').value = '';
       document.getElementById('sellBillId').value = '';

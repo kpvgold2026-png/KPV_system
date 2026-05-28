@@ -341,6 +341,7 @@ async function calculateExchangeNew() {
     if (result && result.success) {
       endSubmit();
       showToast('✅ สร้างรายการ Exchange สำเร็จ!');
+      try { if (billId) await dbRpc('check_duplicate_bill_id', { p_bill_id: billId }); } catch(e) {}
       closeModal('exchangeModal');
       resetExchangeForm();
       loadExchanges();

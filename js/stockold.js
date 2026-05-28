@@ -15,11 +15,13 @@ async function loadStockOld() {
   document.getElementById('stockOldGoldG').textContent = '...';
   document.getElementById('stockOldCostValue').textContent = '...';
 
-  if (!isFiltered || isToday) {
-    await loadStockOldSummary();
-    await loadStockOldMoves();
+  // ตารางสรุปด้านบน + Gold(g)/มูลค่าต้นทุน = สถานะสต็อกปัจจุบันเสมอ (ไม่ขึ้นกับ date filter)
+  await loadStockOldSummary();
+  if (isFiltered && !isToday) {
+    await loadStockOldMoves(true);   // ตั้ง Gold(g)/มูลค่า (ค่าล่าสุด) เท่านั้น ไม่ render ตาราง
+    await loadStockOldFiltered();     // ตาราง movement = ตามช่วงวันที่เลือก
   } else {
-    await loadStockOldFiltered();
+    await loadStockOldMoves(false);   // ค่าล่าสุด + ตาราง movement วันนี้
   }
 }
 
@@ -38,7 +40,7 @@ async function loadStockOldSummary() {
   } catch(e) { console.error('Error loading stock old summary:', e); }
 }
 
-async function loadStockOldMoves() {
+async function loadStockOldMoves(skipTable) {
   try {
     var today = getTodayDateString();
     var res = await dbRpc('get_stock_moves', {
@@ -49,7 +51,7 @@ async function loadStockOldMoves() {
     var prevW = res && res.prevW ? parseFloat(res.prevW) : 0;
     var prevC = res && res.prevC ? parseFloat(res.prevC) : 0;
     var moves = res && res.moves ? res.moves : [];
-    renderStockOldMovements(moves, prevW, prevC, true);
+    renderStockOldMovements(moves, prevW, prevC, true, skipTable);
   } catch(e) { console.error('Error loading stock old moves:', e); }
 }
 
@@ -61,12 +63,7 @@ async function loadStockOldFiltered() {
       p_date_to: stockOldDateTo
     });
     var moves = res && res.moves ? res.moves : [];
-    var carry = {}, qtyIn = {}, qtyOut = {};
-    FIXED_PRODUCTS.forEach(function(p) { carry[p.id] = 0; qtyIn[p.id] = 0; qtyOut[p.id] = 0; });
-    renderStockOldSummary(carry, qtyIn, qtyOut);
     renderFilteredMoves('stockOldMovementTable', moves, stockOldDateFrom, stockOldDateTo, 'OLD');
-    document.getElementById('stockOldGoldG').textContent = '-';
-    document.getElementById('stockOldCostValue').textContent = '-';
   } catch(e) { console.error('Error loading stock old filtered:', e); }
 }
 
@@ -82,7 +79,7 @@ function renderStockOldSummary(carry, qtyIn, qtyOut) {
   }).join('');
 }
 
-function renderStockOldMovements(moves, prevW, prevC, showRunning) {
+function renderStockOldMovements(moves, prevW, prevC, showRunning, skipTable) {
   var todayMovements = moves.map(function(m) {
     var goldG = parseFloat(m.goldG) || 0;
     var price = parseFloat(m.price) || 0;
@@ -104,6 +101,8 @@ function renderStockOldMovements(moves, prevW, prevC, showRunning) {
   document.getElementById('stockOldGoldG').textContent = formatWeight(w) + ' g';
   document.getElementById('stockOldCostValue').textContent = formatNumber(Math.round(c)) + ' LAK';
   window._stockOldLatest = { goldG: w, cost: c };
+
+  if (skipTable) return;
 
   var movBody = document.getElementById('stockOldMovementTable');
   var rows = '';

@@ -15,11 +15,13 @@ async function loadStockNew() {
   document.getElementById('stockNewGoldG').textContent = '...';
   document.getElementById('stockNewCostValue').textContent = '...';
 
-  if (!isFiltered || isToday) {
-    await loadStockNewSummary();
-    await loadStockNewMoves();
+  // ตารางสรุปด้านบน + Gold(g)/มูลค่าต้นทุน = สถานะสต็อกปัจจุบันเสมอ (ไม่ขึ้นกับ date filter)
+  await loadStockNewSummary();
+  if (isFiltered && !isToday) {
+    await loadStockNewMoves(true);   // ตั้ง Gold(g)/มูลค่า (ค่าล่าสุด) เท่านั้น ไม่ render ตาราง
+    await loadStockNewFiltered();     // ตาราง movement = ตามช่วงวันที่เลือก
   } else {
-    await loadStockNewFiltered();
+    await loadStockNewMoves(false);   // ค่าล่าสุด + ตาราง movement วันนี้
   }
 }
 
@@ -38,7 +40,7 @@ async function loadStockNewSummary() {
   } catch(e) { console.error('Error loading stock new summary:', e); }
 }
 
-async function loadStockNewMoves() {
+async function loadStockNewMoves(skipTable) {
   try {
     var today = getTodayDateString();
     var res = await dbRpc('get_stock_moves', {
@@ -49,7 +51,7 @@ async function loadStockNewMoves() {
     var prevW = res && res.prevW ? parseFloat(res.prevW) : 0;
     var prevC = res && res.prevC ? parseFloat(res.prevC) : 0;
     var moves = res && res.moves ? res.moves : [];
-    renderStockNewMovements(moves, prevW, prevC);
+    renderStockNewMovements(moves, prevW, prevC, skipTable);
   } catch(e) { console.error('Error loading stock new moves:', e); }
 }
 
@@ -62,13 +64,7 @@ async function loadStockNewFiltered() {
     });
     var moves = res && res.moves ? res.moves : [];
     var filtered = moves.filter(function(m) { return m.type === 'TRANSFER' || m.type === 'STOCK_IN'; });
-
-    var carry = {}, qtyIn = {}, qtyOut = {};
-    FIXED_PRODUCTS.forEach(function(p) { carry[p.id] = 0; qtyIn[p.id] = 0; qtyOut[p.id] = 0; });
-    renderStockNewSummary(carry, qtyIn, qtyOut);
     renderFilteredMoves('stockNewMovementTable', filtered, stockNewDateFrom, stockNewDateTo, 'NEW');
-    document.getElementById('stockNewGoldG').textContent = '-';
-    document.getElementById('stockNewCostValue').textContent = '-';
   } catch(e) { console.error('Error loading stock new filtered:', e); }
 }
 
@@ -84,7 +80,7 @@ function renderStockNewSummary(carry, qtyIn, qtyOut) {
   }).join('');
 }
 
-function renderStockNewMovements(moves, prevW, prevC) {
+function renderStockNewMovements(moves, prevW, prevC, skipTable) {
   var w = prevW, c = prevC;
   var todayMovements = [];
   moves.forEach(function(m) {
@@ -104,6 +100,8 @@ function renderStockNewMovements(moves, prevW, prevC) {
   document.getElementById('stockNewGoldG').textContent = formatWeight(w) + ' g';
   document.getElementById('stockNewCostValue').textContent = formatNumber(Math.round(c)) + ' LAK';
   window._stockNewLatest = { goldG: w, cost: c };
+
+  if (skipTable) return;
 
   var movBody = document.getElementById('stockNewMovementTable');
   var rows = '';

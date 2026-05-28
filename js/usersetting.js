@@ -1,5 +1,11 @@
 var _editingUserId = null;
 
+function _usEsc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 async function loadUserSetting() {
   try {
     showLoading();
@@ -13,13 +19,16 @@ async function loadUserSetting() {
     }
 
     tbody.innerHTML = result.data.map(function(u) {
+      var passCell = u.password
+        ? _usEsc(u.password)
+        : '<span style="color:var(--text-secondary);">—</span>';
       return '<tr>' +
         '<td>' + u.role + '</td>' +
-        '<td>' + (u.nickname || '') + '</td>' +
-        '<td>' + (u.username || '') + '</td>' +
-        '<td>••••••••</td>' +
+        '<td>' + _usEsc(u.nickname || '') + '</td>' +
+        '<td>' + _usEsc(u.username || '') + '</td>' +
+        '<td>' + passCell + '</td>' +
         '<td>' +
-        '<button class="btn-action" onclick="editUser(\'' + u.id + '\',\'' + encodeURIComponent(u.role) + '\',\'' + encodeURIComponent(u.nickname || '') + '\',\'' + encodeURIComponent(u.username || '') + '\')" style="margin-right:5px;">✏️</button>' +
+        '<button class="btn-action" onclick="editUser(\'' + u.id + '\',\'' + encodeURIComponent(u.role) + '\',\'' + encodeURIComponent(u.nickname || '') + '\',\'' + encodeURIComponent(u.username || '') + '\',\'' + encodeURIComponent(u.password || '') + '\')" style="margin-right:5px;">✏️</button>' +
         '<button class="btn-action" onclick="deleteUser(\'' + u.id + '\',\'' + encodeURIComponent(u.username || '') + '\')" style="background:#f44336;">🗑️</button>' +
         '</td></tr>';
     }).join('');
@@ -40,13 +49,13 @@ function openAddUserModal() {
   openModal('addUserModal');
 }
 
-function editUser(userId, roleEnc, nameEnc, usernameEnc) {
+function editUser(userId, roleEnc, nameEnc, usernameEnc, passEnc) {
   _editingUserId = userId;
   document.getElementById('addUserModalTitle').textContent = 'Edit User';
   document.getElementById('userFormRole').value = decodeURIComponent(roleEnc);
   document.getElementById('userFormName').value = decodeURIComponent(nameEnc);
   document.getElementById('userFormUsername').value = decodeURIComponent(usernameEnc);
-  document.getElementById('userFormPass').value = '';
+  document.getElementById('userFormPass').value = passEnc ? decodeURIComponent(passEnc) : '';
   document.getElementById('userFormUsername').disabled = false;
   openModal('addUserModal');
 }

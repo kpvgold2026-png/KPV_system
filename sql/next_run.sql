@@ -1,435 +1,516 @@
 -- ============================================================
--- next_run.sql — Round 7.5 (2026-05-25)
+-- next_run.sql — Round 7.6 (2026-05-28)
 -- ============================================================
--- 1) admin_ref_counter — counter table สำหรับ TF/CL ref_id
--- 2) _next_admin_ref(prefix, op) — atomic increment + format SE26000001 style
--- 3) transfer_old_to_new_tx → ref_id = TF26000001
---                              + SELECT FOR UPDATE wac_state (lock concurrent)
--- 4) approve_close_report → ref_id = CL26000001
---                            + SELECT FOR UPDATE wac_state
--- 5) check_duplicate_bill_id(p_tx_id, p_bill_id) — แจ้ง Manager+Admin
---    ตอน create/update tx ถ้ามี bill_id ซ้ำตลอดกาล
+-- 1) FIX add_cashbank_entry — cast p_type::cashbank_type + p_currency::currency_code
+--    เดิม INSERT ส่ง TEXT ตรง ๆ ลงคอลัมน์ enum → error
+--    "column \"type\" is of type cashbank_type but expression is of type text"
+--    → cashbank ทุกประเภทพังหมด (CASH_IN/OUT, BANK_DEPOSIT/WITHDRAW,
+--      OTHER_INCOME/EXPENSE) ไม่ใช่แค่ CASH_OUT
+--
+-- 2) FIX stock_in_new_tx — cashbank.ref_tx_id = 'SIN-...' ชน FK → transactions.id
+--    (ไม่มี transactions row ของ SIN) → FK violation → rollback ทั้ง tx
+--    → stock_moves ไม่ถูกบันทึก → ตาราง Stock New ว่าง
+--    แก้: ref_tx_id = NULL + ฝัง [ref:SIN-...] ใน note (pattern เดียวกับ reset.sql)
+--
+-- 3) FIX get_stock_move_detail — payments match (ref_tx_id = ref OR note LIKE [ref:..])
+--    ให้ payment breakdown ของ STOCK_IN (และ bootstrap) โผล่ใน View Detail
+--
+-- 4) User password plaintext — เพิ่ม users.password_plain + save_user เขียนค่า
+--    + list_users คืน password เพื่อแสดงใน User Setting / prefill ตอนแก้ไข
+--    (⚠️ เก็บรหัสผ่านแบบ plaintext ตามที่ร้องขอ — ดูหมายเหตุท้ายไฟล์)
 -- ============================================================
 
 
 -- ============================================================
--- 0) เพิ่ม enum value 'BILL_DUP' ใน notification_type (ถ้าเป็น enum)
---    PG14+ allows ALTER TYPE ADD VALUE in transaction
+-- 1) add_cashbank_entry — FIX enum cast
 -- ============================================================
-DO $$
-DECLARE
-  v_typname TEXT;
-BEGIN
-  SELECT typname INTO v_typname FROM pg_type
-    WHERE typname IN ('notification_type','notif_type') LIMIT 1;
-  IF v_typname IS NOT NULL THEN
-    EXECUTE format('ALTER TYPE %I ADD VALUE IF NOT EXISTS ''BILL_DUP''', v_typname);
-  END IF;
-EXCEPTION WHEN OTHERS THEN
-  -- ถ้า type ไม่มี (text column) ก็ผ่าน
-  NULL;
-END$$;
+DROP FUNCTION IF EXISTS public.add_cashbank_entry(text, numeric, text, text, text, text);
+DROP FUNCTION IF EXISTS public.add_cashbank_entry(text, numeric, text, text, text, text, numeric);
 
-
--- ============================================================
--- 1) admin_ref_counter + RLS
---    เข้าถึงผ่าน _next_admin_ref (SECURITY DEFINER) เท่านั้น
---    → ENABLE RLS + REVOKE จาก authenticated เพื่อกัน client tampering
---    (pattern เดียวกับ bill_sequence)
--- ============================================================
-CREATE TABLE IF NOT EXISTS admin_ref_counter (
-  op_type   TEXT     NOT NULL,
-  year      INT      NOT NULL,
-  last_seq  INT      NOT NULL DEFAULT 0,
-  PRIMARY KEY (op_type, year)
-);
-
-ALTER TABLE admin_ref_counter ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON admin_ref_counter FROM authenticated;
-REVOKE ALL ON admin_ref_counter FROM anon;
-
-
--- ============================================================
--- 2) _next_admin_ref — atomic counter → "TF26000001"
--- ============================================================
-CREATE OR REPLACE FUNCTION public._next_admin_ref(p_prefix TEXT, p_op TEXT)
-RETURNS TEXT
+CREATE OR REPLACE FUNCTION public.add_cashbank_entry(
+  p_type TEXT,
+  p_amount NUMERIC,
+  p_currency TEXT,
+  p_method TEXT,
+  p_bank_name TEXT DEFAULT NULL,
+  p_note TEXT DEFAULT NULL,
+  p_rate NUMERIC DEFAULT 1
+)
+RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-AS $$
+AS $function$
 DECLARE
-  v_year INT := EXTRACT(YEAR FROM (NOW() AT TIME ZONE 'Asia/Bangkok'))::INT;
-  v_yy   INT := MOD(v_year, 100);
-  v_seq  INT;
+  v_user_id UUID;
+  v_id TEXT;
+  v_bank_id UUID;
+  v_rate NUMERIC;
 BEGIN
-  INSERT INTO admin_ref_counter (op_type, year, last_seq)
-  VALUES (p_op, v_year, 1)
-  ON CONFLICT (op_type, year)
-  DO UPDATE SET last_seq = admin_ref_counter.last_seq + 1
-  RETURNING last_seq INTO v_seq;
+  v_user_id := current_user_id();
+  IF v_user_id IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'message', 'Auth required');
+  END IF;
 
-  RETURN p_prefix || lpad(v_yy::text, 2, '0') || lpad(v_seq::text, 6, '0');
+  IF p_amount IS NULL OR p_amount <= 0 THEN
+    RETURN jsonb_build_object('success', false, 'message', 'Amount must be > 0');
+  END IF;
+
+  -- LAK บังคับ rate = 1; foreign currency ต้อง rate > 0
+  IF UPPER(p_currency) = 'LAK' THEN
+    v_rate := 1;
+  ELSE
+    v_rate := COALESCE(p_rate, 0);
+    IF v_rate <= 0 THEN
+      RETURN jsonb_build_object('success', false, 'message',
+              'Rate ต้อง > 0 สำหรับสกุล ' || p_currency);
+    END IF;
+  END IF;
+
+  IF p_method = 'BANK' AND p_bank_name IS NOT NULL AND p_bank_name <> '' THEN
+    SELECT id INTO v_bank_id FROM banks WHERE name = p_bank_name LIMIT 1;
+  END IF;
+
+  v_id := 'CB-' || to_char(NOW() AT TIME ZONE 'Asia/Bangkok', 'YYYYMMDDHH24MISSMS')
+                || '-' || substring(md5(random()::text), 1, 4);
+
+  -- ⚠️ type / currency เป็น ENUM (cashbank_type / currency_code)
+  --    ต้อง cast จาก TEXT param ไม่งั้น error type mismatch
+  INSERT INTO cashbank (id, type, amount, currency, rate, method,
+                        bank_id, ref_tx_id, note, date)
+  VALUES (v_id, p_type::cashbank_type, p_amount, UPPER(p_currency)::currency_code,
+          v_rate, p_method, v_bank_id, NULL, p_note, NOW());
+
+  RETURN jsonb_build_object(
+    'success', true,
+    'id', v_id,
+    'lak', p_amount * v_rate
+  );
+EXCEPTION WHEN OTHERS THEN
+  RETURN jsonb_build_object('success', false, 'message', SQLERRM);
 END;
-$$;
+$function$;
 
--- ไม่ GRANT ให้ authenticated โดยตรง — เรียกผ่าน RPC อื่น (SECURITY DEFINER) เท่านั้น
-REVOKE ALL ON FUNCTION public._next_admin_ref(TEXT, TEXT) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public._next_admin_ref(TEXT, TEXT) FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.add_cashbank_entry(text, numeric, text, text, text, text, numeric) TO authenticated;
 
 
 -- ============================================================
--- 3) transfer_old_to_new_tx — TF26000001 + DB lock
+-- 2) stock_in_new_tx — FIX FK violation (ref_tx_id → NULL + [ref:] ใน note)
 -- ============================================================
-CREATE OR REPLACE FUNCTION transfer_old_to_new_tx(p_items JSONB)
+CREATE OR REPLACE FUNCTION stock_in_new_tx(
+  p_items JSONB,
+  p_note TEXT,
+  p_cost NUMERIC,
+  p_payments JSONB,
+  p_fee NUMERIC
+)
 RETURNS JSONB AS $$
 DECLARE
   v_user_id UUID;
+  v_role user_role;
   v_total_g NUMERIC := 0;
   v_move_id BIGINT;
   v_item RECORD;
+  v_pay JSONB;
   v_ref_id TEXT;
+  v_cb_id TEXT;
+  v_pid TEXT;
+  v_qty NUMERIC;
   v_weight NUMERIC;
-  v_stock NUMERIC;
-  v_old_value NUMERIC;
-  v_old_gold_g NUMERIC;
-  v_old_wac NUMERIC;
-  v_consumed_cost NUMERIC;
 BEGIN
   v_user_id := current_user_id();
-  IF NOT is_manager_or_admin() THEN
+  v_role := current_user_role();
+  IF NOT is_admin() AND NOT is_manager_or_admin() THEN
     RETURN jsonb_build_object('success', false, 'message', 'Manager or Admin only');
   END IF;
 
-  -- [LOCK] serialize ทุก tx ที่แตะ wac/stock ผ่าน row นี้
-  PERFORM 1 FROM wac_state WHERE id = 1 FOR UPDATE;
+  v_ref_id := 'SIN-' || to_char(NOW() AT TIME ZONE 'Asia/Bangkok', 'YYYYMMDDHH24MISS') || '-' || substring(md5(random()::text), 1, 4);
 
-  -- new format: TF + YY + seq6 (ขยับจาก TRF-YYYYMMDDHHMMSS-xxxx)
-  v_ref_id := _next_admin_ref('TF', 'TRANSFER');
-
-  -- 1) total weight + ตรวจสต็อก OLD พอ (FOR UPDATE)
   FOR v_item IN SELECT (value->>'productId') AS pid, (value->>'qty')::numeric AS qty
                 FROM jsonb_array_elements(p_items) LOOP
     SELECT weight_baht * 15 INTO v_weight FROM products WHERE id = v_item.pid;
     IF v_weight IS NULL THEN
       RETURN jsonb_build_object('success', false, 'message', 'Unknown product: ' || v_item.pid);
     END IF;
-    SELECT qty INTO v_stock FROM stock_balances
-      WHERE product_id = v_item.pid AND gold_type = 'OLD'
-      FOR UPDATE;
-    IF v_stock IS NULL OR v_stock < v_item.qty THEN
-      RETURN jsonb_build_object('success', false, 'message', 'สต็อก OLD ไม่พอ: ' || v_item.pid);
-    END IF;
     v_total_g := v_total_g + (v_weight * v_item.qty);
   END LOOP;
 
-  -- 2) READ OLD WAC ก่อน mutate
-  SELECT COALESCE(old_value, 0), COALESCE(old_gold_g, 0)
-    INTO v_old_value, v_old_gold_g
-    FROM wac_state WHERE id = 1;
-
-  v_old_wac := CASE WHEN v_old_gold_g > 0 THEN v_old_value / v_old_gold_g ELSE 0 END;
-  v_consumed_cost := v_old_wac * v_total_g;
-
-  -- 3) INSERT OLD/OUT
-  INSERT INTO stock_moves (ref_id, gold_type, type, direction, gold_g, price,
-                           wac_per_g, wac_per_baht, fulfilled, user_id, note, date)
-  VALUES (v_ref_id, 'OLD', 'TRANSFER', 'OUT', v_total_g, v_consumed_cost,
-          v_old_wac, v_old_wac * 15, TRUE, v_user_id, 'Transfer OLD->NEW', NOW())
+  INSERT INTO stock_moves (ref_id, gold_type, type, direction, gold_g, price, wac_per_g, wac_per_baht, fulfilled, user_id, note, date)
+  VALUES (v_ref_id, 'NEW', 'STOCK_IN', 'IN', v_total_g, p_cost,
+          CASE WHEN v_total_g > 0 THEN p_cost / v_total_g ELSE 0 END,
+          CASE WHEN v_total_g > 0 THEN (p_cost / v_total_g) * 15 ELSE 0 END,
+          TRUE, v_user_id, p_note, NOW())
   RETURNING id INTO v_move_id;
 
   FOR v_item IN SELECT (value->>'productId') AS pid, (value->>'qty')::numeric AS qty
                 FROM jsonb_array_elements(p_items) LOOP
-    INSERT INTO stock_move_items (move_id, product_id, qty)
-      VALUES (v_move_id, v_item.pid, v_item.qty);
-    UPDATE stock_balances SET qty = qty - v_item.qty, updated_at = NOW()
-      WHERE product_id = v_item.pid AND gold_type = 'OLD';
-  END LOOP;
-
-  -- 4) INSERT NEW/IN
-  INSERT INTO stock_moves (ref_id, gold_type, type, direction, gold_g, price,
-                           wac_per_g, wac_per_baht, fulfilled, user_id, note, date)
-  VALUES (v_ref_id, 'NEW', 'TRANSFER', 'IN', v_total_g, v_consumed_cost,
-          v_old_wac, v_old_wac * 15, TRUE, v_user_id, 'Transfer OLD->NEW', NOW())
-  RETURNING id INTO v_move_id;
-
-  FOR v_item IN SELECT (value->>'productId') AS pid, (value->>'qty')::numeric AS qty
-                FROM jsonb_array_elements(p_items) LOOP
-    INSERT INTO stock_move_items (move_id, product_id, qty)
-      VALUES (v_move_id, v_item.pid, v_item.qty);
+    INSERT INTO stock_move_items (move_id, product_id, qty) VALUES (v_move_id, v_item.pid, v_item.qty);
     INSERT INTO stock_balances (product_id, gold_type, qty, updated_at)
     VALUES (v_item.pid, 'NEW', v_item.qty, NOW())
     ON CONFLICT (product_id, gold_type)
     DO UPDATE SET qty = stock_balances.qty + v_item.qty, updated_at = NOW();
   END LOOP;
 
-  -- 5) UPDATE wac_state — sync ทั้ง qty และ value
-  UPDATE wac_state
-  SET old_gold_g = GREATEST(0, COALESCE(old_gold_g, 0) - v_total_g),
-      old_value  = GREATEST(0, COALESCE(old_value, 0)  - v_consumed_cost),
-      new_gold_g = COALESCE(new_gold_g, 0) + v_total_g,
-      new_value  = COALESCE(new_value, 0)  + v_consumed_cost,
-      updated_at = NOW()
-  WHERE id = 1;
+  INSERT INTO wac_state (id, new_gold_g, new_value, updated_at)
+  VALUES (1, v_total_g, p_cost, NOW())
+  ON CONFLICT (id)
+  DO UPDATE SET new_gold_g = wac_state.new_gold_g + v_total_g,
+                new_value = wac_state.new_value + p_cost,
+                updated_at = NOW();
 
-  RETURN jsonb_build_object(
-    'success', true,
-    'message', 'Transfer สำเร็จ',
-    'ref_id', v_ref_id,
-    'consumed_cost', v_consumed_cost,
-    'old_wac_per_g', v_old_wac
-  );
-EXCEPTION WHEN OTHERS THEN
-  RETURN jsonb_build_object('success', false, 'message', SQLERRM);
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+  FOR v_pay IN SELECT * FROM jsonb_array_elements(p_payments) LOOP
+    DECLARE
+      v_method TEXT := v_pay->>'method';
+      v_bank_name TEXT := v_pay->>'bank';
+      v_cur TEXT := COALESCE(v_pay->>'currency', 'LAK');
+      v_amount NUMERIC := (v_pay->>'amount')::numeric;
+      v_rate NUMERIC := COALESCE((v_pay->>'rate')::numeric, 1);
+      v_fee NUMERIC := COALESCE((v_pay->>'fee')::numeric, 0);
+      v_bank_id UUID := NULL;
+    BEGIN
+      IF v_method = 'Bank' AND v_bank_name IS NOT NULL AND v_bank_name <> '' THEN
+        SELECT id INTO v_bank_id FROM banks WHERE name = v_bank_name LIMIT 1;
+      END IF;
 
-GRANT EXECUTE ON FUNCTION transfer_old_to_new_tx(JSONB) TO authenticated;
+      -- ⚠️ ref_tx_id มี FK → transactions.id ; SIN-... ไม่มี row ใน transactions
+      --    → set NULL แล้วผูกผ่าน [ref:...] ใน note (get_stock_move_detail ค้นเจอผ่าน LIKE)
+      v_cb_id := 'CB-' || to_char(NOW() AT TIME ZONE 'Asia/Bangkok', 'YYYYMMDDHH24MISSMS') || '-' || substring(md5(random()::text || v_method), 1, 6);
+      INSERT INTO cashbank (id, type, amount, currency, rate, method, bank_id, ref_tx_id, note, date, created_by_id)
+      VALUES (v_cb_id, 'STOCK_IN', -v_amount, v_cur::currency_code, v_rate,
+              CASE WHEN v_method = 'Cash' THEN 'CASH' ELSE 'TRANSFER' END,
+              v_bank_id, NULL,
+              COALESCE(NULLIF(p_note, ''), 'Stock In NEW') || ' [ref:' || v_ref_id || ']',
+              NOW(), v_user_id);
 
-
--- ============================================================
--- 4) approve_close_report — CL26000001 + DB lock
--- ============================================================
-CREATE OR REPLACE FUNCTION approve_close_report(
-  p_close_id TEXT,
-  p_decision TEXT,
-  p_note TEXT DEFAULT NULL
-)
-RETURNS JSONB AS $$
-DECLARE
-  v_user_id UUID;
-  v_close_user UUID;
-  v_close_date DATE;
-  v_nickname TEXT;
-  v_new_status close_status;
-  v_total_qty NUMERIC;
-  v_total_gold_g NUMERIC;
-  v_total_value NUMERIC;
-  v_move_id BIGINT;
-  v_item RECORD;
-  v_ref_id TEXT;
-BEGIN
-  v_user_id := current_user_id();
-  IF NOT is_manager_or_admin() THEN
-    RETURN jsonb_build_object('success', false, 'message', 'Manager only');
-  END IF;
-
-  v_new_status := CASE WHEN p_decision = 'APPROVE'
-                       THEN 'APPROVED'::close_status
-                       ELSE 'REJECTED'::close_status END;
-
-  SELECT c.user_id, c.date::date, u.nickname
-    INTO v_close_user, v_close_date, v_nickname
-    FROM closes c JOIN users u ON u.id = c.user_id
-    WHERE c.id = p_close_id;
-
-  IF v_close_user IS NULL THEN
-    RETURN jsonb_build_object('success', false, 'message', 'Close not found');
-  END IF;
-
-  UPDATE closes SET status = v_new_status, approved_by_id = v_user_id,
-                    approved_at = NOW(), approval_note = p_note
-    WHERE id = p_close_id;
-
-  IF v_new_status = 'REJECTED' THEN
-    PERFORM _notify_user('WARNING', '❌ ปิดกะถูกปฏิเสธ: ' || p_close_id ||
-                         CASE WHEN p_note IS NOT NULL THEN ' (' || p_note || ')' ELSE '' END,
-                         v_close_user, 'close', NULL);
-    RETURN jsonb_build_object('success', true);
-  END IF;
-
-  -- [LOCK] เฉพาะตอน APPROVE (materialize stock)
-  PERFORM 1 FROM wac_state WHERE id = 1 FOR UPDATE;
-
-  -- new format: CL26000001 (เก่า: CLOSE-nickname-YYYYMMDD)
-  v_ref_id := _next_admin_ref('CL', 'CLOSE');
-
-  SELECT
-    COALESCE(SUM(ug.qty), 0),
-    COALESCE(SUM(ug.qty * p.weight_baht * 15), 0),
-    COALESCE(SUM(ug.qty * p.weight_baht * COALESCE(tx.sell_1baht, 0)), 0)
-    INTO v_total_qty, v_total_gold_g, v_total_value
-  FROM user_gold_received ug
-  JOIN products p ON p.id = ug.product_id
-  LEFT JOIN transactions tx ON tx.id = ug.ref_tx_id
-  WHERE ug.user_id = v_close_user
-    AND ug.settled = FALSE;
-
-  IF v_total_qty > 0 THEN
-    INSERT INTO stock_moves (ref_id, gold_type, type, direction, gold_g, price, fulfilled, user_id, date)
-    VALUES (v_ref_id, 'OLD', 'STOCK_IN', 'IN', v_total_gold_g, v_total_value, TRUE, v_close_user, NOW())
-    RETURNING id INTO v_move_id;
-
-    FOR v_item IN
-      SELECT product_id, SUM(qty) AS qty
-      FROM user_gold_received
-      WHERE user_id = v_close_user AND settled = FALSE
-      GROUP BY product_id
-    LOOP
-      INSERT INTO stock_move_items (move_id, product_id, qty)
-      VALUES (v_move_id, v_item.product_id, v_item.qty);
-
-      INSERT INTO stock_balances (product_id, gold_type, qty, updated_at)
-      VALUES (v_item.product_id, 'OLD', v_item.qty, NOW())
-      ON CONFLICT (product_id, gold_type)
-      DO UPDATE SET qty = stock_balances.qty + v_item.qty, updated_at = NOW();
-    END LOOP;
-
-    UPDATE wac_state
-      SET old_gold_g = COALESCE(old_gold_g, 0) + v_total_gold_g,
-          old_value  = COALESCE(old_value, 0) + v_total_value,
-          updated_at = NOW()
-      WHERE id = 1;
-
-    UPDATE user_gold_received
-      SET settled = TRUE, settled_at = NOW(), settled_close_id = p_close_id
-      WHERE user_id = v_close_user AND settled = FALSE;
-  END IF;
-
-  PERFORM _notify_user('INFO', '✅ ปิดกะของคุณได้รับการอนุมัติ: ' || p_close_id,
-                       v_close_user, 'close', NULL);
-
-  RETURN jsonb_build_object(
-    'success', true,
-    'materialized_ref', CASE WHEN v_total_qty > 0 THEN v_ref_id ELSE NULL END,
-    'materialized_qty', v_total_qty,
-    'materialized_value', v_total_value
-  );
-EXCEPTION WHEN OTHERS THEN
-  RETURN jsonb_build_object('success', false, 'message', SQLERRM);
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
-GRANT EXECUTE ON FUNCTION approve_close_report(TEXT, TEXT, TEXT) TO authenticated;
-
-
--- ============================================================
--- 5) check_duplicate_bill_id(p_bill_id)
---    เรียกหลัง create tx; ถ้ามี bill_id ซ้ำตลอดกาล (≥ 2 รายการ) → notify
---    Manager+Admin. กัน notify ซ้ำผ่าน UNIQUE (type, ref_tx_id) implicit
---    ด้วย check ว่ามี notification BILL_DUP สำหรับ tx ล่าสุดแล้วหรือยัง
--- ============================================================
-DROP FUNCTION IF EXISTS public.check_duplicate_bill_id(TEXT, TEXT);
-DROP FUNCTION IF EXISTS public.check_duplicate_bill_id(TEXT);
-
-CREATE OR REPLACE FUNCTION public.check_duplicate_bill_id(
-  p_bill_id TEXT
-)
-RETURNS JSONB
-LANGUAGE plpgsql
-SECURITY DEFINER
-AS $$
-DECLARE
-  v_count INT;
-  v_latest_tx TEXT;
-  v_prev_tx TEXT;
-  v_msg TEXT;
-  v_admin RECORD;
-  v_already_notified BOOLEAN;
-BEGIN
-  IF p_bill_id IS NULL OR p_bill_id = '' THEN
-    RETURN jsonb_build_object('dup', false);
-  END IF;
-
-  SELECT COUNT(*) INTO v_count
-    FROM transactions WHERE bill_id = p_bill_id;
-
-  IF v_count < 2 THEN
-    RETURN jsonb_build_object('dup', false);
-  END IF;
-
-  -- เอา 2 ตัวล่าสุด
-  SELECT id INTO v_latest_tx FROM transactions
-    WHERE bill_id = p_bill_id ORDER BY created_at DESC LIMIT 1;
-  SELECT id INTO v_prev_tx   FROM transactions
-    WHERE bill_id = p_bill_id ORDER BY created_at DESC OFFSET 1 LIMIT 1;
-
-  -- กัน notify ซ้ำ: ถ้ามี BILL_DUP สำหรับ tx ล่าสุดแล้วก็ skip
-  SELECT EXISTS (
-    SELECT 1 FROM notifications
-    WHERE type = 'BILL_DUP' AND ref_tx_id = v_latest_tx
-  ) INTO v_already_notified;
-
-  IF v_already_notified THEN
-    RETURN jsonb_build_object('dup', true, 'already_notified', true,
-                              'bill_id', p_bill_id);
-  END IF;
-
-  v_msg := '⚠️ Bill ID ซ้ำ: ' || p_bill_id || ' (' || v_count || ' รายการ — ล่าสุด ' ||
-           v_latest_tx || ' / ก่อนหน้า ' || v_prev_tx || ')';
-
-  FOR v_admin IN
-    SELECT id FROM users WHERE role IN ('Admin', 'Manager') AND active = TRUE
-  LOOP
-    INSERT INTO notifications (type, message, target_user_id, target_role,
-                               related_tab, ref_tx_id, created_at, status)
-    VALUES ('BILL_DUP', v_msg, v_admin.id, NULL,
-            'historysell', v_latest_tx, NOW(), 'UNREAD');
+      IF v_fee > 0 THEN
+        v_cb_id := 'CB-FEE-' || to_char(NOW() AT TIME ZONE 'Asia/Bangkok', 'YYYYMMDDHH24MISSMS') || '-' || substring(md5(random()::text), 1, 4);
+        INSERT INTO cashbank (id, type, amount, currency, rate, method, bank_id, ref_tx_id, note, date, created_by_id)
+        VALUES (v_cb_id, 'STOCK_IN_FEE', -v_fee, v_cur::currency_code, v_rate, 'TRANSFER', v_bank_id, NULL,
+                'Stock In Fee [ref:' || v_ref_id || ']', NOW(), v_user_id);
+      END IF;
+    END;
   END LOOP;
 
-  RETURN jsonb_build_object(
-    'dup', true,
-    'bill_id', p_bill_id,
-    'count', v_count,
-    'latest_tx', v_latest_tx,
-    'prev_tx', v_prev_tx
-  );
+  RETURN jsonb_build_object('success', true, 'message', 'Stock In สำเร็จ', 'ref_id', v_ref_id);
 EXCEPTION WHEN OTHERS THEN
-  RETURN jsonb_build_object('dup', false, 'error', SQLERRM);
+  RETURN jsonb_build_object('success', false, 'message', SQLERRM);
 END;
-$$;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
-GRANT EXECUTE ON FUNCTION public.check_duplicate_bill_id(TEXT) TO authenticated;
+GRANT EXECUTE ON FUNCTION stock_in_new_tx(JSONB, TEXT, NUMERIC, JSONB, NUMERIC) TO authenticated;
 
 
 -- ============================================================
--- 6) get_bill_dup_detail(p_bill_id) — ใช้ตอนกดแจ้งเตือน
---    คืนรายการทั้งหมดที่ใช้ bill_id เดียวกัน
+-- 3) get_stock_move_detail — FIX payments match (ref_tx_id OR note [ref:..])
 -- ============================================================
-CREATE OR REPLACE FUNCTION public.get_bill_dup_detail(p_bill_id TEXT)
+DROP FUNCTION IF EXISTS public.get_stock_move_detail(text);
+DROP FUNCTION IF EXISTS public.get_stock_move_detail(text, text);
+
+CREATE OR REPLACE FUNCTION public.get_stock_move_detail(
+  p_ref_id TEXT,
+  p_gold_type TEXT DEFAULT NULL
+)
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-AS $$
+AS $function$
 DECLARE
-  v_txs JSONB;
+  v_move RECORD;
+  v_items JSONB;
+  v_payments JSONB;
+  v_price_per_g NUMERIC := 0;
+  v_price_per_baht NUMERIC := 0;
+  v_wac_per_g NUMERIC := 0;
+  v_wac_per_baht NUMERIC := 0;
 BEGIN
-  -- เฉพาะ Manager+Admin (Sales ไม่ควรเห็น tx ของคนอื่น)
-  IF NOT is_manager_or_admin() THEN
-    RETURN jsonb_build_object('bill_id', p_bill_id, 'txs', '[]'::jsonb,
-                              'error', 'Manager or Admin only');
+  SELECT sm.id, sm.ref_id, sm.gold_type, sm.type, sm.direction,
+         sm.gold_g, sm.price, sm.wac_per_g, sm.wac_per_baht,
+         sm.date, sm.note
+    INTO v_move
+    FROM stock_moves sm
+    WHERE sm.ref_id = p_ref_id
+      AND (p_gold_type IS NULL OR sm.gold_type::text = p_gold_type)
+    ORDER BY CASE WHEN sm.direction = 'IN' THEN 0 ELSE 1 END,
+             sm.date ASC
+    LIMIT 1;
+
+  IF v_move.id IS NULL THEN
+    RETURN jsonb_build_object('found', false);
   END IF;
 
-  SELECT COALESCE(jsonb_agg(jsonb_build_object(
-    'id', t.id,
-    'type', t.type,
-    'bill_id', t.bill_id,
-    'phone', t.phone,
-    'total', t.total,
-    'status', t.status,
-    'sales_nickname', u.nickname,
-    'created_at', t.created_at
-  ) ORDER BY t.created_at ASC), '[]'::jsonb)
-  INTO v_txs
-  FROM transactions t
-  LEFT JOIN users u ON u.id = t.user_id
-  WHERE t.bill_id = p_bill_id;
+  SELECT COALESCE(jsonb_agg(
+           jsonb_build_object('productId', smi.product_id, 'qty', smi.qty)
+           ORDER BY smi.product_id
+         ), '[]'::jsonb)
+    INTO v_items
+    FROM stock_move_items smi
+    WHERE smi.move_id = v_move.id;
 
-  RETURN jsonb_build_object('bill_id', p_bill_id, 'txs', v_txs);
+  IF v_move.gold_g > 0 THEN
+    v_price_per_g := COALESCE(v_move.price, 0) / v_move.gold_g;
+    v_price_per_baht := v_price_per_g * 15;
+  END IF;
+  v_wac_per_g := COALESCE(v_move.wac_per_g, 0);
+  v_wac_per_baht := COALESCE(v_move.wac_per_baht, v_wac_per_g * 15);
+
+  -- payments: ผูกผ่าน ref_tx_id ตรง ๆ หรือ [ref:..] ใน note (STOCK_IN/TRANSFER/bootstrap)
+  SELECT COALESCE(jsonb_agg(
+           jsonb_build_object(
+             'type', cb.type,
+             'method', cb.method,
+             'bank', COALESCE(b.name, ''),
+             'currency', cb.currency,
+             'amount', cb.amount,
+             'rate', COALESCE(cb.rate, 1),
+             'lak', cb.amount * COALESCE(cb.rate, 1)
+           )
+           ORDER BY cb.date ASC, cb.id ASC
+         ), '[]'::jsonb)
+    INTO v_payments
+    FROM cashbank cb
+    LEFT JOIN banks b ON b.id = cb.bank_id
+    WHERE cb.ref_tx_id = p_ref_id
+       OR cb.note LIKE '%[ref:' || p_ref_id || ']%';
+
+  RETURN jsonb_build_object(
+    'found', true,
+    'ref_id', v_move.ref_id,
+    'gold_type', v_move.gold_type,
+    'type', v_move.type,
+    'direction', v_move.direction,
+    'gold_g', v_move.gold_g,
+    'price', v_move.price,
+    'price_per_g', v_price_per_g,
+    'price_per_baht', v_price_per_baht,
+    'wac_per_g', v_wac_per_g,
+    'wac_per_baht', v_wac_per_baht,
+    'date', v_move.date,
+    'note', v_move.note,
+    'items', v_items,
+    'payments', v_payments
+  );
+END;
+$function$;
+
+GRANT EXECUTE ON FUNCTION public.get_stock_move_detail(text, text) TO authenticated;
+
+
+-- ============================================================
+-- 4) User password plaintext
+-- ============================================================
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS password_plain TEXT;
+
+-- ----- save_user: เขียน password_plain เพิ่ม (นอกจาก hash) -----
+CREATE OR REPLACE FUNCTION save_user(
+  p_user_id UUID,
+  p_role user_role,
+  p_nickname TEXT,
+  p_username TEXT,
+  p_password TEXT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth, extensions
+AS $$
+DECLARE
+  v_existing UUID;
+  v_new_id UUID;
+  v_email TEXT;
+  v_hash TEXT;
+BEGIN
+  IF NOT is_admin() THEN
+    RETURN jsonb_build_object('success', false, 'message', 'Admin only');
+  END IF;
+
+  IF p_username IS NULL OR length(trim(p_username)) = 0 THEN
+    RETURN jsonb_build_object('success', false, 'message', 'Username required');
+  END IF;
+
+  v_email := lower(trim(p_username)) || '@kpv.local';
+
+  IF p_user_id IS NULL THEN
+    -- ===== สร้างใหม่ =====
+    SELECT id INTO v_existing FROM public.users WHERE username = p_username;
+    IF v_existing IS NOT NULL THEN
+      RETURN jsonb_build_object('success', false, 'message', 'Username already exists');
+    END IF;
+    IF EXISTS (SELECT 1 FROM auth.users WHERE email = v_email) THEN
+      RETURN jsonb_build_object('success', false, 'message', 'Email already exists in auth.users');
+    END IF;
+    IF p_password IS NULL OR length(p_password) = 0 THEN
+      RETURN jsonb_build_object('success', false, 'message', 'Password required for new user');
+    END IF;
+
+    v_new_id := gen_random_uuid();
+    v_hash := hash_password(p_password);
+
+    INSERT INTO auth.users (
+      id, instance_id, aud, role,
+      email, encrypted_password, email_confirmed_at,
+      raw_app_meta_data, raw_user_meta_data,
+      confirmation_token, recovery_token,
+      email_change, email_change_token_new, email_change_token_current,
+      phone_change, phone_change_token,
+      reauthentication_token,
+      created_at, updated_at
+    )
+    VALUES (
+      v_new_id,
+      '00000000-0000-0000-0000-000000000000'::uuid,
+      'authenticated', 'authenticated',
+      v_email, v_hash, NOW(),
+      jsonb_build_object(
+        'provider', 'email',
+        'providers', jsonb_build_array('email'),
+        'user_role', p_role::text
+      ),
+      jsonb_build_object('username', p_username, 'nickname', p_nickname),
+      '', '',
+      '', '', '',
+      '', '',
+      '',
+      NOW(), NOW()
+    );
+
+    INSERT INTO auth.identities (
+      id, user_id, provider_id, identity_data, provider,
+      last_sign_in_at, created_at, updated_at
+    )
+    VALUES (
+      gen_random_uuid(),
+      v_new_id,
+      v_new_id::text,
+      jsonb_build_object(
+        'sub', v_new_id::text,
+        'email', v_email,
+        'email_verified', true,
+        'phone_verified', false
+      ),
+      'email',
+      NOW(), NOW(), NOW()
+    );
+
+    INSERT INTO public.users (id, role, nickname, username, password_hash, password_plain, is_active)
+    VALUES (v_new_id, p_role, p_nickname, p_username, v_hash, p_password, TRUE);
+
+    RETURN jsonb_build_object('success', true, 'message', 'User created', 'user_id', v_new_id);
+
+  ELSE
+    -- ===== แก้ไข =====
+    v_hash := CASE
+      WHEN p_password IS NULL OR length(p_password) = 0 THEN NULL
+      ELSE hash_password(p_password)
+    END;
+
+    UPDATE public.users SET
+      role = p_role,
+      nickname = p_nickname,
+      username = p_username,
+      password_hash = COALESCE(v_hash, password_hash),
+      password_plain = COALESCE(NULLIF(p_password, ''), password_plain),
+      updated_at = NOW()
+    WHERE id = p_user_id;
+
+    UPDATE auth.users SET
+      email = v_email,
+      encrypted_password = COALESCE(v_hash, encrypted_password),
+      raw_app_meta_data = COALESCE(raw_app_meta_data, '{}'::jsonb)
+        || jsonb_build_object(
+             'provider', 'email',
+             'providers', jsonb_build_array('email'),
+             'user_role', p_role::text
+           ),
+      raw_user_meta_data = COALESCE(raw_user_meta_data, '{}'::jsonb)
+        || jsonb_build_object('username', p_username, 'nickname', p_nickname),
+      updated_at = NOW()
+    WHERE id = p_user_id;
+
+    IF EXISTS (SELECT 1 FROM auth.identities WHERE user_id = p_user_id AND provider = 'email') THEN
+      UPDATE auth.identities SET
+        identity_data = COALESCE(identity_data, '{}'::jsonb)
+          || jsonb_build_object(
+               'sub', p_user_id::text,
+               'email', v_email,
+               'email_verified', true
+             ),
+        updated_at = NOW()
+      WHERE user_id = p_user_id AND provider = 'email';
+    ELSE
+      INSERT INTO auth.identities (
+        id, user_id, provider_id, identity_data, provider,
+        last_sign_in_at, created_at, updated_at
+      )
+      VALUES (
+        gen_random_uuid(),
+        p_user_id,
+        p_user_id::text,
+        jsonb_build_object(
+          'sub', p_user_id::text,
+          'email', v_email,
+          'email_verified', true,
+          'phone_verified', false
+        ),
+        'email',
+        NOW(), NOW(), NOW()
+      );
+    END IF;
+
+    RETURN jsonb_build_object('success', true, 'message', 'User updated');
+  END IF;
+
+EXCEPTION WHEN OTHERS THEN
+  RETURN jsonb_build_object('success', false, 'message', SQLERRM);
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION public.get_bill_dup_detail(TEXT) TO authenticated;
+GRANT EXECUTE ON FUNCTION save_user(UUID, user_role, TEXT, TEXT, TEXT) TO authenticated;
+
+
+-- ----- list_users: คืน password (plaintext) เพิ่ม -----
+CREATE OR REPLACE FUNCTION list_users()
+RETURNS JSONB AS $$
+BEGIN
+  IF NOT is_admin() THEN
+    RETURN jsonb_build_object('success', false, 'message', 'Admin only');
+  END IF;
+  RETURN jsonb_build_object('success', true, 'data', (
+    SELECT COALESCE(jsonb_agg(jsonb_build_object(
+      'id', id,
+      'role', role,
+      'nickname', nickname,
+      'username', username,
+      'password', password_plain,
+      'is_active', is_active
+    ) ORDER BY role, nickname), '[]'::jsonb)
+    FROM users WHERE is_active = TRUE
+  ));
+EXCEPTION WHEN OTHERS THEN
+  RETURN jsonb_build_object('success', false, 'message', SQLERRM);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+GRANT EXECUTE ON FUNCTION list_users() TO authenticated;
 
 
 -- ============================================================
 -- ทดสอบหลังรัน
 -- ============================================================
---   SELECT _next_admin_ref('TF', 'TRANSFER'); -- → TF26000001, TF26000002, ...
---   SELECT _next_admin_ref('CL', 'CLOSE');    -- → CL26000001
+--   -- 1) cashbank ทุกประเภทต้องผ่าน (ไม่ error type mismatch)
+--   SELECT add_cashbank_entry('CASH_OUT', 50000, 'LAK', 'CASH', NULL, 'test out');
+--   SELECT add_cashbank_entry('BANK_WITHDRAW', 100, 'USD', 'BANK', 'BCEL', 'test', 22000);
 --
---   -- bill_id dup
---   SELECT check_duplicate_bill_id('SE26000099', '12345');
---   SELECT get_bill_dup_detail('12345');
+--   -- 2) Stock In NEW ต้องสำเร็จ + โผล่ใน get_stock_moves('NEW')
+--   --    (ทดสอบผ่าน UI; ตรวจ stock_moves ว่ามี row STOCK_IN/NEW วันนี้)
+--   SELECT get_stock_moves('NEW');
 --
---   -- ตรวจ admin_ref_counter
---   SELECT * FROM admin_ref_counter ORDER BY year DESC, op_type;
+--   -- 3) payments ของ STOCK_IN ต้องโผล่ใน detail
+--   --    SELECT get_stock_move_detail('SIN-...', 'NEW');
+--
+--   -- 4) password แสดงใน list_users (ของ user ที่ตั้ง/แก้รหัสหลังรันไฟล์นี้)
+--   SELECT list_users();
+--
+-- ⚠️ หมายเหตุ password_plain:
+--   - user ที่สร้าง "ก่อน" รันไฟล์นี้ยังไม่มี plaintext (กู้จาก hash ไม่ได้)
+--     → จะแสดงว่าง จนกว่าจะแก้ไข/ตั้งรหัสใหม่ผ่าน User Setting
+--   - การเก็บรหัสผ่าน plaintext เป็น security trade-off ตามที่ร้องขอ
+--     (เครื่องมือภายในร้าน) — RLS ของ users + list_users จำกัดเฉพาะ Admin

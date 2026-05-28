@@ -147,6 +147,15 @@ function resetStockNewFilter() {
 
 function loadPendingTransferCount() {}
 
+document.addEventListener('DOMContentLoaded', function() {
+  var f = document.getElementById('stockNewDateFrom');
+  var t = document.getElementById('stockNewDateTo');
+  if (f && t) {
+    f.addEventListener('change', function() { stockNewDateFrom = this.value; stockNewDateTo = t.value || stockNewDateFrom; if (!t.value) t.value = stockNewDateTo; if (stockNewDateFrom && stockNewDateTo) loadStockNew(); });
+    t.addEventListener('change', function() { stockNewDateTo = this.value; stockNewDateFrom = f.value || stockNewDateTo; if (!f.value) f.value = stockNewDateFrom; if (stockNewDateFrom && stockNewDateTo) loadStockNew(); });
+  }
+});
+
 function addStockNewProduct(containerId) {
   var container = document.getElementById(containerId);
   var row = document.createElement('div');

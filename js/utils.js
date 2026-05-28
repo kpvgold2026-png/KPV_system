@@ -349,7 +349,7 @@ function roundChangeLak(lak) {
   return Math.round(n / 1000) * 1000;
 }
 
-// DD/MM HH:MM
+// DD/MM/YYYY HH:MM
 function formatTimeShort(dateStr) {
   if (!dateStr) return '-';
   var d = new Date(dateStr);
@@ -358,7 +358,7 @@ function formatTimeShort(dateStr) {
   var mm = String(d.getMinutes()).padStart(2, '0');
   var dd = String(d.getDate()).padStart(2, '0');
   var mo = String(d.getMonth() + 1).padStart(2, '0');
-  return dd + '/' + mo + ' ' + hh + ':' + mm;
+  return dd + '/' + mo + '/' + d.getFullYear() + ' ' + hh + ':' + mm;
 }
 
 function calculateSellPrice(productId, sell1Baht) {

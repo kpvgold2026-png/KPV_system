@@ -6,19 +6,64 @@
 --    "column \"type\" is of type cashbank_type but expression is of type text"
 --    → cashbank ทุกประเภทพังหมด (CASH_IN/OUT, BANK_DEPOSIT/WITHDRAW,
 --      OTHER_INCOME/EXPENSE) ไม่ใช่แค่ CASH_OUT
+--    + เปลี่ยน id เป็น CB26000001 (จาก CB-timestamp)
 --
 -- 2) FIX stock_in_new_tx — cashbank.ref_tx_id = 'SIN-...' ชน FK → transactions.id
 --    (ไม่มี transactions row ของ SIN) → FK violation → rollback ทั้ง tx
 --    → stock_moves ไม่ถูกบันทึก → ตาราง Stock New ว่าง
---    แก้: ref_tx_id = NULL + ฝัง [ref:SIN-...] ใน note (pattern เดียวกับ reset.sql)
+--    แก้: ref_tx_id = NULL + ฝัง [ref:..] ใน note (pattern เดียวกับ reset.sql)
+--    + เปลี่ยน ref_id เป็น SI26000001 (จาก SIN-timestamp)
 --
 -- 3) FIX get_stock_move_detail — payments match (ref_tx_id = ref OR note LIKE [ref:..])
 --    ให้ payment breakdown ของ STOCK_IN (และ bootstrap) โผล่ใน View Detail
 --
--- 4) User password plaintext — เพิ่ม users.password_plain + save_user เขียนค่า
+-- 4) stock_out_old_tx — เปลี่ยน ref_id เป็น SO26000001 (จาก SOUT-timestamp)
+--
+-- 5) Unify TRX ID — StockIn=SI, StockOut=SO, CashBank=CB (PREFIX+YY+seq6)
+--    ผ่าน _next_admin_ref() เดียวกับ TF/CL (round 7.5)
+--
+-- 6) User password plaintext — เพิ่ม users.password_plain + save_user เขียนค่า
 --    + list_users คืน password เพื่อแสดงใน User Setting / prefill ตอนแก้ไข
 --    (⚠️ เก็บรหัสผ่านแบบ plaintext ตามที่ร้องขอ — ดูหมายเหตุท้ายไฟล์)
 -- ============================================================
+
+
+-- ============================================================
+-- 0) admin_ref_counter + _next_admin_ref (idempotent — เผื่อยังไม่มีจาก 7.5)
+--    ฟังก์ชันด้านล่างพึ่งตัวนี้สร้าง TRX ID (SI/SO/CB/TF/CL)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS admin_ref_counter (
+  op_type   TEXT     NOT NULL,
+  year      INT      NOT NULL,
+  last_seq  INT      NOT NULL DEFAULT 0,
+  PRIMARY KEY (op_type, year)
+);
+ALTER TABLE admin_ref_counter ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON admin_ref_counter FROM authenticated;
+REVOKE ALL ON admin_ref_counter FROM anon;
+
+CREATE OR REPLACE FUNCTION public._next_admin_ref(p_prefix TEXT, p_op TEXT)
+RETURNS TEXT
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_year INT := EXTRACT(YEAR FROM (NOW() AT TIME ZONE 'Asia/Bangkok'))::INT;
+  v_yy   INT := MOD(v_year, 100);
+  v_seq  INT;
+BEGIN
+  INSERT INTO admin_ref_counter (op_type, year, last_seq)
+  VALUES (p_op, v_year, 1)
+  ON CONFLICT (op_type, year)
+  DO UPDATE SET last_seq = admin_ref_counter.last_seq + 1
+  RETURNING last_seq INTO v_seq;
+
+  RETURN p_prefix || lpad(v_yy::text, 2, '0') || lpad(v_seq::text, 6, '0');
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public._next_admin_ref(TEXT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public._next_admin_ref(TEXT, TEXT) FROM authenticated;
 
 
 -- ============================================================
@@ -70,8 +115,8 @@ BEGIN
     SELECT id INTO v_bank_id FROM banks WHERE name = p_bank_name LIMIT 1;
   END IF;
 
-  v_id := 'CB-' || to_char(NOW() AT TIME ZONE 'Asia/Bangkok', 'YYYYMMDDHH24MISSMS')
-                || '-' || substring(md5(random()::text), 1, 4);
+  -- id แบบใหม่: CB26000001 (เดิม CB-timestamp) — TRX ID unified
+  v_id := _next_admin_ref('CB', 'CASHBANK');
 
   -- ⚠️ type / currency เป็น ENUM (cashbank_type / currency_code)
   --    ต้อง cast จาก TEXT param ไม่งั้น error type mismatch
@@ -123,7 +168,8 @@ BEGIN
     RETURN jsonb_build_object('success', false, 'message', 'Manager or Admin only');
   END IF;
 
-  v_ref_id := 'SIN-' || to_char(NOW() AT TIME ZONE 'Asia/Bangkok', 'YYYYMMDDHH24MISS') || '-' || substring(md5(random()::text), 1, 4);
+  -- ref_id แบบใหม่: SI26000001 (เดิม SIN-timestamp) — TRX ID unified
+  v_ref_id := _next_admin_ref('SI', 'STOCK_IN');
 
   FOR v_item IN SELECT (value->>'productId') AS pid, (value->>'qty')::numeric AS qty
                 FROM jsonb_array_elements(p_items) LOOP
@@ -200,7 +246,67 @@ GRANT EXECUTE ON FUNCTION stock_in_new_tx(JSONB, TEXT, NUMERIC, JSONB, NUMERIC) 
 
 
 -- ============================================================
--- 3) get_stock_move_detail — FIX payments match (ref_tx_id OR note [ref:..])
+-- 3) stock_out_old_tx — ref_id เป็น SO26000001 (จาก SOUT-timestamp)
+-- ============================================================
+CREATE OR REPLACE FUNCTION stock_out_old_tx(p_items JSONB, p_note TEXT)
+RETURNS JSONB AS $$
+DECLARE
+  v_user_id UUID;
+  v_total_g NUMERIC := 0;
+  v_move_id BIGINT;
+  v_item RECORD;
+  v_ref_id TEXT;
+  v_weight NUMERIC;
+  v_stock NUMERIC;
+BEGIN
+  v_user_id := current_user_id();
+  IF NOT is_manager_or_admin() THEN
+    RETURN jsonb_build_object('success', false, 'message', 'Manager or Admin only');
+  END IF;
+
+  -- ref_id แบบใหม่: SO26000001 — TRX ID unified
+  v_ref_id := _next_admin_ref('SO', 'STOCK_OUT');
+
+  FOR v_item IN SELECT (value->>'productId') AS pid, (value->>'qty')::numeric AS qty
+                FROM jsonb_array_elements(p_items) LOOP
+    SELECT weight_baht * 15 INTO v_weight FROM products WHERE id = v_item.pid;
+    IF v_weight IS NULL THEN
+      RETURN jsonb_build_object('success', false, 'message', 'Unknown product: ' || v_item.pid);
+    END IF;
+    SELECT qty INTO v_stock FROM stock_balances WHERE product_id = v_item.pid AND gold_type = 'OLD';
+    IF v_stock IS NULL OR v_stock < v_item.qty THEN
+      RETURN jsonb_build_object('success', false, 'message', 'สต็อก OLD ไม่พอ: ' || v_item.pid);
+    END IF;
+    v_total_g := v_total_g + (v_weight * v_item.qty);
+  END LOOP;
+
+  INSERT INTO stock_moves (ref_id, gold_type, type, direction, gold_g, fulfilled, user_id, note, date)
+  VALUES (v_ref_id, 'OLD', 'STOCK_OUT', 'OUT', v_total_g, TRUE, v_user_id, p_note, NOW())
+  RETURNING id INTO v_move_id;
+
+  FOR v_item IN SELECT (value->>'productId') AS pid, (value->>'qty')::numeric AS qty
+                FROM jsonb_array_elements(p_items) LOOP
+    INSERT INTO stock_move_items (move_id, product_id, qty) VALUES (v_move_id, v_item.pid, v_item.qty);
+    UPDATE stock_balances SET qty = qty - v_item.qty, updated_at = NOW()
+    WHERE product_id = v_item.pid AND gold_type = 'OLD';
+  END LOOP;
+
+  UPDATE wac_state
+  SET old_gold_g = GREATEST(0, old_gold_g - v_total_g),
+      updated_at = NOW()
+  WHERE id = 1;
+
+  RETURN jsonb_build_object('success', true, 'message', 'Stock Out สำเร็จ', 'ref_id', v_ref_id);
+EXCEPTION WHEN OTHERS THEN
+  RETURN jsonb_build_object('success', false, 'message', SQLERRM);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+GRANT EXECUTE ON FUNCTION stock_out_old_tx(JSONB, TEXT) TO authenticated;
+
+
+-- ============================================================
+-- 4) get_stock_move_detail — FIX payments match (ref_tx_id OR note [ref:..])
 -- ============================================================
 DROP FUNCTION IF EXISTS public.get_stock_move_detail(text);
 DROP FUNCTION IF EXISTS public.get_stock_move_detail(text, text);
@@ -295,7 +401,7 @@ GRANT EXECUTE ON FUNCTION public.get_stock_move_detail(text, text) TO authentica
 
 
 -- ============================================================
--- 4) User password plaintext
+-- 5) User password plaintext
 -- ============================================================
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS password_plain TEXT;
 
@@ -500,13 +606,17 @@ GRANT EXECUTE ON FUNCTION list_users() TO authenticated;
 --   SELECT add_cashbank_entry('BANK_WITHDRAW', 100, 'USD', 'BANK', 'BCEL', 'test', 22000);
 --
 --   -- 2) Stock In NEW ต้องสำเร็จ + โผล่ใน get_stock_moves('NEW')
---   --    (ทดสอบผ่าน UI; ตรวจ stock_moves ว่ามี row STOCK_IN/NEW วันนี้)
+--   --    (ทดสอบผ่าน UI; ref_id ใหม่จะเป็น SI26000001)
 --   SELECT get_stock_moves('NEW');
 --
 --   -- 3) payments ของ STOCK_IN ต้องโผล่ใน detail
---   --    SELECT get_stock_move_detail('SIN-...', 'NEW');
+--   --    SELECT get_stock_move_detail('SI26000001', 'NEW');
 --
---   -- 4) password แสดงใน list_users (ของ user ที่ตั้ง/แก้รหัสหลังรันไฟล์นี้)
+--   -- 4) TRX ID format ใหม่: cashbank=CB26.., stock_in=SI26.., stock_out=SO26..
+--   SELECT _next_admin_ref('CB','CASHBANK');  -- → CB26000001, CB26000002, ...
+--   SELECT * FROM admin_ref_counter ORDER BY op_type;
+--
+--   -- 5) password แสดงใน list_users (ของ user ที่ตั้ง/แก้รหัสหลังรันไฟล์นี้)
 --   SELECT list_users();
 --
 -- ⚠️ หมายเหตุ password_plain:

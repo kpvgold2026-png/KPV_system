@@ -1,5 +1,5 @@
 var _cashbankAllRows = [];
-var _cashbankFilteredTypes = ['CASH_IN', 'CASH_OUT', 'BANK_IN', 'BANK_OUT', 'BANK_DEPOSIT', 'BANK_WITHDRAW', 'OTHER_INCOME', 'OTHER_EXPENSE', 'OPEN_SHIFT'];
+var _cashbankFilteredTypes = ['CASH_IN', 'CASH_OUT', 'BANK_IN', 'BANK_OUT', 'BANK_DEPOSIT', 'BANK_WITHDRAW', 'OTHER_INCOME', 'OTHER_EXPENSE', 'OPEN_SHIFT', 'STOCK_IN', 'STOCK_IN_FEE'];
 
 async function loadCashBank() {
   try {
@@ -92,13 +92,20 @@ function renderCashBankTable(rows) {
     var amount = parseFloat(row[2]) || 0;
     var currency = row[3] || '-';
     var rate = parseFloat(row[9]) || 1;
-    var amountCell = formatCurrency(row[2], row[3]);
+    // เงินเข้า (IN) = บวก / เงินออก (OUT) = ลบ
+    var isOut = amount < 0;
+    var dirColor = isOut ? '#f44336' : '#4caf50';
+    var dirLabel = isOut ? 'OUT ▼' : 'IN ▲';
+    var sign = isOut ? '-' : '+';
+    var absAmount = Math.abs(amount);
+    var amountCell = '<span style="color:' + dirColor + ';font-weight:700;">' + sign + formatCurrency(absAmount, row[3]) + '</span>';
     if (currency !== 'LAK' && currency !== '-') {
-      amountCell += '<div style="font-size:11px;color:var(--gold-primary);">× ' + formatNumber(rate) + ' = ' + formatNumber(Math.round(amount * rate)) + ' LAK</div>';
+      amountCell += '<div style="font-size:11px;color:var(--gold-primary);">× ' + formatNumber(rate) + ' = ' + sign + formatNumber(Math.round(absAmount * rate)) + ' LAK</div>';
     }
+    var typeCell = row[1] + ' <span style="background:' + dirColor + ';color:#fff;padding:1px 6px;border-radius:4px;font-size:10px;white-space:nowrap;">' + dirLabel + '</span>';
     return '<tr>' +
       '<td>' + row[0] + '</td>' +
-      '<td>' + row[1] + '</td>' +
+      '<td style="white-space:nowrap;">' + typeCell + '</td>' +
       '<td>' + amountCell + '</td>' +
       '<td>' + currency + '</td>' +
       '<td>' + row[4] + '</td>' +

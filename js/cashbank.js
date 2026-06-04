@@ -99,10 +99,19 @@ function renderCashBankTable(rows) {
     var sign = isOut ? '-' : '+';
     var absAmount = Math.abs(amount);
     var amountCell = '<span style="color:' + dirColor + ';font-weight:700;">' + sign + formatCurrency(absAmount, row[3]) + '</span>';
-    if (currency !== 'LAK' && currency !== '-') {
-      amountCell += '<div style="font-size:11px;color:var(--gold-primary);">× ' + formatNumber(rate) + ' = ' + sign + formatNumber(Math.round(absAmount * rate)) + ' LAK</div>';
-    }
+    // เก็บเป็นสกุลนั้นตรงๆ ไม่แปลงเป็น LAK (ไม่ใช้ rate)
     var typeCell = row[1] + ' <span style="background:' + dirColor + ';color:#fff;padding:1px 6px;border-radius:4px;font-size:10px;white-space:nowrap;">' + dirLabel + '</span>';
+    // STOCK_IN: ดึง ref (SIN-...) จาก note หรือ ref_tx_id → ปุ่ม View ดูรายละเอียดการจ่าย
+    var noteCell = (row[6] || '-');
+    var type = row[1] || '';
+    if (type === 'STOCK_IN' || type === 'STOCK_IN_FEE') {
+      var note = row[6] || '';
+      var m = note.match(/\[ref:([^\]]+)\]/);
+      var ref = m ? m[1] : (row[8] || '');
+      if (ref) {
+        noteCell += ' <button class="btn-action" style="background:#555;padding:2px 8px;font-size:11px;" onclick="viewBillDetail(\'' + ref + '\',\'STOCK_IN\',\'NEW\')">👁 View</button>';
+      }
+    }
     return '<tr>' +
       '<td>' + row[0] + '</td>' +
       '<td style="white-space:nowrap;">' + typeCell + '</td>' +
@@ -110,7 +119,7 @@ function renderCashBankTable(rows) {
       '<td>' + currency + '</td>' +
       '<td>' + row[4] + '</td>' +
       '<td>' + (row[5] || '-') + '</td>' +
-      '<td>' + (row[6] || '-') + '</td>' +
+      '<td>' + noteCell + '</td>' +
       '<td>' + formatDateTime(row[7]) + '</td>' +
       '</tr>';
   }).join('');
@@ -154,41 +163,21 @@ function toggleOtherExpenseBank() {
 }
 
 function updateCashbankRate(prefix) {
-  var currencyEl = document.getElementById(prefix + 'Currency');
-  var amountEl = document.getElementById(prefix + 'Amount');
-  var rateEl = document.getElementById(prefix + 'Rate');
+  // เก็บเป็นสกุลนั้นตรงๆ ไม่ต้องกรอก rate → ซ่อนช่อง Rate เสมอ
   var rateGroup = document.getElementById(prefix + 'RateGroup');
-  var rateCurrSpan = document.getElementById(prefix + 'RateCurrency');
-  var lakSpan = document.getElementById(prefix + 'RateLakPreview');
-  if (!currencyEl || !rateGroup) return;
-  var currency = currencyEl.value;
-  if (currency === 'LAK') {
-    rateGroup.style.display = 'none';
-    if (rateEl) rateEl.value = '';
-  } else {
-    rateGroup.style.display = 'block';
-    if (rateCurrSpan) rateCurrSpan.textContent = currency;
-    var amt = parseFloat(String((amountEl && amountEl.value) || '').replace(/,/g, '')) || 0;
-    var rate = parseFloat((rateEl && rateEl.value) || '') || 0;
-    if (lakSpan) lakSpan.textContent = formatNumber(Math.round(amt * rate));
-  }
+  var rateEl = document.getElementById(prefix + 'Rate');
+  if (rateGroup) rateGroup.style.display = 'none';
+  if (rateEl) rateEl.value = '';
 }
 
 function _readCashbankRate(prefix) {
-  var currencyEl = document.getElementById(prefix + 'Currency');
-  var rateEl = document.getElementById(prefix + 'Rate');
-  if (!currencyEl) return 1;
-  if (currencyEl.value === 'LAK') return 1;
-  return parseFloat((rateEl && rateEl.value) || '') || 0;
+  // ไม่ใช้ rate อีกต่อไป (เก็บตามสกุลเงินตรงๆ)
+  return 1;
 }
 
 async function _submitCashBankEntry(type, amount, currency, method, bank, note, rate) {
   if (!amount || amount <= 0) {
     alert('Please enter amount');
-    return false;
-  }
-  if (currency !== 'LAK' && (!rate || rate <= 0)) {
-    alert('กรุณากรอก Rate สำหรับสกุล ' + currency);
     return false;
   }
   _isSubmitting = true;

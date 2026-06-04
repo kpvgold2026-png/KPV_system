@@ -180,7 +180,7 @@ async function fetchUsersFromDB() {
         USERS[u.username] = {
           id: u.id,
           role: mapRole(u.role),
-          nickname: u.nickname || u.role,
+          nickname: u.nickname || u.username || u.role,
           dbRole: u.role
         };
       });
@@ -309,7 +309,7 @@ async function login() {
       id: u.id,
       username: u.username,
       role: role,
-      nickname: u.nickname || dbRole,
+      nickname: u.nickname || u.username || dbRole,
       dbRole: dbRole,
       sessionId: sessionId
     };

@@ -23,9 +23,9 @@ async function loadHistorySell() {
       p_limit: 1000
     });
 
-    // Buyback มี tab History Buyback ของตัวเอง → ไม่แสดงใน History Sell
+    // Buyback มี tab ของตัวเอง → ไม่แสดงใน History Sell (กันทุก case/null)
     if (Array.isArray(data)) {
-      data = data.filter(function(r) { return r.type !== 'BUYBACK'; });
+      data = data.filter(function(r) { return String(r.type || '').toUpperCase() !== 'BUYBACK'; });
     }
 
     if (!Array.isArray(data) || data.length === 0) {

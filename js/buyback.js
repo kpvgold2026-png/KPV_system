@@ -17,10 +17,12 @@ async function loadBuybacks() {
       dateFrom = today;
       dateTo = today;
     }
+    // anchor เป็นเวลา Bangkok (+07:00) — DB เก็บ date เป็น UTC (NOW()) ถ้าไม่ใส่ offset
+    // PostgREST จะตีความเป็น UTC ทำให้ buyback ช่วงเช้ามืด (Bangkok) หลุดออกจากช่วง
     if (dateFrom && dateTo) {
-      filters['and'] = '(date.gte.' + dateFrom + 'T00:00:00,date.lte.' + dateTo + 'T23:59:59)';
+      filters['and'] = '(date.gte.' + dateFrom + 'T00:00:00+07:00,date.lte.' + dateTo + 'T23:59:59+07:00)';
     } else if (dateFrom) {
-      filters['date'] = 'gte.' + dateFrom + 'T00:00:00';
+      filters['date'] = 'gte.' + dateFrom + 'T00:00:00+07:00';
     }
 
     var rows = await dbSelect('transactions', {

@@ -1,9 +1,11 @@
 -- ============================================================
--- reset.sql — รีเซ็ตข้อมูลเริ่มสด (Round 7.4)
+-- reset.sql — รีเซ็ตข้อมูลเริ่มสด (อัปเดต Round 9 — 2026-06-05)
 -- ============================================================
 -- ผลลัพธ์หลังรัน:
 --   - ลบทุก tx + diff + cashbank + user_cashbook + closes + notifications
---     + stock_moves + user_gold_received
+--     + stock_moves + stock_transfers + inventory_snapshots + approvals
+--     + user_gold_received + admin_ref_counter
+--   - ‼️ Round 9: STOCK_IN bootstrap จ่ายเงิน = ค่า "ลบ" (signed model ; เดิมเป็นบวก ยอดเงินผิด)
 --   - ทองเก่า (OLD) = 0 (ทุก product)
 --   - ทองใหม่ (NEW) = 10 ชิ้น ต่อ product (G01-G07)
 --     → INSERT stock_moves STOCK_IN จำลอง (1 บิล รวมทุก product)
@@ -24,14 +26,25 @@ DELETE FROM transaction_items;
 DELETE FROM diffs;
 DELETE FROM stock_move_items;
 DELETE FROM stock_moves;
+DELETE FROM stock_transfer_items;
+DELETE FROM stock_transfers;
+DELETE FROM inventory_snapshots;
 DELETE FROM user_gold_received;
 DELETE FROM cashbank;
 DELETE FROM user_cashbook;
 DELETE FROM closes;
+DELETE FROM approvals;
 DELETE FROM notifications;
 DELETE FROM transactions;
 DELETE FROM bill_sequence;
 DELETE FROM daily_reports;
+
+-- reset ตัวนับเลขอ้างอิง SI/SO/CB/TF/CL (Round 7.5+) — safe ถ้ายังไม่มี table
+DO $$ BEGIN
+  IF to_regclass('public.admin_ref_counter') IS NOT NULL THEN
+    DELETE FROM admin_ref_counter;
+  END IF;
+END $$;
 
 
 -- ============================================================
@@ -130,22 +143,24 @@ BEGIN
   -- payment breakdown — link ผ่าน note [ref:...] (FK ref_tx_id ใช้กับ STOCK_IN ไม่ได้
   -- เพราะ STOCK_IN ref_id ไม่ได้อยู่ใน transactions table)
   -- get_stock_move_detail ค้นเจอผ่าน LIKE '%[ref:...]%'
+  -- ‼️ เงินออก (จ่ายค่าทอง) = ค่าลบ ตาม signed model (get_cashbank_balances ทำ SUM ตรงๆ)
+  --    type = STOCK_IN ให้ตรงกับ stock_in_new_tx (โชว์ OUT▼ + มีปุ่ม View)
   -- Cash LAK 50%
   INSERT INTO cashbank (id, type, amount, currency, rate, method, bank_id, ref_tx_id, note, date)
-  VALUES ('CB-' || v_ref_id || '-LAK', 'CASH_OUT',
-          ROUND(v_total_cost * 0.50), 'LAK', 1, 'CASH', NULL,
+  VALUES ('CB-' || v_ref_id || '-LAK', 'STOCK_IN',
+          -ROUND(v_total_cost * 0.50), 'LAK', 1, 'CASH', NULL,
           NULL, 'STOCK_IN: Cash LAK [ref:' || v_ref_id || ']', NOW());
 
   -- Cash THB 15%  (THB amount = LAK / 685)
   INSERT INTO cashbank (id, type, amount, currency, rate, method, bank_id, ref_tx_id, note, date)
-  VALUES ('CB-' || v_ref_id || '-THB', 'CASH_OUT',
-          ROUND(v_total_cost * 0.15 / 685), 'THB', 685, 'CASH', NULL,
+  VALUES ('CB-' || v_ref_id || '-THB', 'STOCK_IN',
+          -ROUND(v_total_cost * 0.15 / 685), 'THB', 685, 'CASH', NULL,
           NULL, 'STOCK_IN: Cash THB [ref:' || v_ref_id || ']', NOW());
 
   -- Cash USD 35%
   INSERT INTO cashbank (id, type, amount, currency, rate, method, bank_id, ref_tx_id, note, date)
-  VALUES ('CB-' || v_ref_id || '-USD', 'CASH_OUT',
-          ROUND(v_total_cost * 0.35 / 22070), 'USD', 22070, 'CASH', NULL,
+  VALUES ('CB-' || v_ref_id || '-USD', 'STOCK_IN',
+          -ROUND(v_total_cost * 0.35 / 22070), 'USD', 22070, 'CASH', NULL,
           NULL, 'STOCK_IN: Cash USD [ref:' || v_ref_id || ']', NOW());
 END$$;
 

@@ -907,15 +907,23 @@ GRANT EXECUTE ON FUNCTION recompute_diffs(DATE, DATE) TO authenticated;
 --     → check_shop_balance(method, currency, bank, amount) ก่อน INSERT
 --   - confirm_buyback_tx, stock_in_new_tx มี check อยู่แล้ว (R8/R9) — ไม่แตะ
 --
--- ข้อ B) Other Expense = หน่วย LAK เสมอ
---   - ถ้ากรอก THB/USD → แปลงเป็น LAK ด้วย "เรทขายล่าสุด" (price_rates.thb_sell / usd_sell)
---     เก็บ currency=LAK, amount = ยอด × เรท, rate = เรทที่ใช้, note แนบยอดเดิมไว้
---   - เช็คยอดเงินในร้าน (ข้อ A) ทำหลังแปลงเป็น LAK แล้ว → เช็คกับยอด LAK จริง
+-- ข้อ B) Other Expense กรอก THB/USD → มูลค่าทางบัญชีเป็น LAK
+--   - เก็บ cashbank "สกุลตามจริง" (THB/USD) + เก็บเรทขายล่าสุดในคอลัมน์ rate
+--     → เช็ค/หักยอด ทำกับสกุลที่จ่ายจริง (จ่าย THB → เช็ค THB ไม่ใช่ LAK)
+--   - มูลค่า LAK = amount × rate ; กล่อง Other Expense (get_dashboard_data)
+--     รวมเป็น LAK = SUM(ABS(amount) × COALESCE(rate,1))  ← แก้เพิ่มท้ายไฟล์
+--
+-- ‼️ DB มี add_cashbank_entry ซ้อนกัน 2 ตัว (text-typed เดิม + enum-typed ที่เคยเพิ่ม) →
+--    PGRST203 "Could not choose the best candidate". DROP ทั้งคู่ก่อน แล้วสร้างตัวเดียว
+--    แบบ text-typed (ตรงกับตัวที่ deploy เดิม) cast เป็น enum ภายใน → ไม่เกิด overload อีก
 -- ============================================================
+DROP FUNCTION IF EXISTS add_cashbank_entry(cashbank_type, NUMERIC, currency_code, TEXT, TEXT, TEXT, NUMERIC);
+DROP FUNCTION IF EXISTS add_cashbank_entry(TEXT, NUMERIC, TEXT, TEXT, TEXT, TEXT, NUMERIC);
+
 CREATE OR REPLACE FUNCTION add_cashbank_entry(
-  p_type cashbank_type,
+  p_type TEXT,
   p_amount NUMERIC,
-  p_currency currency_code,
+  p_currency TEXT,
   p_method TEXT,
   p_bank_name TEXT,
   p_note TEXT,
@@ -930,7 +938,7 @@ DECLARE
   v_bank_id UUID := NULL;
   v_cb_id TEXT;
   v_is_deduct BOOLEAN;
-  v_eff_currency currency_code := p_currency;
+  v_eff_currency TEXT := UPPER(p_currency);
   v_eff_amount NUMERIC := ABS(COALESCE(p_amount, 0));
   v_rate NUMERIC := COALESCE(NULLIF(p_rate, 0), 1);
   v_note TEXT := COALESCE(p_note, '');
@@ -954,10 +962,13 @@ BEGIN
     END IF;
   END IF;
 
-  -- ‼️ ข้อ B: Other Expense ต้องเป็น LAK เสมอ → แปลงสกุลต่างประเทศด้วยเรทขายล่าสุด ณ ตอนนั้น
-  IF p_type = 'OTHER_EXPENSE' AND p_currency <> 'LAK' THEN
-    SELECT CASE WHEN p_currency = 'THB' THEN thb_sell
-                WHEN p_currency = 'USD' THEN usd_sell
+  -- ‼️ ข้อ B: Other Expense กรอก THB/USD → "เก็บสกุลตามจริง" (เพื่อให้เช็ค/หักยอดสกุลนั้นถูกต้อง)
+  --    เงิน THB ออกจากร้าน = ต้องเช็คยอด THB ไม่ใช่ LAK
+  --    + ดึง "เรทขายล่าสุด" มาเก็บในคอลัมน์ rate → มูลค่า LAK (บัญชี) = amount × rate
+  --      กล่อง Other Expense (get_dashboard_data) ค่อยรวมเป็น LAK = SUM(amount × rate)
+  IF p_type = 'OTHER_EXPENSE' AND v_eff_currency <> 'LAK' THEN
+    SELECT CASE WHEN v_eff_currency = 'THB' THEN thb_sell
+                WHEN v_eff_currency = 'USD' THEN usd_sell
                 ELSE NULL END
       INTO v_sell_rate
     FROM price_rates
@@ -966,23 +977,21 @@ BEGIN
 
     IF v_sell_rate IS NULL OR v_sell_rate <= 0 THEN
       RETURN jsonb_build_object('success', false, 'message',
-        '❌ ยังไม่ได้ตั้งเรทขาย ' || p_currency || '/LAK — โปรดตั้งเรทใน Price Rate ก่อนบันทึก Other Expense');
+        '❌ ยังไม่ได้ตั้งเรทขาย ' || v_eff_currency || '/LAK — โปรดตั้งเรทใน Price Rate ก่อนบันทึก Other Expense');
     END IF;
 
-    v_eff_amount   := ROUND(v_orig_amount * v_sell_rate);
-    v_eff_currency := 'LAK';
-    v_rate         := v_sell_rate;
+    v_rate := v_sell_rate;  -- เก็บเรท ; currency/amount คงเดิม (THB/USD)
     v_note := TRIM(BOTH ' ' FROM
               COALESCE(NULLIF(v_note, '') || ' ', '')
-              || '[' || to_char(v_orig_amount, 'FM999,999,999,990.######') || ' ' || p_currency
-              || ' × ' || to_char(v_sell_rate, 'FM999,999,990.######') || ' (Sell)]');
+              || '[= ' || to_char(ROUND(v_orig_amount * v_sell_rate), 'FM999,999,999,990') || ' LAK @ '
+              || to_char(v_sell_rate, 'FM999,999,990.######') || ' (Sell)]');
   END IF;
 
   v_is_deduct := p_type IN ('CASH_OUT', 'BANK_OUT', 'BANK_WITHDRAW', 'OTHER_EXPENSE');
 
   -- ‼️ ข้อ A: เช็คยอดเงินในร้านพอก่อนหัก — ห้ามทำให้ติดลบเด็ดขาด
   IF v_is_deduct THEN
-    IF NOT check_shop_balance(p_method, v_eff_currency, v_bank_id, v_eff_amount) THEN
+    IF NOT check_shop_balance(p_method, v_eff_currency::currency_code, v_bank_id, v_eff_amount) THEN
       RETURN jsonb_build_object('success', false, 'message',
         '❌ เงินในร้านไม่พอ: ต้องจ่าย ' || to_char(v_eff_amount, 'FM999,999,999,990') || ' ' || v_eff_currency ||
         CASE WHEN UPPER(COALESCE(p_method, '')) = 'CASH' THEN ' (เงินสด)'
@@ -996,7 +1005,8 @@ BEGIN
              || '-' || substring(md5(random()::text), 1, 6);
 
   INSERT INTO cashbank (id, type, amount, currency, rate, method, bank_id, note, date, created_by_id)
-  VALUES (v_cb_id, p_type, v_signed_amount, v_eff_currency, v_rate, p_method, v_bank_id, v_note, NOW(), v_user_id);
+  VALUES (v_cb_id, p_type::cashbank_type, v_signed_amount, v_eff_currency::currency_code, v_rate,
+          p_method, v_bank_id, v_note, NOW(), v_user_id);
 
   RETURN jsonb_build_object('success', true, 'id', v_cb_id);
 EXCEPTION WHEN OTHERS THEN
@@ -1004,4 +1014,126 @@ EXCEPTION WHEN OTHERS THEN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION add_cashbank_entry(cashbank_type, NUMERIC, currency_code, TEXT, TEXT, TEXT, NUMERIC) TO authenticated;
+GRANT EXECUTE ON FUNCTION add_cashbank_entry(TEXT, NUMERIC, TEXT, TEXT, TEXT, TEXT, NUMERIC) TO authenticated;
+
+
+-- ============================================================
+-- ข้อ B (ต่อ) — กล่อง Other Expense (tab Accounting) ต้องรวมเป็น LAK
+--   เดิม SUM(ABS(amount)) → รวม THB/USD ปนเป็น LAK (ผิด)
+--   แก้ = SUM(ABS(amount) × COALESCE(rate,1)) → แถว LAK rate=1, แถว THB/USD rate=เรทขาย
+--   (เปลี่ยนแค่บรรทัด v_other_expense ที่เหลือคงเดิมจาก source ที่ deploy อยู่)
+-- ============================================================
+CREATE OR REPLACE FUNCTION get_dashboard_data(p_date_from DATE, p_date_to DATE)
+RETURNS JSONB AS $$
+DECLARE
+  v_from TIMESTAMPTZ;
+  v_to TIMESTAMPTZ;
+  v_wac JSONB;
+  v_pl_diff NUMERIC := 0;
+  v_other_expense NUMERIC := 0;
+  v_new_pieces NUMERIC := 0;
+  v_new_g NUMERIC := 0;
+  v_old_pieces NUMERIC := 0;
+  v_old_g NUMERIC := 0;
+  v_cash JSONB;
+  v_banks JSONB;
+  v_sales JSONB;
+  v_buybacks JSONB;
+  v_withdraws JSONB;
+BEGIN
+  v_from := (p_date_from::text || ' 00:00:00')::timestamp AT TIME ZONE 'Asia/Bangkok';
+  v_to := (p_date_to::text || ' 23:59:59')::timestamp AT TIME ZONE 'Asia/Bangkok';
+
+  SELECT row_to_json(w)::jsonb INTO v_wac FROM wac_state w WHERE id = 1;
+
+  SELECT COALESCE(SUM(diff), 0) INTO v_pl_diff
+  FROM diffs WHERE date BETWEEN v_from AND v_to;
+
+  -- ‼️ Other Expense รวมเป็น LAK: THB/USD × เรทขาย (rate), LAK × 1
+  SELECT COALESCE(SUM(ABS(amount) * COALESCE(rate, 1)), 0) INTO v_other_expense
+  FROM cashbank WHERE type = 'OTHER_EXPENSE' AND date BETWEEN v_from AND v_to;
+
+  SELECT
+    COALESCE(SUM(sb.qty), 0),
+    COALESCE(SUM(sb.qty * p.weight_baht * 15), 0)
+  INTO v_new_pieces, v_new_g
+  FROM stock_balances sb JOIN products p ON p.id = sb.product_id
+  WHERE sb.gold_type = 'NEW';
+
+  SELECT
+    COALESCE(SUM(sb.qty), 0),
+    COALESCE(SUM(sb.qty * p.weight_baht * 15), 0)
+  INTO v_old_pieces, v_old_g
+  FROM stock_balances sb JOIN products p ON p.id = sb.product_id
+  WHERE sb.gold_type = 'OLD';
+
+  SELECT COALESCE(jsonb_object_agg(currency, total), '{}'::jsonb) INTO v_cash FROM (
+    SELECT currency::text, COALESCE(SUM(amount), 0) AS total
+    FROM cashbank WHERE method = 'CASH' GROUP BY currency
+  ) t;
+
+  SELECT COALESCE(jsonb_object_agg(bank_name, balances), '{}'::jsonb) INTO v_banks FROM (
+    SELECT b.name AS bank_name,
+           COALESCE(
+             jsonb_object_agg(cb.currency, COALESCE(cb.total, 0))
+               FILTER (WHERE cb.currency IS NOT NULL),
+             '{}'::jsonb
+           ) AS balances
+    FROM banks b
+    LEFT JOIN (
+      SELECT bank_id, currency::text AS currency, SUM(amount) AS total
+      FROM cashbank
+      WHERE method <> 'CASH' AND bank_id IS NOT NULL
+      GROUP BY bank_id, currency
+    ) cb ON cb.bank_id = b.id
+    WHERE b.is_active = TRUE
+    GROUP BY b.name
+  ) t;
+
+  SELECT jsonb_build_object(
+    'sell', COALESCE(SUM(CASE WHEN type = 'SELL' THEN total ELSE 0 END), 0),
+    'sell_count', COALESCE(SUM(CASE WHEN type = 'SELL' THEN 1 ELSE 0 END), 0),
+    'tradein', COALESCE(SUM(CASE WHEN type = 'TRADEIN' THEN total ELSE 0 END), 0),
+    'tradein_count', COALESCE(SUM(CASE WHEN type = 'TRADEIN' THEN 1 ELSE 0 END), 0),
+    'exchange', COALESCE(SUM(CASE WHEN type = 'EXCHANGE' THEN total ELSE 0 END), 0),
+    'exchange_count', COALESCE(SUM(CASE WHEN type = 'EXCHANGE' THEN 1 ELSE 0 END), 0)
+  ) INTO v_sales
+  FROM transactions
+  WHERE type IN ('SELL', 'TRADEIN', 'EXCHANGE')
+    AND status IN ('COMPLETED', 'PAID')
+    AND date BETWEEN v_from AND v_to;
+
+  SELECT jsonb_build_object(
+    'amount', COALESCE(SUM(total), 0),
+    'count', COUNT(*)
+  ) INTO v_buybacks
+  FROM transactions
+  WHERE type = 'BUYBACK' AND status IN ('COMPLETED', 'PAID')
+    AND date BETWEEN v_from AND v_to;
+
+  SELECT jsonb_build_object(
+    'amount', COALESCE(SUM(total), 0),
+    'count', COUNT(*)
+  ) INTO v_withdraws
+  FROM transactions
+  WHERE type = 'WITHDRAW' AND status IN ('COMPLETED', 'PAID')
+    AND date BETWEEN v_from AND v_to;
+
+  RETURN jsonb_build_object(
+    'wac', COALESCE(v_wac, '{}'::jsonb),
+    'pl_diff', v_pl_diff,
+    'other_expense', v_other_expense,
+    'new_pieces', v_new_pieces,
+    'new_g', v_new_g,
+    'old_pieces', v_old_pieces,
+    'old_g', v_old_g,
+    'cash', v_cash,
+    'banks', v_banks,
+    'sales', v_sales,
+    'buybacks', v_buybacks,
+    'withdraws', v_withdraws
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+GRANT EXECUTE ON FUNCTION get_dashboard_data(DATE, DATE) TO authenticated;

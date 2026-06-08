@@ -1,6 +1,5 @@
 var _cashbankAllRows = [];
 var _cashbankFilteredTypes = ['CASH_IN', 'CASH_OUT', 'BANK_IN', 'BANK_OUT', 'BANK_DEPOSIT', 'BANK_WITHDRAW', 'OTHER_INCOME', 'OTHER_EXPENSE', 'OPEN_SHIFT', 'STOCK_IN', 'STOCK_IN_FEE'];
-var _oeRatesTried = false;  // ลองโหลดเรทขาย (price_rates) ครั้งเดียวสำหรับ preview Other Expense
 
 async function loadCashBank() {
   try {
@@ -169,35 +168,6 @@ function updateCashbankRate(prefix) {
   var rateEl = document.getElementById(prefix + 'Rate');
   if (rateGroup) rateGroup.style.display = 'none';
   if (rateEl) rateEl.value = '';
-  // Other Expense ต้องเป็น LAK เสมอ — โชว์ตัวอย่างค่าที่จะถูกแปลงเป็น LAK (เรทขายล่าสุด)
-  if (prefix === 'otherExpense') updateOtherExpenseLakPreview();
-}
-
-// แสดงตัวอย่างมูลค่า LAK ที่จะถูกบันทึก เมื่อ Other Expense กรอกเป็น THB/USD
-// (การแปลงจริงทำที่ backend add_cashbank_entry ด้วยเรทขายล่าสุด ณ ตอนกดบันทึก)
-function updateOtherExpenseLakPreview() {
-  var el = document.getElementById('otherExpenseLakConv');
-  if (!el) return;
-  var cur = (document.getElementById('otherExpenseCurrency') || {}).value;
-  var amtEl = document.getElementById('otherExpenseAmount');
-  var amt = (amtEl && (amtEl.numericValue || parseFloat(String(amtEl.value).replace(/,/g, '')))) || 0;
-  if (cur === 'LAK' || !amt) { el.style.display = 'none'; return; }
-  var rates = (typeof currentPriceRates !== 'undefined' && currentPriceRates) ? currentPriceRates : {};
-  var rate = parseFloat(cur === 'THB' ? rates.thbSell : rates.usdSell) || 0;
-  // เรทยังไม่โหลด (ยังไม่เคยเปิดแท็บ Price Rate) → ลองดึงครั้งเดียวแล้ว render ใหม่
-  if (!rate && !_oeRatesTried && typeof loadPriceRate === 'function') {
-    _oeRatesTried = true;
-    Promise.resolve(loadPriceRate()).then(function () { updateOtherExpenseLakPreview(); }).catch(function () {});
-  }
-  el.style.display = 'block';
-  if (!rate) {
-    el.style.color = '#f44336';
-    el.innerHTML = '⚠️ ยังไม่มีเรทขาย ' + cur + '/LAK — โปรดตั้งเรทใน Price Rate ก่อนบันทึก';
-    return;
-  }
-  el.style.color = 'var(--gold-primary)';
-  el.innerHTML = '= ' + formatNumber(Math.round(amt * rate)) + ' LAK '
-    + '<span style="font-weight:400;color:var(--text-secondary,#888);">(เรทขาย ' + cur + ' ล่าสุด ' + formatNumber(rate) + ')</span>';
 }
 
 function _readCashbankRate(prefix) {

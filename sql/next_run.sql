@@ -897,3 +897,111 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 GRANT EXECUTE ON FUNCTION recompute_diffs(DATE, DATE) TO authenticated;
+
+
+-- ============================================================
+-- Round 10 (2026-06-09) — 2 ข้อจาก user (ต่อท้ายไฟล์เดิม ไม่ทับ 9b/9c)
+--
+-- ข้อ A) เงินออกจากร้าน "ทุกจุด ทุกสกุล" ต้องเช็คยอดพอก่อน ห้ามติดลบ
+--   - add_cashbank_entry: CASH_OUT / BANK_OUT / BANK_WITHDRAW / OTHER_EXPENSE
+--     → check_shop_balance(method, currency, bank, amount) ก่อน INSERT
+--   - confirm_buyback_tx, stock_in_new_tx มี check อยู่แล้ว (R8/R9) — ไม่แตะ
+--
+-- ข้อ B) Other Expense = หน่วย LAK เสมอ
+--   - ถ้ากรอก THB/USD → แปลงเป็น LAK ด้วย "เรทขายล่าสุด" (price_rates.thb_sell / usd_sell)
+--     เก็บ currency=LAK, amount = ยอด × เรท, rate = เรทที่ใช้, note แนบยอดเดิมไว้
+--   - เช็คยอดเงินในร้าน (ข้อ A) ทำหลังแปลงเป็น LAK แล้ว → เช็คกับยอด LAK จริง
+-- ============================================================
+CREATE OR REPLACE FUNCTION add_cashbank_entry(
+  p_type cashbank_type,
+  p_amount NUMERIC,
+  p_currency currency_code,
+  p_method TEXT,
+  p_bank_name TEXT,
+  p_note TEXT,
+  p_rate NUMERIC
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  v_user_id UUID;
+  v_bank_id UUID := NULL;
+  v_cb_id TEXT;
+  v_is_deduct BOOLEAN;
+  v_eff_currency currency_code := p_currency;
+  v_eff_amount NUMERIC := ABS(COALESCE(p_amount, 0));
+  v_rate NUMERIC := COALESCE(NULLIF(p_rate, 0), 1);
+  v_note TEXT := COALESCE(p_note, '');
+  v_sell_rate NUMERIC;
+  v_orig_amount NUMERIC := ABS(COALESCE(p_amount, 0));
+  v_signed_amount NUMERIC;
+BEGIN
+  v_user_id := current_user_id();
+  IF v_user_id IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'message', 'Not authenticated');
+  END IF;
+  IF v_eff_amount <= 0 THEN
+    RETURN jsonb_build_object('success', false, 'message', 'จำนวนเงินต้องมากกว่า 0');
+  END IF;
+
+  -- หา bank_id (สร้างใหม่ถ้ายังไม่มี)
+  IF p_bank_name IS NOT NULL AND p_bank_name <> '' THEN
+    SELECT id INTO v_bank_id FROM banks WHERE name = p_bank_name LIMIT 1;
+    IF v_bank_id IS NULL THEN
+      INSERT INTO banks (name, is_active) VALUES (p_bank_name, TRUE) RETURNING id INTO v_bank_id;
+    END IF;
+  END IF;
+
+  -- ‼️ ข้อ B: Other Expense ต้องเป็น LAK เสมอ → แปลงสกุลต่างประเทศด้วยเรทขายล่าสุด ณ ตอนนั้น
+  IF p_type = 'OTHER_EXPENSE' AND p_currency <> 'LAK' THEN
+    SELECT CASE WHEN p_currency = 'THB' THEN thb_sell
+                WHEN p_currency = 'USD' THEN usd_sell
+                ELSE NULL END
+      INTO v_sell_rate
+    FROM price_rates
+    ORDER BY date DESC
+    LIMIT 1;
+
+    IF v_sell_rate IS NULL OR v_sell_rate <= 0 THEN
+      RETURN jsonb_build_object('success', false, 'message',
+        '❌ ยังไม่ได้ตั้งเรทขาย ' || p_currency || '/LAK — โปรดตั้งเรทใน Price Rate ก่อนบันทึก Other Expense');
+    END IF;
+
+    v_eff_amount   := ROUND(v_orig_amount * v_sell_rate);
+    v_eff_currency := 'LAK';
+    v_rate         := v_sell_rate;
+    v_note := TRIM(BOTH ' ' FROM
+              COALESCE(NULLIF(v_note, '') || ' ', '')
+              || '[' || to_char(v_orig_amount, 'FM999,999,999,990.######') || ' ' || p_currency
+              || ' × ' || to_char(v_sell_rate, 'FM999,999,990.######') || ' (Sell)]');
+  END IF;
+
+  v_is_deduct := p_type IN ('CASH_OUT', 'BANK_OUT', 'BANK_WITHDRAW', 'OTHER_EXPENSE');
+
+  -- ‼️ ข้อ A: เช็คยอดเงินในร้านพอก่อนหัก — ห้ามทำให้ติดลบเด็ดขาด
+  IF v_is_deduct THEN
+    IF NOT check_shop_balance(p_method, v_eff_currency, v_bank_id, v_eff_amount) THEN
+      RETURN jsonb_build_object('success', false, 'message',
+        '❌ เงินในร้านไม่พอ: ต้องจ่าย ' || to_char(v_eff_amount, 'FM999,999,999,990') || ' ' || v_eff_currency ||
+        CASE WHEN UPPER(COALESCE(p_method, '')) = 'CASH' THEN ' (เงินสด)'
+             ELSE ' (' || COALESCE(NULLIF(p_bank_name, ''), 'ธนาคาร') || ')' END);
+    END IF;
+  END IF;
+
+  v_signed_amount := CASE WHEN v_is_deduct THEN -v_eff_amount ELSE v_eff_amount END;
+
+  v_cb_id := 'CB-' || to_char(NOW() AT TIME ZONE 'Asia/Bangkok', 'YYYYMMDDHH24MISSMS')
+             || '-' || substring(md5(random()::text), 1, 6);
+
+  INSERT INTO cashbank (id, type, amount, currency, rate, method, bank_id, note, date, created_by_id)
+  VALUES (v_cb_id, p_type, v_signed_amount, v_eff_currency, v_rate, p_method, v_bank_id, v_note, NOW(), v_user_id);
+
+  RETURN jsonb_build_object('success', true, 'id', v_cb_id);
+EXCEPTION WHEN OTHERS THEN
+  RETURN jsonb_build_object('success', false, 'message', SQLERRM);
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION add_cashbank_entry(cashbank_type, NUMERIC, currency_code, TEXT, TEXT, TEXT, NUMERIC) TO authenticated;

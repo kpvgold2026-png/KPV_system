@@ -1,18 +1,15 @@
 -- ============================================================
--- reset.sql — รีเซ็ตข้อมูลเริ่มสด (อัปเดต Round 9 — 2026-06-05)
+-- reset.sql — รีเซ็ตข้อมูลเริ่มสด เป็น 0 ทุกอย่าง (อัปเดต 2026-06-11)
 -- ============================================================
 -- ผลลัพธ์หลังรัน:
 --   - ลบทุก tx + diff + cashbank + user_cashbook + closes + notifications
 --     + stock_moves + stock_transfers + inventory_snapshots + approvals
 --     + user_gold_received + admin_ref_counter
---   - ‼️ Round 9: STOCK_IN bootstrap จ่ายเงิน = ค่า "ลบ" (signed model ; เดิมเป็นบวก ยอดเงินผิด)
+--   - ‼️ ไม่ทำรายการ STOCK_IN bootstrap — ทุกอย่างเริ่มที่ 0
 --   - ทองเก่า (OLD) = 0 (ทุก product)
---   - ทองใหม่ (NEW) = 10 ชิ้น ต่อ product (G01-G07)
---     → INSERT stock_moves STOCK_IN จำลอง (1 บิล รวมทุก product)
---     → wac_state.new_gold_g / new_value sync ตาม WAC สมมติ 3,300,000 LAK/g
---   - Opening cash: LAK 10B / THB 5,000,000 / USD 500,000 (CASH_IN)
---   - STOCK_IN payment breakdown: Cash LAK 50% / Cash THB 15% / Cash USD 35%
---     (หักจาก opening → balance หลัง reset เหลือพอใช้)
+--   - ทองใหม่ (NEW) = 0 (ทุก product)
+--   - wac_state ทั้งหมด = 0 (new/old gold_g + value)
+--   - ไม่มี opening cash — cashbank ว่าง (ยอดทุกสกุล = 0)
 --   - bill_sequence reset (เลขบิลเริ่ม 1 ใหม่)
 -- ============================================================
 
@@ -48,17 +45,17 @@ END $$;
 
 
 -- ============================================================
--- 2) Reset stock_balances → NEW 10 ชิ้น/product, OLD 0
+-- 2) Reset stock_balances → NEW 0, OLD 0 (ทุก product)
 -- ============================================================
 DELETE FROM stock_balances;
 INSERT INTO stock_balances (product_id, gold_type, qty, updated_at) VALUES
-  ('G01', 'NEW', 10, NOW()),
-  ('G02', 'NEW', 10, NOW()),
-  ('G03', 'NEW', 10, NOW()),
-  ('G04', 'NEW', 10, NOW()),
-  ('G05', 'NEW', 10, NOW()),
-  ('G06', 'NEW', 10, NOW()),
-  ('G07', 'NEW', 10, NOW()),
+  ('G01', 'NEW', 0, NOW()),
+  ('G02', 'NEW', 0, NOW()),
+  ('G03', 'NEW', 0, NOW()),
+  ('G04', 'NEW', 0, NOW()),
+  ('G05', 'NEW', 0, NOW()),
+  ('G06', 'NEW', 0, NOW()),
+  ('G07', 'NEW', 0, NOW()),
   ('G01', 'OLD', 0, NOW()),
   ('G02', 'OLD', 0, NOW()),
   ('G03', 'OLD', 0, NOW()),
@@ -69,7 +66,7 @@ INSERT INTO stock_balances (product_id, gold_type, qty, updated_at) VALUES
 
 
 -- ============================================================
--- 3) Reset wac_state → OLD = 0, NEW = computed below
+-- 3) Reset wac_state → ทั้งหมด = 0
 -- ============================================================
 UPDATE wac_state SET
   new_gold_g = 0,
@@ -81,88 +78,9 @@ WHERE id = 1;
 
 
 -- ============================================================
--- 4) Opening cash balance (CASH_IN — valid enum)
---   LAK 10B / THB 5M / USD 500K — พอจ่ายค่า STOCK_IN bootstrap
+-- 4) ไม่มี opening cash + ไม่ทำ STOCK_IN bootstrap
+--    → ทุกอย่างเริ่มที่ 0 (cashbank ลบหมดในขั้นที่ 1 แล้ว)
 -- ============================================================
-INSERT INTO cashbank (id, type, amount, currency, rate, method, bank_id, ref_tx_id, note, date)
-VALUES
-  ('CB-OPEN-LAK-' || to_char(NOW() AT TIME ZONE 'Asia/Bangkok', 'YYYYMMDDHH24MISS'),
-   'CASH_IN', 10000000000, 'LAK', 1,     'CASH', NULL, NULL, 'Opening balance', NOW()),
-  ('CB-OPEN-THB-' || to_char(NOW() AT TIME ZONE 'Asia/Bangkok', 'YYYYMMDDHH24MISS'),
-   'CASH_IN', 5000000,     'THB', 685,   'CASH', NULL, NULL, 'Opening balance', NOW()),
-  ('CB-OPEN-USD-' || to_char(NOW() AT TIME ZONE 'Asia/Bangkok', 'YYYYMMDDHH24MISS'),
-   'CASH_IN', 500000,      'USD', 22070, 'CASH', NULL, NULL, 'Opening balance', NOW());
-
-
--- ============================================================
--- 5) STOCK_IN bootstrap — จำลอง tx เข้าทอง NEW 10 ชิ้น/product
---   WAC สมมติ = 3,300,000 LAK/g (≈ ตลาดจริง)
---   total_g = Σ(weight_baht × 15 × 10) จาก products
---   payments breakdown: Cash LAK 50% / THB 15% / USD 35%
--- ============================================================
-DO $$
-DECLARE
-  v_wac NUMERIC := 3300000;        -- LAK/g สมมติ
-  v_total_g NUMERIC;
-  v_total_cost NUMERIC;
-  v_move_id BIGINT;
-  v_ref_id TEXT;
-  v_prod RECORD;
-  v_ts TEXT;
-BEGIN
-  v_ts := to_char(NOW() AT TIME ZONE 'Asia/Bangkok', 'YYYYMMDDHH24MISS');
-  v_ref_id := 'STOCKIN-RESET-' || v_ts;
-
-  -- total weight (10 ชิ้น/product × weight_baht × 15)
-  SELECT COALESCE(SUM(weight_baht * 15 * 10), 0)
-    INTO v_total_g
-    FROM products;
-
-  v_total_cost := v_total_g * v_wac;
-
-  -- stock_moves header
-  INSERT INTO stock_moves (ref_id, gold_type, type, direction, gold_g,
-                           price, wac_per_g, wac_per_baht, fulfilled, date, note)
-  VALUES (v_ref_id, 'NEW', 'STOCK_IN', 'IN', v_total_g,
-          v_total_cost, v_wac, v_wac * 15, TRUE, NOW(), 'Reset bootstrap stock-in')
-  RETURNING id INTO v_move_id;
-
-  -- stock_move_items: 10 ชิ้น per product
-  FOR v_prod IN SELECT id FROM products ORDER BY id LOOP
-    INSERT INTO stock_move_items (move_id, product_id, qty)
-    VALUES (v_move_id, v_prod.id, 10);
-  END LOOP;
-
-  -- sync wac_state.new
-  UPDATE wac_state
-     SET new_gold_g = v_total_g,
-         new_value  = v_total_cost,
-         updated_at = NOW()
-   WHERE id = 1;
-
-  -- payment breakdown — link ผ่าน note [ref:...] (FK ref_tx_id ใช้กับ STOCK_IN ไม่ได้
-  -- เพราะ STOCK_IN ref_id ไม่ได้อยู่ใน transactions table)
-  -- get_stock_move_detail ค้นเจอผ่าน LIKE '%[ref:...]%'
-  -- ‼️ เงินออก (จ่ายค่าทอง) = ค่าลบ ตาม signed model (get_cashbank_balances ทำ SUM ตรงๆ)
-  --    type = STOCK_IN ให้ตรงกับ stock_in_new_tx (โชว์ OUT▼ + มีปุ่ม View)
-  -- Cash LAK 50%
-  INSERT INTO cashbank (id, type, amount, currency, rate, method, bank_id, ref_tx_id, note, date)
-  VALUES ('CB-' || v_ref_id || '-LAK', 'STOCK_IN',
-          -ROUND(v_total_cost * 0.50), 'LAK', 1, 'CASH', NULL,
-          NULL, 'STOCK_IN: Cash LAK [ref:' || v_ref_id || ']', NOW());
-
-  -- Cash THB 15%  (THB amount = LAK / 685)
-  INSERT INTO cashbank (id, type, amount, currency, rate, method, bank_id, ref_tx_id, note, date)
-  VALUES ('CB-' || v_ref_id || '-THB', 'STOCK_IN',
-          -ROUND(v_total_cost * 0.15 / 685), 'THB', 685, 'CASH', NULL,
-          NULL, 'STOCK_IN: Cash THB [ref:' || v_ref_id || ']', NOW());
-
-  -- Cash USD 35%
-  INSERT INTO cashbank (id, type, amount, currency, rate, method, bank_id, ref_tx_id, note, date)
-  VALUES ('CB-' || v_ref_id || '-USD', 'STOCK_IN',
-          -ROUND(v_total_cost * 0.35 / 22070), 'USD', 22070, 'CASH', NULL,
-          NULL, 'STOCK_IN: Cash USD [ref:' || v_ref_id || ']', NOW());
-END$$;
 
 
 COMMIT;

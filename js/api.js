@@ -1,5 +1,20 @@
 var _apiCache = {};
 var _apiCacheTTL = 60000;
+var _sessionExpiredHandled = false;
+
+function _isLoggedInLocally() {
+  try {
+    if (typeof currentUser !== 'undefined' && currentUser) return true;
+    return !!localStorage.getItem('currentUser');
+  } catch(e) { return false; }
+}
+
+function _handleSessionExpired() {
+  if (_sessionExpiredHandled) return;
+  _sessionExpiredHandled = true;
+  alert('⚠️ เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่');
+  try { logout(); } catch(e) {}
+}
 
 async function _apiHeaders() {
   if (_cachedSession === null) {
@@ -8,7 +23,17 @@ async function _apiHeaders() {
       _cachedSession = s.data.session;
     } catch(e) {}
   }
-  var token = (_cachedSession && _cachedSession.access_token) || CONFIG.SUPABASE_ANON_KEY;
+  var token = (_cachedSession && _cachedSession.access_token) || null;
+  if (token) {
+    _sessionExpiredHandled = false;
+  } else {
+    // ไม่มี session แต่ยังมี user ค้างในเครื่อง = เซสชันหมดอายุจริง อย่ายิงต่อด้วย ANON key (จะได้ข้อมูลว่างเงียบๆ)
+    if (_isLoggedInLocally()) {
+      _handleSessionExpired();
+      throw new Error('เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่');
+    }
+    token = CONFIG.SUPABASE_ANON_KEY;
+  }
   return {
     'apikey': CONFIG.SUPABASE_ANON_KEY,
     'Authorization': 'Bearer ' + token,
@@ -53,7 +78,9 @@ async function _apiRequest(method, path, options) {
   if (!resp.ok) {
     var errText = await resp.text();
     if (resp.status === 401) {
-      try { logout(); } catch(e) {}
+      _cachedSession = null;
+      _handleSessionExpired();
+      throw new Error('เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่');
     }
     throw new Error('API ' + resp.status + ': ' + errText);
   }

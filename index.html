@@ -8,17 +8,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;500;600;700&family=Montserrat:wght@200;300;400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
-  <link rel="stylesheet" href="style.css?v=120">
-  <script>
-    (function() {
-      const cb = localStorage.getItem('cacheBuster') || Date.now();
-      if (!localStorage.getItem('cacheBuster')) {
-        localStorage.setItem('cacheBuster', cb);
-      }
-      const link = document.querySelector('link[href*="style.css"]');
-      if (link) link.href = `style.css?v=${cb}`;
-    })();
-  </script>
+  <!-- bump เลข v ทุกครั้งที่แก้ style.css (ให้ตรงกับ v ของไฟล์ js) ไม่งั้น browser ผู้ใช้จะใช้ CSS เก่าจาก cache -->
+  <link rel="stylesheet" href="style.css?v=212">
 </head>
 <body>
   <div class="luxury-bg"></div>
@@ -1852,9 +1843,6 @@
       </div>
     </div>
   </div>
-      </div>
-    </div>
-  </div>
 
 
   <div id="reconcileModal" class="modal">
@@ -2144,17 +2132,6 @@
       </div>
     </div>
   </div>
-
-  <script>
-    (function() {
-      const cb = localStorage.getItem('cacheBuster') || Date.now();
-      if (!localStorage.getItem('cacheBuster')) {
-        localStorage.setItem('cacheBuster', cb);
-      }
-      const link = document.querySelector('link[href*="style.css"]');
-      if (link) link.href = `style.css?v=${cb}`;
-    })();
-  </script>
   
   <div id="loader" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 9999; align-items: center; justify-content: center;">
     <div style="text-align: center; color: white;">
@@ -2172,34 +2149,34 @@
   
   <script defer src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="js/config.js?v=210"></script>
-  <script src="js/utils.js?v=210"></script>
-  <script src="js/api.js?v=210"></script>
-  <script src="js/ui.js?v=210"></script>
-  <script src="js/dashboard.js?v=210"></script>
-  <script src="js/products.js?v=210"></script>
-  <script src="js/pricerate.js?v=210"></script>
-  <script src="js/sell.js?v=210"></script>
-  <script src="js/payment.js?v=210"></script>
-  <script src="js/tradein.js?v=210"></script>
-  <script src="js/buyback.js?v=210"></script>
-  <script src="js/exchange.js?v=210"></script>
-  <script src="js/withdraw.js?v=210"></script>
-  <script src="js/historysell.js?v=210"></script>
-  <script src="js/cashbank.js?v=210"></script>
-  <script src="js/accounting.js?v=210"></script>
-  <script src="js/diff.js?v=210"></script>
-  <script src="js/reports.js?v=210"></script>
-  <script src="js/livereport.js?v=210"></script>
-  <script src="js/usersetting.js?v=210"></script>
-  <script src="js/stockold.js?v=210"></script>
-  <script src="js/stocknew.js?v=210"></script>
-  <script src="js/wac.js?v=210"></script>
-  <script src="js/inventory.js?v=210"></script>
-  <script src="js/close.js?v=210"></script>
-  <script src="js/review.js?v=210"></script>
-  <script src="js/notification.js?v=210"></script>
-  <script src="js/auth.js?v=210"></script>
+  <script src="js/config.js?v=212"></script>
+  <script src="js/utils.js?v=212"></script>
+  <script src="js/api.js?v=212"></script>
+  <script src="js/ui.js?v=212"></script>
+  <script src="js/dashboard.js?v=212"></script>
+  <script src="js/products.js?v=212"></script>
+  <script src="js/pricerate.js?v=212"></script>
+  <script src="js/sell.js?v=212"></script>
+  <script src="js/payment.js?v=212"></script>
+  <script src="js/tradein.js?v=212"></script>
+  <script src="js/buyback.js?v=212"></script>
+  <script src="js/exchange.js?v=212"></script>
+  <script src="js/withdraw.js?v=212"></script>
+  <script src="js/historysell.js?v=212"></script>
+  <script src="js/cashbank.js?v=212"></script>
+  <script src="js/accounting.js?v=212"></script>
+  <script src="js/diff.js?v=212"></script>
+  <script src="js/reports.js?v=212"></script>
+  <script src="js/livereport.js?v=212"></script>
+  <script src="js/usersetting.js?v=212"></script>
+  <script src="js/stockold.js?v=212"></script>
+  <script src="js/stocknew.js?v=212"></script>
+  <script src="js/wac.js?v=212"></script>
+  <script src="js/inventory.js?v=212"></script>
+  <script src="js/close.js?v=212"></script>
+  <script src="js/review.js?v=212"></script>
+  <script src="js/notification.js?v=212"></script>
+  <script src="js/auth.js?v=212"></script>
   
   <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
   <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/th.js"></script>

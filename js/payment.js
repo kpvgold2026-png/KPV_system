@@ -15,10 +15,7 @@ function openMultiPaymentModal(type, id, total, phone, details) {
   
   document.getElementById('cashPaymentsList').innerHTML = '';
   document.getElementById('bankPaymentsList').innerHTML = '';
-  
-  document.getElementById('multiPaymentFeeGroup').style.display = 'none';
-  document.getElementById('multiPaymentFeeInput').value = '0';
-  
+
   updatePaymentSummary();
   
   openModal('multiPaymentModal');
@@ -32,7 +29,7 @@ function addCashPayment() {
 
 function addBankPayment() {
   const id = Date.now();
-  paymentItems.bank.push({ id, method: 'BANK', bank: 'BCEL', currency: 'LAK', amount: 0, rate: 1, fee: 0 });
+  paymentItems.bank.push({ id, method: 'BANK', bank: 'BCEL', currency: 'LAK', amount: 0, rate: 1 });
   renderBankPayments();
 }
 
@@ -79,10 +76,8 @@ function updateCashAmountOnly(id, value) {
 
 function renderBankPayments() {
   const container = document.getElementById('bankPaymentsList');
-  var isBuyback = currentPaymentData && currentPaymentData.type === 'BUYBACK';
   container.innerHTML = paymentItems.bank.map((item, idx) => {
     const lakAmount = item.amount * item.rate;
-    var feeHtml = '';
     return `
     <div class="payment-item" data-id="${item.id}" style="margin-bottom: 10px; padding: 12px; background: var(--bg-light); border-radius: 8px;">
       <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 8px;">
@@ -108,7 +103,6 @@ function renderBankPayments() {
           <span class="lak-display" style="color: var(--gold-primary); font-weight: bold;">= ${formatNumber(lakAmount)} LAK</span>
         </div>
       ` : ''}
-      ${feeHtml}
     </div>
   `}).join('');
   updatePaymentSummary();
@@ -177,14 +171,6 @@ function removeBankPayment(id) {
   renderBankPayments();
 }
 
-function updateBankFee(id, value) {
-  var item = paymentItems.bank.find(function(i) { return i.id === id; });
-  if (item) {
-    item.fee = parseFloat(String(value).replace(/,/g, '')) || 0;
-    updatePaymentSummary();
-  }
-}
-
 function updatePaymentSummary() {
   let totalPaid = 0;
   
@@ -207,15 +193,8 @@ function updatePaymentSummary() {
   var changeEl = document.getElementById('multiPaymentChange');
   var changeLbl = document.getElementById('multiPaymentChangeLabel');
   var changeNote = document.getElementById('multiPaymentChangeNote');
-  var feeBox = document.getElementById('multiPaymentFeeSummary');
 
-  if (isBuyback) {
-    changeBox.style.display = 'none';
-    if (feeBox) feeBox.style.display = 'none';
-  } else {
-    changeBox.style.display = '';
-    if (feeBox) feeBox.style.display = 'none';
-  }
+  changeBox.style.display = isBuyback ? 'none' : '';
   
   if (remaining > 0) {
     document.getElementById('multiPaymentRemaining').textContent = formatNumber(remaining) + ' LAK';
@@ -337,32 +316,21 @@ async function confirmMultiPayment() {
     }
 
     try {
-      if (currentPaymentData.type === 'BUYBACK') {
-        var balances = await dbRpc('get_cashbank_balances', {});
-        var cashLAK = parseFloat(balances && balances.cash && balances.cash.LAK) || 0;
-        if (cashLAK < change) {
-          alert('❌ เงินสด LAK ไม่พอทอน! มี ' + formatNumber(cashLAK) + ' LAK แต่ต้องทอน ' + formatNumber(change) + ' LAK');
-          _isSubmitting = false;
-          hideLoading();
-          return;
-        }
-      } else {
-        var userRows = await dbSelect('user_cashbook', {
-          select: 'amount',
-          filters: {
-            user_id: 'eq.' + currentUser.id,
-            currency: 'eq.LAK',
-            bank_id: 'is.null'
-          },
-          useCache: false
-        });
-        var userCashLAK = (userRows || []).reduce(function(s, r) { return s + (parseFloat(r.amount) || 0); }, 0);
-        if (userCashLAK < change) {
-          alert('❌ เงินสด LAK ของคุณไม่พอทอน! มี ' + formatNumber(userCashLAK) + ' LAK แต่ต้องทอน ' + formatNumber(change) + ' LAK');
-          _isSubmitting = false;
-          hideLoading();
-          return;
-        }
+      var userRows = await dbSelect('user_cashbook', {
+        select: 'amount',
+        filters: {
+          user_id: 'eq.' + currentUser.id,
+          currency: 'eq.LAK',
+          bank_id: 'is.null'
+        },
+        useCache: false
+      });
+      var userCashLAK = (userRows || []).reduce(function(s, r) { return s + (parseFloat(r.amount) || 0); }, 0);
+      if (userCashLAK < change) {
+        alert('❌ เงินสด LAK ของคุณไม่พอทอน! มี ' + formatNumber(userCashLAK) + ' LAK แต่ต้องทอน ' + formatNumber(change) + ' LAK');
+        _isSubmitting = false;
+        hideLoading();
+        return;
       }
     } catch(e) {
       console.error('Error checking cash balance:', e);
@@ -401,36 +369,49 @@ async function confirmMultiPayment() {
         return;
       }
 
-      var totalFee = 0;
       if (currentPaymentData.type === 'BUYBACK') {
-        paymentItems.bank.forEach(function(item) { totalFee += item.fee || 0; });
-      }
+        for (var pi = 0; pi < paymentEntries.length; pi++) {
+          var p = paymentEntries[pi];
+          var bankId = null;
+          if (p.bank) {
+            try {
+              var b = await dbSelect('banks', { select: 'id', filters: { name: 'eq.' + p.bank }, limit: 1, useCache: true });
+              if (b && b.length > 0) bankId = b[0].id;
+            } catch(e2) {}
+          }
 
-      for (var pi = 0; pi < paymentEntries.length; pi++) {
-        var p = paymentEntries[pi];
-        var bankId = null;
-        if (p.bank) {
-          try {
-            var b = await dbSelect('banks', { select: 'id', filters: { name: 'eq.' + p.bank }, limit: 1, useCache: true });
-            if (b && b.length > 0) bankId = b[0].id;
-          } catch(e2) {}
+          var partial = await dbRpc(rpcName, {
+            p_tx_id: currentPaymentData.id,
+            p_paid: p.amount,
+            p_currency: p.currency,
+            p_method: p.method,
+            p_bank_id: bankId,
+            p_change: 0
+          });
+          if (!partial || !partial.success) {
+            alert('❌ เกิดข้อผิดพลาด: ' + (partial && partial.message ? partial.message : 'Unknown'));
+            endSubmit();
+            return;
+          }
         }
+      } else {
+        var payments = paymentEntries.map(function(p) {
+          return {
+            method: p.method,
+            currency: p.currency,
+            amount: p.amount,
+            rate: p.rate || 1,
+            bank: p.bank || ''
+          };
+        });
 
-        var params = {
+        var res = await dbRpc(rpcName, {
           p_tx_id: currentPaymentData.id,
-          p_paid: p.amount,
-          p_currency: p.currency,
-          p_method: p.method,
-          p_bank_id: bankId,
-          p_change: pi === paymentEntries.length - 1 ? change : 0
-        };
-        if (currentPaymentData.type === 'BUYBACK') {
-          params.p_fee = pi === 0 ? totalFee : 0;
-        }
-
-        var partial = await dbRpc(rpcName, params);
-        if (!partial || !partial.success) {
-          alert('❌ เกิดข้อผิดพลาด: ' + (partial && partial.message ? partial.message : 'Unknown'));
+          p_payments: payments,
+          p_change: change
+        });
+        if (!res || !res.success) {
+          alert('❌ เกิดข้อผิดพลาด: ' + (res && res.message ? res.message : 'Unknown'));
           endSubmit();
           return;
         }
@@ -570,8 +551,6 @@ async function openBuybackPaymentModalFromList(buybackId) {
   document.getElementById('multiPaymentPhone').textContent = r.phone;
   document.getElementById('multiPaymentDetails').innerHTML = currentPaymentData.details;
   document.getElementById('multiPaymentTotal').textContent = formatNumber(outstanding) + ' LAK';
-
-  document.getElementById('multiPaymentFeeGroup').style.display = 'none';
 
   document.getElementById('cashPaymentsList').innerHTML = '';
   document.getElementById('bankPaymentsList').innerHTML = '';

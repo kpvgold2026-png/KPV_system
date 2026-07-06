@@ -711,6 +711,14 @@ body.role-a button.manager-only {
   }
   .header-content {
     gap: 8px;
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  .user-info {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    row-gap: 6px;
+    margin-left: auto;
   }
   .logo {
     gap: 8px;
@@ -994,6 +1002,36 @@ body.role-a button.manager-only {
   }
   .user-details {
     display: none;
+  }
+  /* header ต้อง wrap ได้ ไม่งั้นปุ่ม EOD/Logout หลุดขอบจอ (body ตัด overflow-x ทิ้ง กดไม่ได้) */
+  .header-content {
+    flex-wrap: wrap;
+    row-gap: 5px;
+  }
+  .user-info {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 5px;
+    row-gap: 5px;
+    margin-left: auto;
+  }
+  .user-info .btn-secondary {
+    padding: 6px 8px !important;
+    font-size: 10px !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+    white-space: nowrap;
+  }
+  .user-info .user-avatar {
+    width: 26px;
+    height: 26px;
+    font-size: 12px;
+  }
+  #notifBell {
+    margin-right: 4px !important;
+  }
+  #notifDropdown {
+    max-width: 92vw;
   }
   .container {
     padding: 10px 6px !important;

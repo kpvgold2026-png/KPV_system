@@ -7,7 +7,7 @@ async function checkAndResumePendingClose() {
     var today = getTodayLocalStr();
     var rows = await dbSelect('closes', {
       select: 'id,status,date,cash_summary,bank_summary,gold_summary,total_tx,total_amount',
-      filters: { user_id: 'eq.' + currentUser.id, 'and': '(date.gte.' + today + 'T00:00:00,date.lte.' + today + 'T23:59:59)' },
+      filters: { user_id: 'eq.' + currentUser.id, 'and': '(date.gte.' + today + 'T00:00:00+07:00,date.lte.' + today + 'T23:59:59+07:00)' },
       useCache: false
     });
 
@@ -84,7 +84,8 @@ function _renderClosedSummary(closeRow) {
     '</table></div></div>' +
 
     '<div class="stat-card" style="padding:15px;margin-bottom:15px;">' +
-    '<h3 style="color:var(--gold-primary);margin-bottom:10px;font-size:14px;">💰 สรุปเงินทั้งหมด</h3>' +
+    '<h3 style="color:var(--gold-primary);margin-bottom:4px;font-size:14px;">💰 เงินที่ถือทั้งหมด (ส่งเข้าร้านแล้ว)</h3>' +
+    '<p style="font-size:11px;color:var(--text-secondary);margin:0 0 10px 0;">รวมยอดยกมาจากวันก่อน (ถ้ามี)</p>' +
     '<table style="width:100%;border-collapse:collapse;">' +
     '<tr style="border-bottom:2px solid var(--border-color);"><th style="padding:6px 10px;text-align:left;color:var(--text-secondary);font-size:12px;">ประเภท</th><th style="padding:6px 10px;text-align:right;color:var(--text-secondary);font-size:12px;">LAK</th><th style="padding:6px 10px;text-align:right;color:var(--text-secondary);font-size:12px;">THB</th><th style="padding:6px 10px;text-align:right;color:var(--text-secondary);font-size:12px;">USD</th></tr>' +
     moneyTableRows + '</table></div>';
@@ -181,12 +182,20 @@ async function cancelPendingClose(closeId) {
   if (!confirm('ยกเลิกการปิดกะ?')) return;
   try {
     showLoading();
-    await dbDelete('closes', { id: closeId });
+    // ยกเลิกผ่าน RPC — server ลบเฉพาะ close ของตัวเองที่ยัง PENDING
+    // (กัน race: Manager อาจ approve ไปแล้วระหว่างรอ polling)
+    var result = await dbRpc('cancel_pending_close', { p_close_id: String(closeId) });
     hideLoading();
-    showToast('✅ ยกเลิกแล้ว');
-    closeModal('closeWorkModal');
-    _closeWorkLocked = false;
-    if (_closePollingInterval) { clearInterval(_closePollingInterval); _closePollingInterval = null; }
+    if (result && result.success) {
+      showToast('✅ ยกเลิกแล้ว');
+      closeModal('closeWorkModal');
+      _closeWorkLocked = false;
+      if (_closePollingInterval) { clearInterval(_closePollingInterval); _closePollingInterval = null; }
+    } else {
+      alert('❌ ' + (result && result.message ? result.message : 'ยกเลิกไม่สำเร็จ'));
+      var refreshBtn = document.getElementById('closeRefreshBtn');
+      if (refreshBtn && refreshBtn.onclick) refreshBtn.onclick();
+    }
   } catch(e) {
     hideLoading();
     alert('❌ ' + e.message);
@@ -201,7 +210,7 @@ async function openCloseWorkModal(isResume) {
     if (!isResume) {
       var existing = await dbSelect('closes', {
         select: 'id,status,date',
-        filters: { user_id: 'eq.' + currentUser.id, 'and': '(date.gte.' + today + 'T00:00:00,date.lte.' + today + 'T23:59:59)', 'status': 'in.(PENDING,APPROVED)' },
+        filters: { user_id: 'eq.' + currentUser.id, 'and': '(date.gte.' + today + 'T00:00:00+07:00,date.lte.' + today + 'T23:59:59+07:00)', 'status': 'in.(PENDING,APPROVED)' },
         useCache: false
       });
       if (existing && existing.length > 0) {
@@ -323,7 +332,10 @@ async function openCloseWorkModal(isResume) {
       '</div>' +
 
       '<div class="stat-card" style="padding:15px;margin-bottom:15px;">' +
-      '<h3 style="color:var(--gold-primary);margin-bottom:10px;font-size:14px;">💰 สรุปเงินทั้งหมด</h3>' +
+      // ยอดจาก get_close_cashbook = เงินที่ถือทั้งหมดในกระเป๋า (รวมยอดยกมาจากวันก่อน)
+      // ให้ตรงกับยอดที่ถูกกวาดเข้าร้านจริงตอน Manager อนุมัติ
+      '<h3 style="color:var(--gold-primary);margin-bottom:4px;font-size:14px;">💰 เงินที่ถือทั้งหมด (ที่จะส่งเข้าร้าน)</h3>' +
+      '<p style="font-size:11px;color:var(--text-secondary);margin:0 0 10px 0;">รวมยอดยกมาจากวันก่อน (ถ้ามี) — ยอดนี้คือเงินที่จะถูกโอนเข้าร้านเมื่อ Manager อนุมัติ</p>' +
       '<table style="width:100%;border-collapse:collapse;">' +
       '<tr style="border-bottom:2px solid var(--border-color);"><th style="padding:6px 10px;text-align:left;font-size:12px;">ประเภท</th><th style="padding:6px 10px;text-align:right;font-size:12px;">LAK</th><th style="padding:6px 10px;text-align:right;font-size:12px;">THB</th><th style="padding:6px 10px;text-align:right;font-size:12px;">USD</th></tr>' +
       moneyTableRows +
@@ -348,8 +360,10 @@ async function openCloseWorkModal(isResume) {
 }
 
 async function submitCloseWork() {
+  if (_isSubmitting) return;
   if (!window.currentCloseSummary) return;
   try {
+    _isSubmitting = true;
     showLoading();
     var s = window.currentCloseSummary;
     var result = await dbRpc('submit_close_report', {
@@ -449,7 +463,9 @@ async function submitCloseWork() {
       window.currentCloseSummary = null;
       startClosePolling();
     } else {
-      alert('❌ Error: ' + (result && result.message ? result.message : 'Unknown'));
+      alert('❌ ' + (result && result.message ? result.message : 'ส่ง Close ไม่สำเร็จ'));
+      // server อาจแจ้งว่ามี close ของวันนี้อยู่แล้ว — เช็คสถานะล่าสุดมาแสดงต่อ
+      checkAndResumePendingClose();
     }
   } catch (error) {
     hideLoading();
@@ -574,7 +590,8 @@ async function openCloseDetail(closeId) {
       '</div>' +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">' +
       '<div class="stat-card" style="padding:20px;">' +
-      '<h3 style="color:var(--gold-primary);margin-bottom:15px;font-size:15px;">💵 เงินสด</h3>' +
+      '<h3 style="color:var(--gold-primary);margin-bottom:5px;font-size:15px;">💵 เงินสดที่ถือทั้งหมด</h3>' +
+      '<p style="font-size:11px;color:var(--text-secondary);margin:0 0 12px 0;">รวมยอดยกมาจากวันก่อน — ยอดนี้จะถูกโอนเข้าร้านเมื่ออนุมัติ</p>' +
       '<table style="width:100%;border-collapse:collapse;">' +
       '<tr><td style="padding:6px 0;">LAK</td><td style="text-align:right;font-weight:bold;font-size:18px;padding:6px 0;">' + formatNumber(cash.LAK || 0) + '</td></tr>' +
       '<tr><td style="padding:6px 0;">THB</td><td style="text-align:right;font-weight:bold;font-size:18px;padding:6px 0;">' + formatNumber(cash.THB || 0) + '</td></tr>' +

@@ -1,5 +1,6 @@
 var _lrDateFrom = null;
 var _lrDateTo = null;
+var _lrHistoryTruncated = false;
 
 function initLiveReportDateFilter() {
   var today = getTodayLocalStr();
@@ -46,7 +47,9 @@ async function loadLiveReport() {
   try {
     var dashData = await dbRpc('get_dashboard_data', { p_date_from: dateFrom, p_date_to: dateTo });
     var gramData = await dbRpc('get_sales_gold_grams', { p_date_from: dateFrom, p_date_to: dateTo });
-    var historyData = await dbRpc('get_history_txs', { p_date_from: dateFrom, p_date_to: dateTo, p_limit: 1000 });
+    // get_history_txs ไม่รองรับ offset/pagination → ใช้เพดาน 5000 + เตือนเมื่อชนเพดาน (ห้ามตัดเงียบ)
+    var historyData = await dbRpc('get_history_txs', { p_date_from: dateFrom, p_date_to: dateTo, p_limit: 5000 });
+    _lrHistoryTruncated = Array.isArray(historyData) && historyData.length >= 5000;
 
     var salesBreakdown = null;
     try {
@@ -442,6 +445,9 @@ function renderLRGoldDetailFromHistory(historyData) {
 
   var html = '<div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:12px;padding:16px;">';
   html += '<h3 style="color:var(--gold-primary);font-size:16px;margin-bottom:12px;">รายละเอียดทองแต่ละ Product</h3>';
+  if (_lrHistoryTruncated) {
+    html += '<div style="color:#ff9800;font-weight:600;font-size:13px;margin-bottom:10px;">⚠️ ข้อมูลเกิน 5,000 รายการ ยอดในตารางนี้อาจไม่ครบ — กรุณาแคบช่วงวันที่</div>';
+  }
   html += '<div class="table-container"><table><thead><tr>';
   html += '<th style="' + thStyle + '">Product</th>';
   html += '<th style="' + thStyle + '">New Out</th>';

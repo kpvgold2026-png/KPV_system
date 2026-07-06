@@ -1,7 +1,7 @@
 async function loadTradeins() {
   try {
     var tbody = document.getElementById('tradeinTable');
-    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:30px;"><div style="display:inline-block;width:24px;height:24px;border:3px solid var(--border-color);border-top:3px solid var(--gold-primary);border-radius:50%;animation:spin 0.8s linear infinite;"></div></td></tr>';
+    tbody.innerHTML = '<tr><td colspan="12" style="text-align:center;padding:30px;"><div style="display:inline-block;width:24px;height:24px;border:3px solid var(--border-color);border-top:3px solid var(--gold-primary);border-radius:50%;animation:spin 0.8s linear infinite;"></div></td></tr>';
 
     var filters = { type: 'eq.TRADEIN' };
     var order = tradeinSortOrder === 'asc' ? 'date.asc' : 'date.desc';
@@ -13,8 +13,14 @@ async function loadTradeins() {
       var today = getTodayLocalStr();
       dateFrom = today; dateTo = today;
     }
+    // anchor เป็นเวลา Bangkok (+07:00) — DB เก็บ date เป็น UTC (NOW()) ถ้าไม่ใส่ offset
+    // PostgREST จะตีความเป็น UTC ทำให้รายการช่วงเช้ามืด (Bangkok) หลุดออกจากช่วง
     if (dateFrom && dateTo) {
-      filters['and'] = '(date.gte.' + dateFrom + 'T00:00:00,date.lte.' + dateTo + 'T23:59:59)';
+      filters['and'] = '(date.gte.' + dateFrom + 'T00:00:00+07:00,date.lte.' + dateTo + 'T23:59:59+07:00)';
+    } else if (dateFrom) {
+      filters['date'] = 'gte.' + dateFrom + 'T00:00:00+07:00';
+    } else if (dateTo) {
+      filters['date'] = 'lte.' + dateTo + 'T23:59:59+07:00';
     }
 
     var rows = await dbSelect('transactions', {
@@ -39,7 +45,7 @@ async function loadTradeins() {
     });
 
     if (data.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; padding: 40px;">No records</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="12" style="text-align: center; padding: 40px;">No records</td></tr>';
       return;
     }
 
@@ -57,7 +63,7 @@ async function loadTradeins() {
         } else {
           actions = '<span style="color: var(--text-secondary);">Waiting for review</span>';
         }
-      } else if (status === 'APPROVED' || status === 'READY') {
+      } else if (status === 'APPROVED') {
         if (currentUser.role === 'User') {
           actions = '<button class="btn-action" onclick="openTradeinPaymentModal(\'' + row.id + '\')">Confirm</button>';
         } else {

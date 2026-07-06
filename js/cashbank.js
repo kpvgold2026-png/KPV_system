@@ -1,5 +1,39 @@
 var _cashbankAllRows = [];
 var _cashbankFilteredTypes = ['CASH_IN', 'CASH_OUT', 'BANK_IN', 'BANK_OUT', 'BANK_DEPOSIT', 'BANK_WITHDRAW', 'OTHER_INCOME', 'OTHER_EXPENSE', 'OPEN_SHIFT', 'STOCK_IN', 'STOCK_IN_FEE'];
+var _CASHBANK_PAGE_SIZE = 1000;
+var _CASHBANK_MAX_ROWS = 10000;
+
+// ดึง cashbank โดย filter วันที่ฝั่ง server (ขอบเวลาไทย +07:00) + ดึงทีละหน้าจนหมด
+// เดิมดึง 500 แถวล่าสุดแล้วกรองฝั่ง client → เลือกช่วงวันเก่าข้อมูลขาดเงียบๆ
+async function _fetchCashbankRows(startStr, endStr) {
+  var filters = { type: 'in.(' + _cashbankFilteredTypes.join(',') + ')' };
+  if (startStr && endStr) {
+    filters['and'] = '(date.gte.' + startStr + 'T00:00:00+07:00,date.lte.' + endStr + 'T23:59:59+07:00)';
+  } else if (startStr) {
+    filters['date'] = 'gte.' + startStr + 'T00:00:00+07:00';
+  } else if (endStr) {
+    filters['date'] = 'lte.' + endStr + 'T23:59:59+07:00';
+  }
+  var all = [];
+  var truncated = false;
+  var offset = 0;
+  while (true) {
+    var page = await dbSelect('cashbank', {
+      select: 'id,type,amount,currency,rate,method,bank_id,note,date,ref_tx_id,bank:banks!bank_id(name)',
+      filters: filters,
+      order: 'date.desc',
+      limit: _CASHBANK_PAGE_SIZE,
+      offset: offset,
+      useCache: false
+    });
+    page = page || [];
+    all = all.concat(page);
+    if (page.length < _CASHBANK_PAGE_SIZE) break;
+    if (all.length >= _CASHBANK_MAX_ROWS) { truncated = true; break; }
+    offset += _CASHBANK_PAGE_SIZE;
+  }
+  return { rows: all, truncated: truncated };
+}
 
 async function loadCashBank() {
   try {
@@ -43,29 +77,6 @@ async function loadCashBank() {
     document.getElementById('otherBankTHB').textContent = formatCurrency(balances.other.THB, 'THB');
     document.getElementById('otherBankUSD').textContent = formatCurrency(balances.other.USD, 'USD');
 
-    var rows = await dbSelect('cashbank', {
-      select: 'id,type,amount,currency,rate,method,bank_id,note,date,ref_tx_id,bank:banks!bank_id(name)',
-      filters: { type: 'in.(' + _cashbankFilteredTypes.join(',') + ')' },
-      order: 'date.desc',
-      limit: 500,
-      useCache: false
-    });
-
-    _cashbankAllRows = (rows || []).map(function(r) {
-      return [
-        r.id,
-        r.type,
-        r.amount,
-        r.currency,
-        r.method,
-        r.bank ? r.bank.name : '',
-        r.note || '',
-        r.date,
-        r.ref_tx_id || '',
-        parseFloat(r.rate) || 1
-      ];
-    });
-
     var cbStart = document.getElementById('cbStartDate');
     var cbEnd = document.getElementById('cbEndDate');
     if (!cbStart.value && !cbEnd.value) {
@@ -74,7 +85,7 @@ async function loadCashBank() {
       cbStart.value = todayStr;
       cbEnd.value = todayStr;
     }
-    filterCashBankByDate();
+    await filterCashBankByDate();
     hideLoading();
   } catch (error) {
     console.error('Error loading cashbank:', error);
@@ -82,13 +93,16 @@ async function loadCashBank() {
   }
 }
 
-function renderCashBankTable(rows) {
+function renderCashBankTable(rows, truncated) {
   var tbody = document.getElementById('cashbankTable');
+  var warnRow = truncated
+    ? '<tr><td colspan="8" style="text-align:center;padding:10px;color:#ff9800;font-weight:600;">⚠️ ข้อมูลเกิน ' + formatNumber(_CASHBANK_MAX_ROWS) + ' รายการ แสดงไม่ครบ — กรุณาแคบช่วงวันที่</td></tr>'
+    : '';
   if (!rows || rows.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 40px;">No records</td></tr>';
+    tbody.innerHTML = warnRow + '<tr><td colspan="8" style="text-align: center; padding: 40px;">No records</td></tr>';
     return;
   }
-  tbody.innerHTML = rows.map(function(row) {
+  tbody.innerHTML = warnRow + rows.map(function(row) {
     var amount = parseFloat(row[2]) || 0;
     var currency = row[3] || '-';
     var rate = parseFloat(row[9]) || 1;
@@ -125,23 +139,36 @@ function renderCashBankTable(rows) {
   }).join('');
 }
 
-function filterCashBankByDate() {
+async function filterCashBankByDate() {
   var startStr = document.getElementById('cbStartDate').value;
   var endStr = document.getElementById('cbEndDate').value;
-  if (!startStr && !endStr) {
-    renderCashBankTable(_cashbankAllRows);
-    return;
+  var tbody = document.getElementById('cashbankTable');
+  if (tbody) {
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:30px;"><div style="display:inline-block;width:24px;height:24px;border:3px solid var(--border-color);border-top:3px solid var(--gold-primary);border-radius:50%;animation:spin 0.8s linear infinite;"></div></td></tr>';
   }
-  var startDate = startStr ? new Date(startStr + 'T00:00:00') : null;
-  var endDate = endStr ? new Date(endStr + 'T23:59:59') : null;
-  var filtered = _cashbankAllRows.filter(function(row) {
-    var d = new Date(row[7]);
-    if (isNaN(d.getTime())) return false;
-    if (startDate && d < startDate) return false;
-    if (endDate && d > endDate) return false;
-    return true;
-  });
-  renderCashBankTable(filtered);
+  try {
+    var result = await _fetchCashbankRows(startStr, endStr);
+    _cashbankAllRows = (result.rows || []).map(function(r) {
+      return [
+        r.id,
+        r.type,
+        r.amount,
+        r.currency,
+        r.method,
+        r.bank ? r.bank.name : '',
+        r.note || '',
+        r.date,
+        r.ref_tx_id || '',
+        parseFloat(r.rate) || 1
+      ];
+    });
+    renderCashBankTable(_cashbankAllRows, result.truncated);
+  } catch (error) {
+    console.error('Error filtering cashbank:', error);
+    if (tbody) {
+      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:40px;color:#f44336;">โหลดข้อมูลไม่สำเร็จ กรุณาลองใหม่</td></tr>';
+    }
+  }
 }
 
 function showTodayCashBank() {

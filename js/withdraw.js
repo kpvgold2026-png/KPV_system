@@ -1,7 +1,7 @@
 async function loadWithdraws() {
   try {
     var tbody = document.getElementById('withdrawTable');
-    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:30px;"><div style="display:inline-block;width:24px;height:24px;border:3px solid var(--border-color);border-top:3px solid var(--gold-primary);border-radius:50%;animation:spin 0.8s linear infinite;"></div></td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:30px;"><div style="display:inline-block;width:24px;height:24px;border:3px solid var(--border-color);border-top:3px solid var(--gold-primary);border-radius:50%;animation:spin 0.8s linear infinite;"></div></td></tr>';
 
     var filters = { type: 'eq.WITHDRAW' };
     var order = withdrawSortOrder === 'asc' ? 'date.asc' : 'date.desc';
@@ -33,7 +33,7 @@ async function loadWithdraws() {
     });
 
     if (data.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; padding: 40px;">No records</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="11" style="text-align: center; padding: 40px;">No records</td></tr>';
       return;
     }
 
@@ -42,7 +42,7 @@ async function loadWithdraws() {
       var premium = parseFloat(row.premium) || 0;
       var total = parseFloat(row.total) || premium;
       var saleName = row._saleName;
-      var status = row.status;
+      var status = String(row.status || '');
       var actions = '';
 
       if (status === 'PENDING') {

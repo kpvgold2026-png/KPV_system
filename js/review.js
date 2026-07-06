@@ -21,9 +21,13 @@ function openReviewDecisionModal(type, id, newGold, oldGold) {
     try {
       var items = typeof itemsJson === 'string' ? JSON.parse(itemsJson) : itemsJson;
       if (items && items.length > 0) {
+        var roleLabels = { FOC: 'แถมฟรี (FOC)', SWITCH: 'SWITCH', FREE_EX: 'FREE-EX' };
         items.forEach(function(item) {
           var p = FIXED_PRODUCTS.find(function(fp) { return fp.id === item.productId; });
           var name = p ? p.name : item.productId;
+          if (item.role && roleLabels[item.role]) {
+            name += ' <span style="font-size:11px;color:#9c27b0;font-weight:bold;">[' + roleLabels[item.role] + ']</span>';
+          }
           html += '<tr><td style="padding:5px;">' + name + '</td><td style="text-align:right;padding:5px;">' + item.qty + '</td></tr>';
         });
       } else {
@@ -105,13 +109,15 @@ async function submitReviewDecision(decision) {
   }
 }
 
-async function _loadTxItems(txId, role) {
+async function _loadTxItems(txId, roles) {
+  var list = Array.isArray(roles) ? roles : [roles];
+  var roleFilter = list.length > 1 ? 'in.(' + list.join(',') + ')' : 'eq.' + list[0];
   var rows = await dbSelect('transaction_items', {
     select: 'product_id,qty,item_role',
-    filters: { tx_id: 'eq.' + txId, item_role: 'eq.' + role },
+    filters: { tx_id: 'eq.' + txId, item_role: roleFilter },
     useCache: false
   });
-  return (rows || []).map(function(i) { return { productId: i.product_id, qty: i.qty }; });
+  return (rows || []).map(function(i) { return { productId: i.product_id, qty: i.qty, role: i.item_role }; });
 }
 
 async function reviewSell(sellId) {
@@ -126,7 +132,7 @@ async function reviewSell(sellId) {
 async function reviewTradein(tradeinId) {
   try {
     var newItems = await _loadTxItems(tradeinId, 'NEW');
-    var oldItems = await _loadTxItems(tradeinId, 'OLD');
+    var oldItems = await _loadTxItems(tradeinId, ['OLD', 'FOC']);
     openReviewDecisionModal('TRADEIN', tradeinId, JSON.stringify(newItems), JSON.stringify(oldItems));
   } catch (e) {
     alert('❌ Error loading data: ' + e.message);
@@ -136,7 +142,7 @@ async function reviewTradein(tradeinId) {
 async function reviewExchange(exchangeId) {
   try {
     var newItems = await _loadTxItems(exchangeId, 'NEW');
-    var oldItems = await _loadTxItems(exchangeId, 'OLD');
+    var oldItems = await _loadTxItems(exchangeId, ['OLD', 'SWITCH', 'FREE_EX']);
     openReviewDecisionModal('EXCHANGE', exchangeId, JSON.stringify(newItems), JSON.stringify(oldItems));
   } catch (e) {
     alert('❌ Error loading data: ' + e.message);

@@ -28,6 +28,7 @@ function mergeItems(items) {
 
 function formatNumber(num) {
   var n = typeof num === 'string' ? parseFloat(num.replace(/,/g, '')) : num;
+  if (typeof n !== 'number' || isNaN(n)) n = 0;
   return new Intl.NumberFormat('en-US').format(Math.round(n));
 }
 
@@ -200,7 +201,7 @@ function formatItemsForTable(itemsJson) {
     const items = JSON.parse(itemsJson);
     return items.map(item => {
       const product = FIXED_PRODUCTS.find(p => p.id === item.productId);
-      return `${product.name}: ${item.qty} unit`;
+      return `${product ? product.name : item.productId}: ${item.qty} unit`;
     }).join('<br>');
   } catch (error) {
     return itemsJson;
@@ -212,7 +213,7 @@ function formatItemsForDisplay(itemsJson) {
     const items = JSON.parse(itemsJson);
     return items.map(item => {
       const product = FIXED_PRODUCTS.find(p => p.id === item.productId);
-      return `• ${product.name} × ${item.qty}`;
+      return `• ${product ? product.name : item.productId} × ${item.qty}`;
     }).join('\n');
   } catch (error) {
     return itemsJson;

@@ -17,11 +17,17 @@ async function loadHistorySell() {
     fromEl.onchange = function() { historySellDateFrom = this.value; loadHistorySell(); };
     toEl.onchange = function() { historySellDateTo = this.value; loadHistorySell(); };
 
+    // get_history_txs ไม่รองรับ offset/pagination → ใช้เพดาน 5000 + เตือนเมื่อชนเพดาน (ห้ามตัดเงียบ)
     var data = await dbRpc('get_history_txs', {
       p_date_from: historySellDateFrom,
       p_date_to: historySellDateTo,
-      p_limit: 1000
+      p_limit: 5000
     });
+    // เช็คจากจำนวนดิบก่อนกรอง buyback ออก ไม่งั้นเตือนพลาด
+    var truncated = Array.isArray(data) && data.length >= 5000;
+    var warnRow = truncated
+      ? '<tr><td colspan="15" style="text-align:center;padding:10px;color:#ff9800;font-weight:600;">⚠️ ข้อมูลเกิน 5,000 รายการ แสดงไม่ครบ — กรุณาแคบช่วงวันที่</td></tr>'
+      : '';
 
     // Buyback มี tab ของตัวเอง → ไม่แสดงใน History Sell (กันทุก case/null)
     if (Array.isArray(data)) {
@@ -29,7 +35,7 @@ async function loadHistorySell() {
     }
 
     if (!Array.isArray(data) || data.length === 0) {
-      document.getElementById('historySellTable').innerHTML = '<tr><td colspan="15" style="text-align:center;padding:40px;">No records</td></tr>';
+      document.getElementById('historySellTable').innerHTML = warnRow + '<tr><td colspan="15" style="text-align:center;padding:40px;">No records</td></tr>';
       hideLoading();
       return;
     }
@@ -37,7 +43,7 @@ async function loadHistorySell() {
     var typeColors = { 'SELL': '#4caf50', 'TRADEIN': '#2196f3', 'EXCHANGE': '#ff9800', 'WITHDRAW': '#f44336', 'BUYBACK': '#9c27b0' };
     var typeLabels = { 'SELL': 'SELL', 'TRADEIN': 'TRADE-IN', 'EXCHANGE': 'EXCHANGE', 'WITHDRAW': 'WITHDRAW', 'BUYBACK': 'BUYBACK' };
 
-    document.getElementById('historySellTable').innerHTML = data.map(function(r) {
+    document.getElementById('historySellTable').innerHTML = warnRow + data.map(function(r) {
       var typeLabel = typeLabels[r.type] || r.type;
       var color = typeColors[r.type] || '#666';
       var items = r.items || [];

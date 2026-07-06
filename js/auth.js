@@ -358,12 +358,14 @@ async function checkOpenShift() {
       }
     }
 
+    // anchor เป็นเวลา Bangkok (+07:00) — string ไม่มี offset จะถูกตีความเป็น UTC
+    // ทำให้กะที่เปิดช่วง 00:00–06:59 หาไม่เจอ แล้ว modal เปิดกะเด้งซ้ำ
     var openShifts = await dbSelect('user_cashbook', {
       select: 'id,date',
       filters: {
         user_id: 'eq.' + currentUser.id,
         type: 'eq.OPEN_SHIFT',
-        date: 'gte.' + today + 'T00:00:00'
+        date: 'gte.' + today + 'T00:00:00+07:00'
       },
       limit: 1,
       useCache: false
@@ -375,9 +377,8 @@ async function checkOpenShift() {
       openModal('openShiftModal');
     }
   } catch(e) {
-    document.getElementById('openShiftAmount').value = '';
-    _shiftCompleted = false;
-    openModal('openShiftModal');
+    // query พลาด (network) — ห้ามเด้ง modal เพราะเสี่ยงเปิดกะซ้ำ (หักเงินร้าน 2 รอบ)
+    console.error('checkOpenShift error:', e);
   }
 }
 
@@ -395,13 +396,20 @@ async function confirmOpenShift() {
       p_amount: amount
     });
     hideLoading();
-    if (result && (result.success || (Array.isArray(result) && result[0] && result[0].success))) {
+    var r0 = Array.isArray(result) ? result[0] : result;
+    if (r0 && r0.success) {
       _shiftCompleted = true;
       showToast('✅ เปิดกะสำเร็จ');
       closeModal('openShiftModal');
       if (typeof loadCashBank === 'function') loadCashBank();
+    } else if (r0 && r0.already_open) {
+      // server กันเปิดซ้ำ — ถือว่าเปิดกะแล้ว ปิด modal เงียบๆ ไม่ใช่ error
+      _shiftCompleted = true;
+      closeModal('openShiftModal');
+      showToast('ℹ️ เปิดกะวันนี้ไปแล้ว');
+      if (typeof loadCashBank === 'function') loadCashBank();
     } else {
-      var errMsg = (result && (result.message || result.error)) || 'เปิดกะไม่สำเร็จ';
+      var errMsg = (r0 && (r0.message || r0.error)) || 'เปิดกะไม่สำเร็จ';
       alert('❌ ' + errMsg);
     }
   } catch(e) {
@@ -463,6 +471,52 @@ async function restoreSession() {
   }
 }
 
+// re-validate ข้อมูล user กับ DB หลัง restore จาก localStorage (async ไม่ block การ boot UI)
+// — localStorage แก้เองได้ / บัญชีอาจถูกปิด / role อาจถูกเปลี่ยนหลัง login ครั้งก่อน
+async function revalidateRestoredUser() {
+  if (!currentUser || !currentUser.id) return;
+  var uid = currentUser.id;
+  var rows;
+  try {
+    rows = await dbSelect('users', {
+      select: 'id,role,is_active,nickname,username',
+      filters: { id: 'eq.' + uid },
+      limit: 1,
+      useCache: false
+    });
+  } catch(e) {
+    // network/ชั่วคราว — ห้าม logout จากตรงนี้ (ถ้า session หมดอายุจริง api.js จัดการ logout เองแล้ว)
+    console.warn('revalidateRestoredUser skipped:', e);
+    return;
+  }
+
+  // user อาจ logout/โดน kick ไประหว่างรอ query
+  if (!currentUser || currentUser.id !== uid) return;
+
+  if (!rows || rows.length === 0 || rows[0].is_active === false) {
+    alert('บัญชีถูกปิดการใช้งาน');
+    logout();
+    return;
+  }
+
+  var u = rows[0];
+  if (u.role !== currentUser.dbRole) {
+    // role ใน DB เปลี่ยน (หรือ localStorage ถูกแก้เอง) → sync แล้ว reload ให้ UI ตรง role จริง
+    currentUser.role = mapRole(u.role);
+    currentUser.dbRole = u.role;
+    currentUser.nickname = u.nickname || u.username || u.role;
+    localStorage.setItem('currentUser', JSON.stringify(currentUser));
+    location.reload();
+    return;
+  }
+
+  var freshNickname = u.nickname || u.username || u.role;
+  if (freshNickname !== currentUser.nickname) {
+    currentUser.nickname = freshNickname;
+    localStorage.setItem('currentUser', JSON.stringify(currentUser));
+  }
+}
+
 document.addEventListener('DOMContentLoaded', async function() {
   var ok = await restoreSession();
   if (!ok) return;
@@ -479,6 +533,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     }
   } catch(e) {}
 
+  revalidateRestoredUser(); // ไม่ await — เช็คเบื้องหลังระหว่าง boot
   await enterApp();
   if (currentUser.role === 'User') {
     showSection('sell');

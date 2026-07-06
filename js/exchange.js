@@ -5,7 +5,7 @@ var _exFreeExBillData = null;
 async function loadExchanges() {
   try {
     var tbody = document.getElementById('exchangeTable');
-    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:30px;"><div style="display:inline-block;width:24px;height:24px;border:3px solid var(--border-color);border-top:3px solid var(--gold-primary);border-radius:50%;animation:spin 0.8s linear infinite;"></div></td></tr>';
+    tbody.innerHTML = '<tr><td colspan="13" style="text-align:center;padding:30px;"><div style="display:inline-block;width:24px;height:24px;border:3px solid var(--border-color);border-top:3px solid var(--gold-primary);border-radius:50%;animation:spin 0.8s linear infinite;"></div></td></tr>';
 
     var filters = { type: 'eq.EXCHANGE' };
     var order = exchangeSortOrder === 'asc' ? 'date.asc' : 'date.desc';
@@ -17,8 +17,14 @@ async function loadExchanges() {
       var today = getTodayLocalStr();
       dateFrom = today; dateTo = today;
     }
+    // anchor เป็นเวลา Bangkok (+07:00) — DB เก็บ date เป็น UTC (NOW()) ถ้าไม่ใส่ offset
+    // PostgREST จะตีความเป็น UTC ทำให้รายการช่วงเช้ามืด (Bangkok) หลุดออกจากช่วง
     if (dateFrom && dateTo) {
-      filters['and'] = '(date.gte.' + dateFrom + 'T00:00:00,date.lte.' + dateTo + 'T23:59:59)';
+      filters['and'] = '(date.gte.' + dateFrom + 'T00:00:00+07:00,date.lte.' + dateTo + 'T23:59:59+07:00)';
+    } else if (dateFrom) {
+      filters['date'] = 'gte.' + dateFrom + 'T00:00:00+07:00';
+    } else if (dateTo) {
+      filters['date'] = 'lte.' + dateTo + 'T23:59:59+07:00';
     }
 
     var rows = await dbSelect('transactions', {
@@ -46,7 +52,7 @@ async function loadExchanges() {
     });
 
     if (data.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:40px;">No records</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="13" style="text-align:center;padding:40px;">No records</td></tr>';
       return;
     }
 
@@ -67,7 +73,7 @@ async function loadExchanges() {
         } else {
           actions = '<span style="color:var(--text-secondary);">Waiting</span>';
         }
-      } else if (status === 'APPROVED' || status === 'READY') {
+      } else if (status === 'APPROVED') {
         if (currentUser.role === 'User') {
           actions = '<button class="btn-action" onclick="openExchangePaymentModal(\'' + row.id + '\')">Confirm</button>';
         } else {
@@ -302,6 +308,11 @@ async function calculateExchangeNew() {
   if (oldFreeEx.length > 0) {
     var freeBillId = document.getElementById('exFreeExBillId').value.trim();
     if (!freeBillId) { alert('❌ กรุณากรอกรหัสบิลเก่าสำหรับ Free Exchange'); return; }
+    // บังคับให้ผ่านการตรวจสอบบิลก่อน — และบิลที่ตรวจต้องเป็นเลขเดียวกับในช่อง
+    if (!_exFreeExVerified || !_exFreeExBillData || _exFreeExBillData.billId !== freeBillId) {
+      alert('❌ กรุณากดปุ่ม "ตรวจสอบ" บิล Free Ex ให้ผ่านก่อนทำรายการ');
+      return;
+    }
   }
 
   var switchFee = 0;

@@ -1,7 +1,7 @@
 async function loadBuybacks() {
   try {
     var tbody = document.getElementById('buybackTable');
-    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:30px;"><div style="display:inline-block;width:24px;height:24px;border:3px solid var(--border-color);border-top:3px solid var(--gold-primary);border-radius:50%;animation:spin 0.8s linear infinite;"></div></td></tr>';
+    tbody.innerHTML = '<tr><td colspan="12" style="text-align:center;padding:30px;"><div style="display:inline-block;width:24px;height:24px;border:3px solid var(--border-color);border-top:3px solid var(--gold-primary);border-radius:50%;animation:spin 0.8s linear infinite;"></div></td></tr>';
 
     var filters = { type: 'eq.BUYBACK' };
     var order = buybackSortOrder === 'asc' ? 'date.asc' : 'date.desc';
@@ -42,7 +42,7 @@ async function loadBuybacks() {
     });
 
     if (data.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="10" style="text-align: center; padding: 40px;">No records</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="12" style="text-align: center; padding: 40px;">No records</td></tr>';
       return;
     }
 

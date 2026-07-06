@@ -43,6 +43,13 @@ DO $$ BEGIN
   END IF;
 END $$;
 
+-- ล้าง lot ทองเก่า (R11.1 FIFO) — safe ถ้ายังไม่มี table
+DO $$ BEGIN
+  IF to_regclass('public.old_gold_lots') IS NOT NULL THEN
+    DELETE FROM old_gold_lots;
+  END IF;
+END $$;
+
 
 -- ============================================================
 -- 2) Reset stock_balances → NEW 0, OLD 0 (ทุก product)

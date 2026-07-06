@@ -43,7 +43,7 @@ async function loadReports() {
     hideLoading();
   } catch (error) {
     console.error('Error loading reports:', error);
-    document.getElementById('reportsTable').innerHTML = '<tr><td colspan="3" style="text-align: center; padding: 40px; color: #f44336;">Error loading reports</td></tr>';
+    document.getElementById('reportsTable').innerHTML = '<tr><td colspan="4" style="text-align: center; padding: 40px; color: #f44336;">Error loading reports</td></tr>';
     hideLoading();
   }
 }

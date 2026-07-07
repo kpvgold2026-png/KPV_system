@@ -1192,20 +1192,22 @@ BEGIN
             p_bank_id, p_tx_id, 'Buyback ' || p_tx_id, NOW());
   END IF;
 
-  IF v_new_status = 'COMPLETED' THEN
-    SELECT COALESCE(SUM(ti.qty), 0),
-           COALESCE(SUM(ti.qty * p.weight_baht * 15), 0)
-      INTO v_total_qty, v_old_gold_g
-    FROM transaction_items ti
-    JOIN products p ON p.id = ti.product_id
-    WHERE ti.tx_id = p_tx_id AND ti.item_role = 'OLD';
+  -- [R12.1] บันทึกทองเก่าที่รับ "ตั้งแต่จ่ายครั้งแรก" (เดิมบันทึกเฉพาะจ่ายครบ →
+  --   บิลค้างยอด PARTIAL ไม่ถูกบันทึกเลย ทองไม่เข้า Stock Old ตอนอนุมัติปิดกะ)
+  --   ลูกค้าส่งมอบทองตั้งแต่ตกลงขาย จึงบันทึกเต็มจำนวนตอนจ่ายงวดแรก
+  --   เช็ค EXISTS กันบันทึกซ้ำงวดถัดไป + ครอบคลุมบิล PARTIAL เก่าที่ค้างอยู่
+  SELECT COALESCE(SUM(ti.qty), 0),
+         COALESCE(SUM(ti.qty * p.weight_baht * 15), 0)
+    INTO v_total_qty, v_old_gold_g
+  FROM transaction_items ti
+  JOIN products p ON p.id = ti.product_id
+  WHERE ti.tx_id = p_tx_id AND ti.item_role = 'OLD';
 
-    IF v_total_qty > 0 THEN
-      v_price_per_unit := v_price / v_total_qty;
-    END IF;
+  IF v_total_qty > 0 THEN
+    v_price_per_unit := v_price / v_total_qty;
+  END IF;
 
-    v_old_cost := (v_sell_1baht / 15.0) * v_old_gold_g;
-
+  IF NOT EXISTS (SELECT 1 FROM user_gold_received WHERE ref_tx_id = p_tx_id) THEN
     FOR v_item IN SELECT product_id, qty FROM transaction_items
                   WHERE tx_id = p_tx_id AND item_role = 'OLD' LOOP
       INSERT INTO user_gold_received (
@@ -1218,6 +1220,10 @@ BEGIN
         v_price_per_unit, FALSE
       );
     END LOOP;
+  END IF;
+
+  IF v_new_status = 'COMPLETED' THEN
+    v_old_cost := (v_sell_1baht / 15.0) * v_old_gold_g;
 
     INSERT INTO diffs (tx_id, type, sell_value, ex_fee, switch_fee, premium, cost_diff, cost_old_gold, diff, date)
     VALUES (p_tx_id, 'BUYBACK', -v_price, 0, 0, 0,
@@ -2464,3 +2470,45 @@ EXCEPTION WHEN OTHERS THEN
   RAISE NOTICE '⚠️ ข้ามการตั้ง pg_cron: %  → เปิด pg_cron ที่ Dashboard→Database→Extensions แล้วรันบล็อกนี้ใหม่', SQLERRM;
 END
 $cronsetup$;
+
+
+-- ============================================================
+-- [R12.1] Single-device session (1 user = 1 เครื่อง)
+--   JS (auth.js) มีระบบ kick อยู่แล้ว: login เครื่องใหม่ → broadcast เตะเครื่องเก่า
+--   + poll get_my_session ทุก 10 วิ — บล็อกนี้ ensure ฝั่ง DB ให้ครบ (idempotent)
+-- ============================================================
+ALTER TABLE users ADD COLUMN IF NOT EXISTS session_token TEXT;
+
+CREATE OR REPLACE FUNCTION set_my_session(p_session TEXT)
+RETURNS JSONB AS $$
+DECLARE v_user_id UUID;
+BEGIN
+  v_user_id := current_user_id();
+  IF v_user_id IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'message', 'Not authenticated');
+  END IF;
+  UPDATE users SET session_token = p_session, updated_at = NOW() WHERE id = v_user_id;
+  RETURN jsonb_build_object('success', true);
+EXCEPTION WHEN OTHERS THEN
+  RETURN jsonb_build_object('success', false, 'message', SQLERRM);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+GRANT EXECUTE ON FUNCTION set_my_session(TEXT) TO authenticated;
+
+CREATE OR REPLACE FUNCTION get_my_session()
+RETURNS JSONB AS $$
+DECLARE
+  v_user_id UUID;
+  v_session TEXT;
+BEGIN
+  v_user_id := current_user_id();
+  IF v_user_id IS NULL THEN
+    RETURN jsonb_build_object('session_token', NULL);
+  END IF;
+  SELECT session_token INTO v_session FROM users WHERE id = v_user_id;
+  RETURN jsonb_build_object('session_token', v_session);
+EXCEPTION WHEN OTHERS THEN
+  RETURN jsonb_build_object('session_token', NULL);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+GRANT EXECUTE ON FUNCTION get_my_session() TO authenticated;

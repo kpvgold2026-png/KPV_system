@@ -151,7 +151,9 @@ async function broadcastKickOthers(sessionId) {
       event: 'kick',
       payload: { session: sessionId }
     });
-    setTimeout(function() { try { sb.removeChannel(ch); } catch(e) {} }, 500);
+    // ลบทันที (await) — ห้ามใช้ setTimeout: supabase-js cache channel ตาม topic
+    // ถ้าลบช้า จะไปลบ channel เฝ้าถาวร (startRealtimeSessionWatch) ที่ topic เดียวกันทิ้ง
+    try { await sb.removeChannel(ch); } catch(e) {}
   } catch(e) {}
 }
 

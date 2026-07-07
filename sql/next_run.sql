@@ -519,7 +519,9 @@ BEGIN
       ) AS cash_breakdown
     FROM user_cashbook ucb
     LEFT JOIN banks b ON b.id = ucb.bank_id
-    WHERE (ucb.date AT TIME ZONE 'Asia/Bangkok')::date BETWEEN p_date_from AND p_date_to
+    -- [R12] "เงินที่ถือ" = ยอดสะสมทั้งกระเป๋า (ไม่ filter วัน) ให้เป็นสถานะปัจจุบัน
+    --       เหมือน old_gold (settled=false) — หลังปิดกะ+approve กระเป๋าถูกกวาดเป็น 0
+    --       ดังนั้นยอดสะสม = เงินที่ Sales ถืออยู่จริงตอนนี้ (p_date_* ยังใช้กับยอด tx/ทอง)
     GROUP BY ucb.user_id
   ),
   close_status AS (
@@ -1217,14 +1219,14 @@ BEGIN
       );
     END LOOP;
 
-    INSERT INTO diffs (tx_id, type, sell_value, ex_fee, switch_fee, premium, fee, cost_diff, cost_old_gold, diff, date)
-    VALUES (p_tx_id, 'BUYBACK', -v_price, 0, 0, 0, 0,
+    INSERT INTO diffs (tx_id, type, sell_value, ex_fee, switch_fee, premium, cost_diff, cost_old_gold, diff, date)
+    VALUES (p_tx_id, 'BUYBACK', -v_price, 0, 0, 0,
             0, v_old_cost,
             ((-v_price) - v_old_cost), NOW())
     ON CONFLICT (tx_id) DO UPDATE
       SET sell_value = EXCLUDED.sell_value, ex_fee = EXCLUDED.ex_fee,
           switch_fee = EXCLUDED.switch_fee, premium = EXCLUDED.premium,
-          fee = EXCLUDED.fee, cost_diff = EXCLUDED.cost_diff,
+          cost_diff = EXCLUDED.cost_diff,
           cost_old_gold = EXCLUDED.cost_old_gold, diff = EXCLUDED.diff;
 
     PERFORM _notify_user('PAYMENT', '💰 BUYBACK ของคุณจ่ายเงินเรียบร้อย: ' || p_tx_id,
@@ -2151,6 +2153,12 @@ BEGIN
   END IF;
   SELECT row_to_json(t)::jsonb INTO v_payload FROM transactions t WHERE id = p_tx_id;
   IF v_payload IS NULL THEN RETURN jsonb_build_object('success', false, 'message', 'Not found'); END IF;
+  -- [R12] แนบรายการทอง (เก่า/ใหม่) ลง payload เพื่อให้ Deleted List แสดงได้
+  v_payload := v_payload || jsonb_build_object('items', (
+    SELECT COALESCE(jsonb_agg(jsonb_build_object(
+             'product_id', ti.product_id, 'qty', ti.qty, 'item_role', ti.item_role)), '[]'::jsonb)
+    FROM transaction_items ti WHERE ti.tx_id = p_tx_id
+  ));
   SELECT status INTO v_status FROM transactions WHERE id = p_tx_id;
   IF v_status IN ('COMPLETED', 'PARTIAL') THEN
     RETURN jsonb_build_object('success', false, 'message', 'Cannot delete: transaction has payments (' || v_status || ')');
@@ -2186,11 +2194,14 @@ BEGIN
   ),
   daily_net AS (
     SELECT d.d AS dd,
-      COALESCE((
-        SELECT SUM(CASE WHEN sm.direction='IN' THEN sm.gold_g ELSE -sm.gold_g END)
-        FROM stock_moves sm
-        WHERE (sm.date AT TIME ZONE 'Asia/Bangkok')::date <= d.d
-      ), 0) AS net_val
+      COALESCE(
+        -- [R12] ใช้ snapshot ที่ล็อกไว้ตอนเที่ยงคืน (cron) ก่อน — วันไหนไม่มีค่อยคำนวณสด
+        (SELECT dr.net FROM daily_reports dr WHERE dr.date::date = d.d),
+        (SELECT SUM(CASE WHEN sm.direction='IN' THEN sm.gold_g ELSE -sm.gold_g END)
+         FROM stock_moves sm
+         WHERE (sm.date AT TIME ZONE 'Asia/Bangkok')::date <= d.d),
+        0
+      ) AS net_val
     FROM dates d
   )
   SELECT dn.dd AS date,
@@ -2320,3 +2331,136 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 GRANT EXECUTE ON FUNCTION get_dashboard_data(DATE, DATE) TO authenticated;
+
+
+-- ============================================================
+-- [R12] Accounting — get_incomplete_summary (แก้ buyback ไม่มีน้ำหนัก g)
+--   เดิม gold_g = SUM(... ) FILTER (item_role='NEW') → buyback ที่มีแต่ item OLD
+--   ได้ 0 g เสมอ. แก้: buyback ใช้ OLD, type อื่นใช้ NEW (ทองที่ออกจากสต๊อก)
+--   + ตัดวันแบบ Asia/Bangkok ให้ตรงกับ get_dashboard_data
+-- ============================================================
+CREATE OR REPLACE FUNCTION get_incomplete_summary(p_date_from DATE, p_date_to DATE)
+RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER AS $$
+DECLARE v_result JSONB;
+BEGIN
+  WITH tx_g AS (
+    SELECT t.id AS tx_id, t.type AS tx_type, t.total,
+           COALESCE(SUM(ti.qty * p.weight_baht * 15) FILTER (
+             WHERE (t.type = 'BUYBACK' AND ti.item_role = 'OLD')
+                OR (t.type <> 'BUYBACK' AND ti.item_role = 'NEW')
+           ), 0) AS gold_g
+    FROM transactions t
+    LEFT JOIN transaction_items ti ON ti.tx_id = t.id
+    LEFT JOIN products p ON p.id = ti.product_id
+    WHERE (t.date AT TIME ZONE 'Asia/Bangkok')::date BETWEEN p_date_from AND p_date_to
+      AND t.status NOT IN ('COMPLETED', 'PAID', 'REJECTED')
+    GROUP BY t.id, t.type, t.total
+  )
+  SELECT jsonb_build_object(
+    'total_money', COALESCE(SUM(total), 0),
+    'total_gold_g', COALESCE(SUM(gold_g), 0),
+    'sell',     jsonb_build_object('money', COALESCE(SUM(total) FILTER (WHERE tx_type='SELL'),0),     'gold_g', COALESCE(SUM(gold_g) FILTER (WHERE tx_type='SELL'),0),     'count', COUNT(*) FILTER (WHERE tx_type='SELL')),
+    'tradein',  jsonb_build_object('money', COALESCE(SUM(total) FILTER (WHERE tx_type='TRADEIN'),0),  'gold_g', COALESCE(SUM(gold_g) FILTER (WHERE tx_type='TRADEIN'),0),  'count', COUNT(*) FILTER (WHERE tx_type='TRADEIN')),
+    'exchange', jsonb_build_object('money', COALESCE(SUM(total) FILTER (WHERE tx_type='EXCHANGE'),0), 'gold_g', COALESCE(SUM(gold_g) FILTER (WHERE tx_type='EXCHANGE'),0), 'count', COUNT(*) FILTER (WHERE tx_type='EXCHANGE')),
+    'withdraw', jsonb_build_object('money', COALESCE(SUM(total) FILTER (WHERE tx_type='WITHDRAW'),0), 'gold_g', COALESCE(SUM(gold_g) FILTER (WHERE tx_type='WITHDRAW'),0), 'count', COUNT(*) FILTER (WHERE tx_type='WITHDRAW')),
+    'buyback',  jsonb_build_object('money', COALESCE(SUM(total) FILTER (WHERE tx_type='BUYBACK'),0),  'gold_g', COALESCE(SUM(gold_g) FILTER (WHERE tx_type='BUYBACK'),0),  'count', COUNT(*) FILTER (WHERE tx_type='BUYBACK'))
+  ) INTO v_result FROM tx_g;
+  RETURN v_result;
+END;
+$$;
+GRANT EXECUTE ON FUNCTION get_incomplete_summary(DATE, DATE) TO authenticated;
+
+
+-- ============================================================
+-- [R12] Accounting — get_sales_gold_grams_v2 (ให้ตรง money ใน Box Sell)
+--   เดิม status IN ('COMPLETED','PAID') + t.date::date (UTC)
+--   → ไม่ sync กับ get_dashboard_data.sales (นับ PARTIAL + TZ ไทย)
+--   → ต้นทุน/Diff ของ SELL เพี้ยนช่วงคาบเกี่ยววัน. แก้ให้เงื่อนไขตรงกัน
+-- ============================================================
+CREATE OR REPLACE FUNCTION get_sales_gold_grams_v2(p_date_from DATE, p_date_to DATE)
+RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER AS $$
+DECLARE v_result JSONB;
+BEGIN
+  WITH item_g AS (
+    SELECT t.id AS tx_id, t.type AS tx_type, ti.item_role,
+           SUM(ti.qty * p.weight_baht * 15) AS gold_g
+    FROM transactions t
+    JOIN transaction_items ti ON ti.tx_id = t.id
+    JOIN products p ON p.id = ti.product_id
+    WHERE (t.date AT TIME ZONE 'Asia/Bangkok')::date BETWEEN p_date_from AND p_date_to
+      AND t.status IN ('COMPLETED', 'PAID', 'PARTIAL')
+    GROUP BY t.id, t.type, ti.item_role
+  )
+  SELECT jsonb_build_object(
+    'sell_new_g',     COALESCE(SUM(gold_g) FILTER (WHERE tx_type='SELL'     AND item_role='NEW'), 0),
+    'tradein_new_g',  COALESCE(SUM(gold_g) FILTER (WHERE tx_type='TRADEIN'  AND item_role='NEW'), 0),
+    'tradein_old_g',  COALESCE(SUM(gold_g) FILTER (WHERE tx_type='TRADEIN'  AND item_role IN ('OLD','FOC')), 0),
+    'exchange_new_g', COALESCE(SUM(gold_g) FILTER (WHERE tx_type='EXCHANGE' AND item_role='NEW'), 0),
+    'exchange_old_g', COALESCE(SUM(gold_g) FILTER (WHERE tx_type='EXCHANGE' AND item_role IN ('OLD','SWITCH','FREE_EX')), 0),
+    'buyback_old_g',  COALESCE(SUM(gold_g) FILTER (WHERE tx_type='BUYBACK'  AND item_role='OLD'), 0),
+    'withdraw_new_g', COALESCE(SUM(gold_g) FILTER (WHERE tx_type='WITHDRAW' AND item_role='NEW'), 0)
+  ) INTO v_result FROM item_g;
+  RETURN v_result;
+END;
+$$;
+GRANT EXECUTE ON FUNCTION get_sales_gold_grams_v2(DATE, DATE) TO authenticated;
+
+
+-- ============================================================
+-- [R12] Wealth snapshot รายวัน (บันทึกยอดทองล็อกไว้ทุกเที่ยงคืนเวลาไทย)
+--   daily_reports เก็บ net = ทองคงเหลือสะสม (g) สิ้นวันนั้น, carry = สิ้นวันก่อน
+--   get_wealth_summary จะอ่าน snapshot ก่อน (วันไหนไม่มีค่อยคำนวณสด)
+-- ============================================================
+-- ให้แน่ใจว่าตารางมีคอลัมน์ + unique(date) สำหรับ upsert
+ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS carry NUMERIC DEFAULT 0;
+ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS net   NUMERIC DEFAULT 0;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_daily_reports_date ON daily_reports(date);
+
+-- ฟังก์ชันบันทึก snapshot ของ "วันที่ระบุ" (default = เมื่อวาน เวลาไทย
+-- เพราะ cron รัน 00:05 เวลาไทย → บันทึกยอดสิ้นวันที่เพิ่งจบ)
+CREATE OR REPLACE FUNCTION snapshot_daily_wealth(p_date DATE DEFAULT NULL)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
+DECLARE
+  v_date  DATE := COALESCE(p_date, ((NOW() AT TIME ZONE 'Asia/Bangkok')::date - 1));
+  v_net   NUMERIC;
+  v_carry NUMERIC;
+BEGIN
+  SELECT COALESCE(SUM(CASE WHEN direction='IN' THEN gold_g ELSE -gold_g END), 0) INTO v_net
+    FROM stock_moves WHERE (date AT TIME ZONE 'Asia/Bangkok')::date <= v_date;
+  SELECT COALESCE(SUM(CASE WHEN direction='IN' THEN gold_g ELSE -gold_g END), 0) INTO v_carry
+    FROM stock_moves WHERE (date AT TIME ZONE 'Asia/Bangkok')::date <= v_date - 1;
+  INSERT INTO daily_reports (date, carry, net) VALUES (v_date, v_carry, v_net)
+  ON CONFLICT (date) DO UPDATE SET carry = EXCLUDED.carry, net = EXCLUDED.net;
+END;
+$$;
+GRANT EXECUTE ON FUNCTION snapshot_daily_wealth(DATE) TO authenticated;
+
+-- Backfill ครั้งเดียวตอน deploy: ล็อกยอด 60 วันย้อนหลัง (ไม่ทับของเดิมที่มีแล้ว)
+INSERT INTO daily_reports (date, carry, net)
+SELECT g::date AS d,
+       COALESCE((SELECT SUM(CASE WHEN sm.direction='IN' THEN sm.gold_g ELSE -sm.gold_g END)
+                 FROM stock_moves sm WHERE (sm.date AT TIME ZONE 'Asia/Bangkok')::date <= g::date - 1), 0),
+       COALESCE((SELECT SUM(CASE WHEN sm.direction='IN' THEN sm.gold_g ELSE -sm.gold_g END)
+                 FROM stock_moves sm WHERE (sm.date AT TIME ZONE 'Asia/Bangkok')::date <= g::date), 0)
+FROM generate_series(
+       ((NOW() AT TIME ZONE 'Asia/Bangkok')::date - 60),
+       ((NOW() AT TIME ZONE 'Asia/Bangkok')::date - 1),
+       '1 day'::interval) g
+ON CONFLICT (date) DO NOTHING;
+
+-- ตั้ง pg_cron: รันทุกวัน 17:05 UTC = 00:05 เวลาไทย (บันทึกยอดของวันที่เพิ่งจบ)
+-- ห่อด้วย exception handling: ถ้า pg_cron ไม่พร้อม (สิทธิ์/ยังไม่เปิด) จะแค่ SKIP
+-- ไม่ทำให้ทั้งสคริปต์ rollback → ค่อยเปิด pg_cron ที่ Dashboard แล้วรันบล็อกนี้ซ้ำ
+DO $cronsetup$
+BEGIN
+  EXECUTE 'CREATE EXTENSION IF NOT EXISTS pg_cron';
+  BEGIN
+    PERFORM cron.unschedule('kpv-daily-wealth');   -- ถ้าเคยตั้งไว้ → ลบก่อน
+  EXCEPTION WHEN OTHERS THEN NULL;                  -- ยังไม่เคยตั้ง → ข้าม
+  END;
+  PERFORM cron.schedule('kpv-daily-wealth', '5 17 * * *', 'SELECT snapshot_daily_wealth();');
+  RAISE NOTICE '✅ ตั้ง pg_cron kpv-daily-wealth (00:05 เวลาไทย) สำเร็จ';
+EXCEPTION WHEN OTHERS THEN
+  RAISE NOTICE '⚠️ ข้ามการตั้ง pg_cron: %  → เปิด pg_cron ที่ Dashboard→Database→Extensions แล้วรันบล็อกนี้ใหม่', SQLERRM;
+END
+$cronsetup$;

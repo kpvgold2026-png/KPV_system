@@ -341,6 +341,13 @@ function roundTo1000(num) {
   return Math.ceil(num / 1000) * 1000;
 }
 
+// ปัดหลักพันแบบใกล้สุด (เศษ >=500 ปัดขึ้น, <500 ปัดลง)
+// 32,565,231 -> 32,565,000 ; 32,565,600 -> 32,566,000
+function roundNearest1000(num) {
+  var n = parseFloat(num) || 0;
+  return Math.round(n / 1000) * 1000;
+}
+
 // ทอนเงินให้ลูกค้า (LAK): <1000 → 0, ≥1000 → ปัดหลักพันใกล้สุด
 // 22500 → 23000, 22490 → 22000, 999 → 0, 1500 → 2000
 // สำหรับ THB/USD ให้แปลง×rate→LAK ก่อนเรียก
@@ -648,7 +655,7 @@ var _deletedDateTo = null;
 async function loadDeletedList() {
   try {
     var tbody = document.getElementById('deletedListTable');
-    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:30px;"><div style="display:inline-block;width:24px;height:24px;border:3px solid var(--border-color);border-top:3px solid var(--gold-primary);border-radius:50%;animation:spin 0.8s linear infinite;"></div></td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:30px;"><div style="display:inline-block;width:24px;height:24px;border:3px solid var(--border-color);border-top:3px solid var(--gold-primary);border-radius:50%;animation:spin 0.8s linear infinite;"></div></td></tr>';
 
     if (!_deletedDateFrom || !_deletedDateTo) {
       var td = getTodayDateString();
@@ -670,7 +677,7 @@ async function loadDeletedList() {
     });
 
     if (!rows || rows.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:40px;">No deleted records</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:40px;">No deleted records</td></tr>';
       return;
     }
 
@@ -693,6 +700,17 @@ async function loadDeletedList() {
         if (p.diff_amount !== undefined && p.diff_amount !== null && parseFloat(p.diff_amount) !== 0) parts.push('<b>Diff:</b> ' + formatNumber(p.diff_amount));
         if (p.status) parts.push('<b>Status:</b> ' + p.status);
         if (p.note) parts.push('<b>Note:</b> ' + p.note);
+        // ทองเก่า / ทองใหม่ ของรายการที่ถูกลบ (payload.items จาก delete_tx)
+        var _items = Array.isArray(p.items) ? p.items : [];
+        var _fmtRole = function(roles) {
+          var arr = _items.filter(function(it) { return roles.indexOf(it.item_role) !== -1; })
+            .map(function(it) { return { productId: it.product_id, qty: parseFloat(it.qty) || 0 }; });
+          return arr.length ? formatItemsForTable(JSON.stringify(mergeItems(arr))) : '';
+        };
+        var _oldG = _fmtRole(['OLD', 'FOC', 'SWITCH', 'FREE_EX']);
+        var _newG = _fmtRole(['NEW']);
+        if (_oldG) parts.push('<b>ทองเก่า:</b> ' + _oldG);
+        if (_newG) parts.push('<b>ทองใหม่:</b> ' + _newG);
         detail = parts.join('<br>');
       } else {
         try { detail = JSON.stringify(p).substring(0, 200); } catch(e) { detail = '-'; }
@@ -704,14 +722,13 @@ async function loadDeletedList() {
         '<td style="font-size:11px;white-space:nowrap;">' + formatDateTime(r.created_at) + '</td>' +
         '<td style="font-weight:bold;">' + (r.ref_id || '') + '</td>' +
         '<td><span style="background:' + tColor + ';color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;">' + (type || '-') + '</span></td>' +
-        '<td>' + (r.table_name || '') + '</td>' +
         '<td style="font-size:12px;line-height:1.6;">' + detail + '</td>' +
         '<td>' + nickname + '</td>' +
         '</tr>';
     }).join('');
   } catch(e) {
     var tbody = document.getElementById('deletedListTable');
-    if (tbody) tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:40px;color:#f44336;">Error: ' + e.message + '</td></tr>';
+    if (tbody) tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:40px;color:#f44336;">Error: ' + e.message + '</td></tr>';
   }
 }
 

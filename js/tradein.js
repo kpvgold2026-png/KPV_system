@@ -207,7 +207,7 @@ function updateTradeinTotal() {
   var diffValue = 0;
   if (newWeight > totalOldWeight && currentPricing.sell1Baht > 0) {
     diffValue = (newWeight - totalOldWeight) * currentPricing.sell1Baht;
-    total = roundTo1000(Math.round(diffValue) + premium);
+    total = roundNearest1000(Math.round(diffValue) + premium);
   }
 
   var el = document.getElementById('tradeinPrice');
@@ -268,7 +268,7 @@ async function calculateTradein() {
   if (newPremium > 0 && focPremium > 0) premium = Math.max(0, newPremium - focPremium);
 
   var difference = (newWeight - totalOldWeight) * currentPricing.sell1Baht;
-  var total = roundTo1000(Math.round(difference) + premium);
+  var total = roundNearest1000(Math.round(difference) + premium);
 
   try {
     _isSubmitting = true;

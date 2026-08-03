@@ -561,8 +561,10 @@ async function viewTransactionDetail(type, jsonData) {
           label = 'เงินสด (' + cur + ')';
         }
 
-        var color = isChange ? '#ff9800' : isFee ? '#f44336' : '#4caf50';
-        var sign = amt < 0 ? '' : '+';
+        // [R13] Buyback = เงินออกจากร้าน → ตัวเลขท้ายบิลแสดงเป็นยอดลบสีแดง
+        var isBuybackBill = String(type || '').toUpperCase().indexOf('BUYBACK') !== -1;
+        var color = isBuybackBill ? '#f44336' : (isChange ? '#ff9800' : isFee ? '#f44336' : '#4caf50');
+        var sign = isBuybackBill ? (amt > 0 ? '-' : '') : (amt < 0 ? '' : '+');
         payHtml += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.05);">';
         payHtml += '<span style="font-size:13px;">' + icon + ' ' + label + '</span>';
         payHtml += '<span style="font-size:13px;font-weight:bold;color:' + color + ';">' + sign + formatCurrency(amt, cur) + ' ' + cur + '</span>';

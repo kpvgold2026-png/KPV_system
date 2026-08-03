@@ -56,12 +56,21 @@ async function loadLiveReport() {
       salesBreakdown = await dbRpc('get_live_report_sales_breakdown', { p_date_from: dateFrom, p_date_to: dateTo });
     } catch(e) { console.warn('get_live_report_sales_breakdown not available:', e); }
 
+    // [R13] ตารางช่องทางรับ/จ่ายเงิน (ตาม pic1) — RPC ใหม่
+    var paymentChannels = null;
+    try {
+      paymentChannels = await dbRpc('get_payment_channel_summary', { p_date_from: dateFrom, p_date_to: dateTo });
+    } catch(e) { console.warn('get_payment_channel_summary not available:', e); }
+
     renderLRSummaryBoxes(dashData, gramData);
     if (salesBreakdown && Array.isArray(salesBreakdown) && salesBreakdown.length > 0) {
       renderLRSalesStatusV2(salesBreakdown);
-      renderLRPaymentsBreakdownV2(salesBreakdown);
     } else {
       renderLRSalesStatus(historyData, dateFrom, dateTo);
+    }
+    if (paymentChannels) {
+      renderLRPaymentChannels(paymentChannels);
+    } else {
       renderLRPaymentsByType(historyData, dateFrom, dateTo);
     }
     renderLRStockSummary(gramData);
@@ -105,14 +114,15 @@ function renderLRSalesStatusV2(rows) {
     window._lrSalesGold[name] = goldQty;
     window._lrSalesCash[name] = r.cash_breakdown || {};
 
+    // [R13] "เงินที่ถือ" = เงินสดในมือเท่านั้น
+    //   เงินโอน (BCEL/LDB/Other) เข้าบัญชีร้านโดยตรง ไม่ได้อยู่กับ Sales
+    //   → เดิมบวกรวมทุกช่องทางทำให้ยอดที่ต้องส่งคืนร้านตอนปิดกะเกินจริง
     var cashLAK = 0, cashTHB = 0, cashUSD = 0;
     var cb = r.cash_breakdown || {};
-    ['Cash','BCEL','LDB','Other'].forEach(function(k) {
-      var d = cb[k] || {};
-      cashLAK += parseFloat(d.LAK) || 0;
-      cashTHB += parseFloat(d.THB) || 0;
-      cashUSD += parseFloat(d.USD) || 0;
-    });
+    var dCash = cb['Cash'] || {};
+    cashLAK = parseFloat(dCash.LAK) || 0;
+    cashTHB = parseFloat(dCash.THB) || 0;
+    cashUSD = parseFloat(dCash.USD) || 0;
 
     var oldGoldG = 0;
     Object.keys(goldQty).forEach(function(pid) {
@@ -128,69 +138,85 @@ function renderLRSalesStatusV2(rows) {
     html += '<span style="font-size:13px;color:' + statusColor + ';font-weight:600;">' + statusText + '</span>';
     html += '</div></div>';
     html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;font-size:13px;">';
-    html += '<div><span style="color:var(--text-secondary);">💵 เงินที่ถือ:</span> ' + formatNumber(cashLAK) + ' LAK | ' + formatCurrency(cashTHB,'THB') + ' THB | ' + formatCurrency(cashUSD,'USD') + ' USD</div>';
+    html += '<div><span style="color:var(--text-secondary);">💵 เงินสดที่ถือ:</span> ' + formatNumber(cashLAK) + ' LAK | ' + formatCurrency(cashTHB,'THB') + ' THB | ' + formatCurrency(cashUSD,'USD') + ' USD</div>';
     html += '<div><span style="color:var(--text-secondary);">🥇 ทองเก่า:</span> ' + oldGoldG.toFixed(2) + ' g</div>';
     html += '</div></div>';
   });
   container.innerHTML = html;
 }
 
-function renderLRPaymentsBreakdownV2(rows) {
+// [R13] ตารางช่องทางรับ/จ่ายเงิน — รูปแบบตามที่ user ส่งมา (pic1)
+//   แถว = ช่องทาง (Cash/BCEL/LDB/Other), คอลัมน์ = LAK/THB/USD, ปิดท้ายด้วยแถวรวม
+//   ข้อมูลมาจาก get_payment_channel_summary (อ่าน transaction_payments ต่อบิลจริง)
+//   → ครอบคลุมทั้งที่ Sales และ Manager/Admin เป็นคนรับเงิน
+function renderLRPaymentChannels(pcs) {
   var salesContainer = document.getElementById('lrSalesPayments');
   var bbContainer = document.getElementById('lrBuybackPayments');
+  var CHANNELS = ['Cash', 'BCEL', 'LDB', 'Other'];
+  var CURRENCIES = ['LAK', 'THB', 'USD'];
 
-  // aggregate per-user × per-method × per-currency
-  var thS = 'background:#2d2d2d;color:#d4af37;border:1px solid rgba(212,175,55,0.3);padding:8px 10px;font-size:12px;font-weight:700;';
+  var thS = 'background:#2d2d2d;color:#d4af37;border:1px solid rgba(212,175,55,0.3);padding:10px 12px;font-size:12px;font-weight:700;';
+  var tdS = 'border:1px solid var(--border-color);padding:8px 12px;font-size:13px;';
 
-  function renderTable(title, methodKeys, totalsKey) {
+  function fmtCur(v, cur) {
+    return cur === 'LAK' ? formatNumber(Math.round(v)) : formatCurrency(v, cur);
+  }
+
+  function renderTable(title, block, opts) {
+    opts = opts || {};
+    var negative = !!opts.negative;
+    var color = negative ? '#f44336' : '#4caf50';
+    var totals = { LAK: 0, THB: 0, USD: 0 };
+
     var html = '<div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:12px;padding:16px;margin-bottom:15px;">';
     html += '<h3 style="color:var(--gold-primary);font-size:15px;margin-bottom:10px;">' + title + '</h3>';
     html += '<div class="table-container" style="overflow-x:auto;-webkit-overflow-scrolling:touch;">';
-    html += '<table style="width:100%;border-collapse:collapse;min-width:600px;">';
-    html += '<thead><tr>';
-    html += '<th style="' + thS + 'text-align:left;">Sales</th>';
-    methodKeys.forEach(function(m) {
-      html += '<th style="' + thS + 'text-align:center;">' + m + ' LAK</th>';
-      html += '<th style="' + thS + 'text-align:center;">' + m + ' THB</th>';
-      html += '<th style="' + thS + 'text-align:center;">' + m + ' USD</th>';
-    });
+    html += '<table style="width:100%;border-collapse:collapse;min-width:520px;">';
+    html += '<thead><tr><th style="' + thS + 'text-align:center;">ช่องทาง</th>';
+    CURRENCIES.forEach(function(c) { html += '<th style="' + thS + 'text-align:center;">' + c + '</th>'; });
     html += '</tr></thead><tbody>';
-    rows.forEach(function(r) {
-      var cb = r.cash_breakdown || {};
-      var hasAny = false;
-      methodKeys.forEach(function(m) {
-        var d = cb[m] || {};
-        if ((parseFloat(d.LAK)||0) || (parseFloat(d.THB)||0) || (parseFloat(d.USD)||0)) hasAny = true;
-      });
-      if (!hasAny) return;
-      html += '<tr style="border-top:1px solid var(--border-color);">';
-      html += '<td style="padding:6px 10px;font-weight:600;">' + (r.nickname || '-') + '</td>';
-      methodKeys.forEach(function(m) {
-        var d = cb[m] || {};
-        html += '<td style="padding:6px 10px;text-align:right;">' + formatNumber(Math.round(parseFloat(d.LAK) || 0)) + '</td>';
-        html += '<td style="padding:6px 10px;text-align:right;">' + formatNumber(Math.round(parseFloat(d.THB) || 0)) + '</td>';
-        html += '<td style="padding:6px 10px;text-align:right;">' + formatNumber(Math.round(parseFloat(d.USD) || 0)) + '</td>';
+
+    CHANNELS.forEach(function(ch) {
+      var d = (block && block[ch]) || {};
+      html += '<tr><td style="' + tdS + 'font-weight:700;">' + ch + '</td>';
+      CURRENCIES.forEach(function(c) {
+        var v = parseFloat(d[c]) || 0;
+        totals[c] += v;
+        var shown = (negative && v > 0 ? '-' : '') + fmtCur(v, c);
+        html += '<td style="' + tdS + 'text-align:right;color:' + (v ? color : 'var(--text-secondary)') + ';">' + shown + '</td>';
       });
       html += '</tr>';
     });
-    html += '</tbody></table></div></div>';
+
+    // เงินทอน (เฉพาะฝั่งขาย) — จ่ายคืนลูกค้าเป็นเงินสด LAK จากกระเป๋าของ Sales
+    if (opts.changeLak) {
+      html += '<tr><td style="' + tdS + 'font-weight:700;color:#ff9800;">หัก เงินทอน</td>';
+      html += '<td style="' + tdS + 'text-align:right;color:#ff9800;">-' + formatNumber(Math.round(opts.changeLak)) + '</td>';
+      html += '<td style="' + tdS + 'text-align:right;color:var(--text-secondary);">0.00</td>';
+      html += '<td style="' + tdS + 'text-align:right;color:var(--text-secondary);">0.00</td></tr>';
+      totals.LAK -= opts.changeLak;
+    }
+
+    html += '<tr style="background:rgba(212,175,55,0.1);">';
+    html += '<td style="' + tdS + 'font-weight:700;color:var(--gold-primary);">รวม</td>';
+    CURRENCIES.forEach(function(c) {
+      var v = totals[c];
+      var shown = (negative && v > 0 ? '-' : '') + fmtCur(v, c);
+      html += '<td style="' + tdS + 'text-align:right;font-weight:700;color:' + color + ';">' + shown + '</td>';
+    });
+    html += '</tr></tbody></table></div></div>';
     return html;
   }
 
+  var sales = (pcs && pcs.sales) || {};
+  var buyback = (pcs && pcs.buyback) || {};
+  var changeLak = pcs ? (parseFloat(pcs.change_lak) || 0) : 0;
+
   if (salesContainer) {
-    salesContainer.innerHTML = renderTable('💵 Sales Payments (per-method × currency)', ['Cash','BCEL','LDB','Other']);
+    salesContainer.innerHTML = renderTable('ยอดเงินที่ได้รับจากการขาย', sales, { changeLak: changeLak });
   }
   if (bbContainer) {
-    // buyback ใช้ data เดียวกัน (cashbook ของ sales — รวมทุก tx) → ให้ user เห็น breakdown เดียวกัน
-    var salesTotal = 0, bbTotal = 0;
-    rows.forEach(function(r) {
-      salesTotal += parseFloat(r.sell_money) || 0;
-      bbTotal += parseFloat(r.buyback_money) || 0;
-    });
-    bbContainer.innerHTML = '<div style="background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:12px;padding:16px;margin-bottom:15px;">' +
-      '<h3 style="color:var(--gold-primary);font-size:15px;margin-bottom:10px;">🔄 Buyback Total (รวม)</h3>' +
-      '<p style="font-size:20px;font-weight:bold;">' + formatNumber(Math.round(bbTotal)) + ' LAK</p>' +
-      '</div>';
+    bbContainer.innerHTML = renderTable('ยอดเงินที่จ่าย Buyback', buyback, { negative: true });
   }
 }
 
@@ -205,7 +231,8 @@ function showLROldGoldModal(salesName) {
 
   var cashData = (window._lrSalesCash && window._lrSalesCash[salesName]) || {};
   var html = '<div style="margin-bottom:16px;padding:14px;background:rgba(76,175,80,0.08);border-radius:8px;border:1px solid rgba(76,175,80,0.2);">';
-  html += '<div style="font-size:13px;color:#4caf50;font-weight:700;margin-bottom:10px;">💵 สรุปเงินทั้งหมด</div>';
+  html += '<div style="font-size:13px;color:#4caf50;font-weight:700;margin-bottom:4px;">💵 สรุปเงินทั้งหมด</div>';
+  html += '<div style="font-size:11px;color:var(--text-secondary);margin-bottom:10px;">* เงินที่ Sales ถืออยู่จริง = แถว Cash เท่านั้น — เงินโอนเข้าบัญชีร้านโดยตรง</div>';
   html += '<table style="width:100%;border-collapse:collapse;">';
   var thC = 'background:#2d2d2d;color:#4caf50;border:1px solid rgba(76,175,80,0.3);padding:8px 12px;font-size:12px;font-weight:700;';
   html += '<thead><tr><th style="' + thC + 'text-align:left;">ประเภท</th><th style="' + thC + 'text-align:center;">LAK</th><th style="' + thC + 'text-align:center;">THB</th><th style="' + thC + 'text-align:center;">USD</th></tr></thead><tbody>';
@@ -227,20 +254,24 @@ function showLROldGoldModal(salesName) {
   html += '<div style="font-size:13px;color:var(--gold-primary);font-weight:700;margin-bottom:10px;">◀ ทองเก่าที่ได้รับ</div>';
   var thG = 'background:#2d2d2d;color:#d4af37;border:1px solid rgba(212,175,55,0.3);padding:10px 12px;font-size:12px;font-weight:700;';
   html += '<table style="width:100%;border-collapse:collapse;">';
-  html += '<thead><tr><th style="' + thG + 'text-align:left;">Product</th><th style="' + thG + 'text-align:center;">Unit</th></tr></thead><tbody>';
-  var totalQty = 0;
+  html += '<thead><tr><th style="' + thG + 'text-align:left;">Product</th><th style="' + thG + 'text-align:center;">Unit</th><th style="' + thG + 'text-align:center;">น้ำหนัก (g)</th></tr></thead><tbody>';
+  var W_G = { 'G01':150,'G02':75,'G03':30,'G04':15,'G05':7.5,'G06':3.75,'G07':1 };
+  var totalQty = 0, totalG = 0;
   products.forEach(function(p) {
     var q = goldQty[p] || 0;
-    totalQty += q;
+    var g = q * (W_G[p] || 0);
+    totalQty += q; totalG += g;
     var valStyle = q > 0 ? 'color:var(--gold-primary);font-weight:700;font-size:15px;' : 'color:var(--text-secondary);';
     html += '<tr style="border-top:1px solid var(--border-color);">';
     html += '<td style="padding:8px 12px;font-size:13px;">' + pNames[p] + '</td>';
     html += '<td style="padding:8px 12px;text-align:center;' + valStyle + '">' + q + '</td>';
+    html += '<td style="padding:8px 12px;text-align:center;' + valStyle + '">' + g.toFixed(2) + '</td>';
     html += '</tr>';
   });
   html += '<tr style="border-top:2px solid var(--gold-primary);background:rgba(212,175,55,0.08);">';
   html += '<td style="padding:10px 12px;font-size:13px;font-weight:700;color:var(--gold-primary);">รวม</td>';
   html += '<td style="padding:10px 12px;text-align:center;font-size:15px;font-weight:700;color:var(--gold-primary);">' + totalQty + '</td>';
+  html += '<td style="padding:10px 12px;text-align:center;font-size:15px;font-weight:700;color:var(--gold-primary);">' + totalG.toFixed(2) + '</td>';
   html += '</tr></tbody></table>';
 
   content.innerHTML = html;
@@ -431,14 +462,20 @@ function renderLRGoldDetailFromHistory(historyData) {
   var newOut = {}, oldIn = {};
   products.forEach(function(p) { newOut[p] = 0; oldIn[p] = 0; });
 
+  // [R13] ทองเก่าเข้า ต้องรวม SWITCH + FREE_EX (Exchange) ด้วย
+  //   เดิมนับแค่ OLD/FOC → ทองเก่าจาก Exchange หายทั้งก้อน ตัวเลขต่ำกว่าจริง
+  var OLD_IN_ROLES = ['OLD', 'FOC', 'SWITCH', 'FREE_EX'];
   (historyData || []).forEach(function(r) {
     if (r.status !== 'COMPLETED' && r.status !== 'PAID' && r.status !== 'PARTIAL') return;
     (r.items || []).forEach(function(it) {
       if (newOut[it.productId] === undefined) return;
       if (it.role === 'NEW') newOut[it.productId] += (parseFloat(it.qty) || 0);
-      else if (it.role === 'OLD' || it.role === 'FOC') oldIn[it.productId] += (parseFloat(it.qty) || 0);
+      else if (OLD_IN_ROLES.indexOf(it.role) !== -1) oldIn[it.productId] += (parseFloat(it.qty) || 0);
     });
   });
+
+  // น้ำหนักต่อชิ้น (g) — ใช้คำนวณคอลัมน์น้ำหนักให้ตรงกับ RPC (weight_baht × 15)
+  var WEIGHT_G = { 'G01': 150, 'G02': 75, 'G03': 30, 'G04': 15, 'G05': 7.5, 'G06': 3.75, 'G07': 1 };
 
   var thStyle = 'background:#2d2d2d;color:#d4af37;border:1px solid rgba(212,175,55,0.5);padding:10px 8px;font-size:12px;text-align:center;font-weight:700;';
   var tdStyle = 'border:1px solid var(--border-color);padding:8px;text-align:center;font-size:13px;';
@@ -450,23 +487,32 @@ function renderLRGoldDetailFromHistory(historyData) {
   }
   html += '<div class="table-container"><table><thead><tr>';
   html += '<th style="' + thStyle + '">Product</th>';
-  html += '<th style="' + thStyle + '">New Out</th>';
-  html += '<th style="' + thStyle + '">Old In</th>';
+  html += '<th style="' + thStyle + '">New Out (ชิ้น)</th>';
+  html += '<th style="' + thStyle + '">New Out (g)</th>';
+  html += '<th style="' + thStyle + '">Old In (ชิ้น)</th>';
+  html += '<th style="' + thStyle + '">Old In (g)</th>';
   html += '</tr></thead><tbody>';
 
-  var tNewOut = 0, tOldIn = 0;
+  var tNewOut = 0, tOldIn = 0, tNewOutG = 0, tOldInG = 0;
   products.forEach(function(p) {
+    var w = WEIGHT_G[p] || 0;
+    var noG = newOut[p] * w, oiG = oldIn[p] * w;
     tNewOut += newOut[p]; tOldIn += oldIn[p];
+    tNewOutG += noG; tOldInG += oiG;
     html += '<tr>';
     html += '<td style="' + tdStyle + 'font-weight:600;">' + names[p] + ' (' + p + ')</td>';
     html += '<td style="' + tdStyle + 'color:' + (newOut[p] > 0 ? '#f44336' : 'var(--text-secondary)') + ';">' + newOut[p] + '</td>';
+    html += '<td style="' + tdStyle + 'color:' + (noG > 0 ? '#f44336' : 'var(--text-secondary)') + ';">' + noG.toFixed(2) + '</td>';
     html += '<td style="' + tdStyle + 'color:' + (oldIn[p] > 0 ? '#4caf50' : 'var(--text-secondary)') + ';">' + oldIn[p] + '</td>';
+    html += '<td style="' + tdStyle + 'color:' + (oiG > 0 ? '#4caf50' : 'var(--text-secondary)') + ';">' + oiG.toFixed(2) + '</td>';
     html += '</tr>';
   });
   html += '<tr style="background:rgba(212,175,55,0.1);font-weight:700;">';
   html += '<td style="' + tdStyle + 'color:var(--gold-primary);font-weight:700;">รวม</td>';
   html += '<td style="' + tdStyle + 'color:#f44336;font-weight:700;">' + tNewOut + '</td>';
+  html += '<td style="' + tdStyle + 'color:#f44336;font-weight:700;">' + tNewOutG.toFixed(2) + '</td>';
   html += '<td style="' + tdStyle + 'color:#4caf50;font-weight:700;">' + tOldIn + '</td>';
+  html += '<td style="' + tdStyle + 'color:#4caf50;font-weight:700;">' + tOldInG.toFixed(2) + '</td>';
   html += '</tr>';
   html += '</tbody></table></div></div>';
   container.innerHTML = html;

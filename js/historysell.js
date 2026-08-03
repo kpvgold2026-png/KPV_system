@@ -47,7 +47,11 @@ async function loadHistorySell() {
       var typeLabel = typeLabels[r.type] || r.type;
       var color = typeColors[r.type] || '#666';
       var items = r.items || [];
-      var oldItems = items.filter(function(i) { return i.role === 'OLD' || i.role === 'FOC'; }).map(function(i) { return { productId: i.productId, qty: i.qty }; });
+      // [R13] ทองเก่าของแต่ละประเภทไม่เหมือนกัน — EXCHANGE มี SWITCH/FREE_EX ด้วย
+      //   เดิมกรองแค่ OLD/FOC → คอลัมน์ OLD Gold ของ Exchange อ่านไม่ครบ
+      var OLD_ROLES = { 'EXCHANGE': ['OLD','SWITCH','FREE_EX'], 'TRADEIN': ['OLD','FOC'] };
+      var oldRoles = OLD_ROLES[r.type] || ['OLD','FOC','SWITCH','FREE_EX'];
+      var oldItems = items.filter(function(i) { return oldRoles.indexOf(i.role) !== -1; }).map(function(i) { return { productId: i.productId, qty: i.qty }; });
       var newItems = items.filter(function(i) { return i.role === 'NEW'; }).map(function(i) { return { productId: i.productId, qty: i.qty }; });
       var oldGoldStr = oldItems.length > 0 ? formatItemsForTable(JSON.stringify(oldItems)) : '-';
       var newGoldStr = newItems.length > 0 ? formatItemsForTable(JSON.stringify(newItems)) : '-';
@@ -92,6 +96,10 @@ async function loadHistorySell() {
         if (r.premium) detailArr.push(['Premium', formatNumber(parseFloat(r.premium) || 0) + ' LAK']);
         detailArr.push(['Total', formatNumber(total) + ' LAK']);
         detailArr.push(['Customer Paid', paid > 0 ? formatNumber(paid) + ' ' + (r.currency || 'LAK') : '-']);
+        // [R13] เงินทอน — หักจากกระเป๋าเงินสดของ Sales เจ้าของบิล (ไม่ใช่ของร้าน)
+        var chg = parseFloat(r.change_amount) || 0;
+        detailArr.push(['เงินทอน (หักจาก Sales)',
+          chg > 0 ? '<span style="color:#ff9800;">-' + formatNumber(chg) + ' LAK</span>' : '-']);
         if (r.note) detailArr.push(['Note', r.note]);
         detailArr.push(['Date', formatDateTime(r.date)]);
         detailArr.push(['Status', r.status]);

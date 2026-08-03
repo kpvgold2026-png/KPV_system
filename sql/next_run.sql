@@ -1909,9 +1909,9 @@ GRANT EXECUTE ON FUNCTION get_diff_summary(DATE, DATE) TO authenticated;
 
 
 -- ============================================================
--- ข้อ7) create_exchange_tx — validate บิล Free-Ex ฝั่ง server
---   (เดิมเช็คแค่ฝั่ง JS ซึ่งข้ามได้) กติกาเดียวกับปุ่มตรวจสอบ:
---   บิลมีจริง+ชำระแล้ว / ไม่เกิน 30 วัน / ยังไม่เคยถูกใช้ / จำนวนชิ้นไม่เกินในบิล
+-- ข้อ7) create_exchange_tx
+--   [R13] ยกเลิกการ validate บิล Free-Ex ทั้งฝั่ง server และ JS
+--   → free_ex_bill_ref บันทึกไว้เป็นข้อมูลอ้างอิงอย่างเดียว
 -- ============================================================
 CREATE OR REPLACE FUNCTION create_exchange_tx(
   p_phone TEXT,
@@ -1954,42 +1954,9 @@ BEGIN
     END IF;
   END LOOP;
 
-  -- ‼️ validate Free-Ex ฝั่ง server (กติกาเดียวกับปุ่มตรวจสอบใน UI)
-  IF p_free_ex_items IS NOT NULL AND jsonb_array_length(COALESCE(p_free_ex_items, '[]'::jsonb)) > 0 THEN
-    IF NULLIF(TRIM(COALESCE(p_free_ex_bill_ref, '')), '') IS NULL THEN
-      RETURN jsonb_build_object('success', false, 'message', '❌ กรุณาระบุบิลอ้างอิงสำหรับ Free Ex');
-    END IF;
-
-    SELECT t.id, t.date INTO v_ref_id, v_ref_date
-    FROM transactions t
-    WHERE t.bill_id = TRIM(p_free_ex_bill_ref)
-      AND t.status IN ('COMPLETED', 'PAID')
-    ORDER BY t.date DESC LIMIT 1;
-
-    IF v_ref_id IS NULL THEN
-      RETURN jsonb_build_object('success', false, 'message',
-        '❌ ไม่พบบิล ' || TRIM(p_free_ex_bill_ref) || ' ที่ชำระเงินแล้ว');
-    END IF;
-
-    IF v_ref_date < NOW() - INTERVAL '30 days' THEN
-      RETURN jsonb_build_object('success', false, 'message', '❌ บิลอ้างอิงเกิน 1 เดือนแล้ว ใช้แลก Free Ex ไม่ได้');
-    END IF;
-
-    IF EXISTS (SELECT 1 FROM transactions x WHERE x.free_ex_bill_ref = TRIM(p_free_ex_bill_ref)) THEN
-      RETURN jsonb_build_object('success', false, 'message', '❌ บิลนี้ถูกนำไปแลก Free Ex แล้ว');
-    END IF;
-
-    FOR v_fi IN SELECT (value->>'productId') AS pid, (value->>'qty')::numeric AS qty
-                FROM jsonb_array_elements(p_free_ex_items) LOOP
-      SELECT COALESCE(SUM(ti.qty), 0) INTO v_avail
-      FROM transaction_items ti
-      WHERE ti.tx_id = v_ref_id AND ti.item_role = 'NEW' AND ti.product_id = v_fi.pid;
-      IF v_fi.qty > v_avail THEN
-        RETURN jsonb_build_object('success', false, 'message',
-          '❌ ' || v_fi.pid || ' ในบิลอ้างอิงมี ' || v_avail || ' ชิ้น แต่ขอแลก ' || v_fi.qty || ' ชิ้น');
-      END IF;
-    END LOOP;
-  END IF;
+  -- [R13] ตัดการตรวจสอบบิล Free-Ex ออกทั้งหมดตามที่ user สั่ง
+  --   (เดิมเช็ค: บิลมีจริง+ชำระแล้ว / ไม่เกิน 30 วัน / ยังไม่เคยใช้ / จำนวนชิ้นพอ)
+  --   ตอนนี้ free_ex_bill_ref เป็นแค่ข้อมูลอ้างอิงที่บันทึกไว้เฉย ๆ ไม่บล็อกการทำรายการ
 
   v_tx_id := generate_tx_id('EXCHANGE');
 
@@ -2512,3 +2479,444 @@ EXCEPTION WHEN OTHERS THEN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 GRANT EXECUTE ON FUNCTION get_my_session() TO authenticated;
+
+
+-- ============================================================
+-- ============================================================
+-- [R13] 2026-08-03 — รอบแก้ 13 (append ต่อท้าย R12.1 — รันทั้งไฟล์ได้เหมือนเดิม)
+--   1) get_sales_gold_grams  — Old In ขาด SWITCH/FREE_EX (Exchange) → Report/Accounting เพี้ยน
+--   2) get_history_txs       — เพิ่ม change_amount/price/balance/refs (เงินทอนต่อบิลอ่านค่าไม่ได้)
+--   3) get_payment_channel_summary — ตารางช่องทางรับเงิน (Cash/BCEL/LDB/Other × LAK/THB/USD)
+--   4) create_exchange_tx    — ตัดเงื่อนไขตรวจสอบบิล Free-Ex ออก (เก็บ ref ไว้เฉย ๆ)
+-- ============================================================
+
+
+-- ============================================================
+-- [R13-1] get_sales_gold_grams — ทองเก่าเข้าต้องรวม SWITCH + FREE_EX ด้วย
+--   เดิมนับแค่ OLD/FOC → Exchange ที่เป็น SWITCH/FREE_EX หายทั้งก้อน
+--   ทำให้ tab Report: "OLD IN", "NET SELL", ตารางทองรายสินค้า ต่ำกว่าจริง
+--   + นับ PARTIAL + ตัดวันแบบ Asia/Bangkok ให้ตรงกับ get_dashboard_data / v2
+-- ============================================================
+CREATE OR REPLACE FUNCTION get_sales_gold_grams(p_date_from DATE, p_date_to DATE)
+RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER AS $$
+DECLARE
+  v_sales_old_g NUMERIC := 0;
+  v_sales_new_g NUMERIC := 0;
+  v_bb_old_g NUMERIC := 0;
+  v_wd_new_g NUMERIC := 0;
+BEGIN
+  SELECT
+    COALESCE(SUM(CASE WHEN ti.item_role IN ('OLD','FOC','SWITCH','FREE_EX')
+                      THEN ti.qty * p.weight_baht * 15 ELSE 0 END), 0),
+    COALESCE(SUM(CASE WHEN ti.item_role = 'NEW'
+                      THEN ti.qty * p.weight_baht * 15 ELSE 0 END), 0)
+  INTO v_sales_old_g, v_sales_new_g
+  FROM transaction_items ti
+  JOIN transactions t ON t.id = ti.tx_id
+  JOIN products p ON p.id = ti.product_id
+  WHERE t.type IN ('SELL', 'TRADEIN', 'EXCHANGE')
+    AND t.status IN ('COMPLETED', 'PAID', 'PARTIAL')
+    AND (t.date AT TIME ZONE 'Asia/Bangkok')::date BETWEEN p_date_from AND p_date_to;
+
+  SELECT COALESCE(SUM(ti.qty * p.weight_baht * 15), 0) INTO v_bb_old_g
+  FROM transaction_items ti
+  JOIN transactions t ON t.id = ti.tx_id
+  JOIN products p ON p.id = ti.product_id
+  WHERE t.type = 'BUYBACK' AND t.status IN ('COMPLETED', 'PAID', 'PARTIAL')
+    AND ti.item_role = 'OLD'
+    AND (t.date AT TIME ZONE 'Asia/Bangkok')::date BETWEEN p_date_from AND p_date_to;
+
+  SELECT COALESCE(SUM(ti.qty * p.weight_baht * 15), 0) INTO v_wd_new_g
+  FROM transaction_items ti
+  JOIN transactions t ON t.id = ti.tx_id
+  JOIN products p ON p.id = ti.product_id
+  WHERE t.type = 'WITHDRAW' AND t.status IN ('COMPLETED', 'PAID', 'PARTIAL')
+    AND ti.item_role = 'NEW'
+    AND (t.date AT TIME ZONE 'Asia/Bangkok')::date BETWEEN p_date_from AND p_date_to;
+
+  RETURN jsonb_build_object(
+    'sales_old_g', v_sales_old_g,
+    'sales_new_g', v_sales_new_g,
+    'buyback_old_g', v_bb_old_g,
+    'withdraw_new_g', v_wd_new_g
+  );
+END;
+$$;
+GRANT EXECUTE ON FUNCTION get_sales_gold_grams(DATE, DATE) TO authenticated;
+
+
+-- ============================================================
+-- [R13-2] get_history_txs — เพิ่มฟิลด์ที่ฝั่ง JS ต้องใช้แต่เดิมไม่ส่งมา
+--   change_amount (เงินทอนต่อบิล — เดิมไม่มี → History Sell แสดงไม่ได้)
+--   price/balance (buyback), note, foc_bill_ref, foc_premium_deduct,
+--   free_ex_bill_ref, withdraw_code
+-- ============================================================
+CREATE OR REPLACE FUNCTION get_history_txs(
+  p_date_from DATE DEFAULT NULL,
+  p_date_to DATE DEFAULT NULL,
+  p_limit INT DEFAULT 500
+)
+RETURNS JSONB AS $$
+DECLARE
+  v_user_id UUID;
+  v_role user_role;
+  v_from TIMESTAMPTZ;
+  v_to TIMESTAMPTZ;
+  v_result JSONB;
+BEGIN
+  v_user_id := current_user_id();
+  v_role := current_user_role();
+  IF p_date_from IS NOT NULL THEN
+    v_from := (p_date_from::text || ' 00:00:00')::timestamp AT TIME ZONE 'Asia/Bangkok';
+  END IF;
+  IF p_date_to IS NOT NULL THEN
+    v_to := (p_date_to::text || ' 23:59:59')::timestamp AT TIME ZONE 'Asia/Bangkok';
+  END IF;
+
+  SELECT COALESCE(jsonb_agg(jsonb_build_object(
+    'id', t.id,
+    'type', t.type,
+    'status', t.status,
+    'bill_id', t.bill_id,
+    'phone', t.phone,
+    'total', t.total,
+    'paid', t.paid,
+    'change_amount', COALESCE(t.change_amount, 0),
+    'price', COALESCE(t.price, 0),
+    'balance', COALESCE(t.balance, 0),
+    'currency', t.currency,
+    'sale_user_id', t.sale_user_id,
+    'sale_nickname', u.nickname,
+    'date', t.date,
+    'diff', t.diff_amount,
+    'ex_fee', t.ex_fee,
+    'switch_fee', t.switch_fee,
+    'premium', t.premium,
+    'fee', t.fee,
+    'note', t.note,
+    'foc_bill_ref', t.foc_bill_ref,
+    'foc_premium_deduct', COALESCE(t.foc_premium_deduct, 0),
+    'free_ex_bill_ref', t.free_ex_bill_ref,
+    'withdraw_code', t.withdraw_code,
+    'items', (
+      SELECT jsonb_agg(jsonb_build_object('productId', ti.product_id, 'qty', ti.qty, 'role', ti.item_role))
+      FROM transaction_items ti WHERE ti.tx_id = t.id
+    )
+  ) ORDER BY t.date DESC), '[]'::jsonb)
+  INTO v_result
+  FROM transactions t
+  LEFT JOIN users u ON u.id = t.sale_user_id
+  WHERE (v_from IS NULL OR t.date >= v_from)
+    AND (v_to IS NULL OR t.date <= v_to)
+    AND (v_role <> 'Sales' OR t.sale_user_id = v_user_id)
+  LIMIT p_limit;
+
+  RETURN v_result;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+GRANT EXECUTE ON FUNCTION get_history_txs(DATE, DATE, INT) TO authenticated;
+
+
+-- ============================================================
+-- [R13-3] get_payment_channel_summary — ตาราง "ยอดเงินที่ได้รับจากการขาย"
+--   / "ยอดเงินที่จ่าย Buyback" แยกช่องทาง × สกุลเงิน (ตามรูปที่ user ส่ง)
+--   อ่านจาก transaction_payments (ของจริงต่อบิล) → ครอบคลุมทั้ง Sales/Manager/Admin
+--   sales   = SELL + TRADEIN + EXCHANGE, buyback = BUYBACK, withdraw แยกไว้ต่างหาก
+--   change  = เงินทอนรวม (LAK, เงินสด) ของบิลฝั่งขาย — เอาไปหักในแถวรวมฝั่ง JS
+-- ============================================================
+CREATE OR REPLACE FUNCTION get_payment_channel_summary(p_date_from DATE, p_date_to DATE)
+RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER AS $$
+DECLARE
+  v_blocks JSONB;
+  v_change NUMERIC := 0;
+BEGIN
+  WITH pay AS (
+    SELECT CASE t.type::text
+             WHEN 'BUYBACK'  THEN 'buyback'
+             WHEN 'WITHDRAW' THEN 'withdraw'
+             ELSE 'sales'
+           END AS grp_key,
+           CASE
+             WHEN UPPER(COALESCE(tp.method, 'CASH')) = 'CASH' THEN 'Cash'
+             WHEN b.name ILIKE 'BCEL%' THEN 'BCEL'
+             WHEN b.name ILIKE 'LDB%'  THEN 'LDB'
+             ELSE 'Other'
+           END AS channel,
+           tp.currency::text AS cur,
+           tp.amount AS amount
+    FROM transaction_payments tp
+    JOIN transactions t ON t.id = tp.tx_id
+    LEFT JOIN banks b ON b.id = tp.bank_id
+    WHERE t.status IN ('COMPLETED', 'PAID', 'PARTIAL')
+      AND t.type IN ('SELL', 'TRADEIN', 'EXCHANGE', 'WITHDRAW', 'BUYBACK')
+      AND (t.date AT TIME ZONE 'Asia/Bangkok')::date BETWEEN p_date_from AND p_date_to
+  ),
+  grp AS (
+    SELECT grp_key, channel,
+           COALESCE(SUM(amount) FILTER (WHERE cur = 'LAK'), 0) AS lak,
+           COALESCE(SUM(amount) FILTER (WHERE cur = 'THB'), 0) AS thb,
+           COALESCE(SUM(amount) FILTER (WHERE cur = 'USD'), 0) AS usd
+    FROM pay GROUP BY grp_key, channel
+  ),
+  byg AS (
+    SELECT grp_key,
+           jsonb_object_agg(channel, jsonb_build_object('LAK', lak, 'THB', thb, 'USD', usd)) AS blk
+    FROM grp GROUP BY grp_key
+  )
+  SELECT COALESCE(jsonb_object_agg(grp_key, blk), '{}'::jsonb) INTO v_blocks FROM byg;
+
+  SELECT COALESCE(SUM(COALESCE(t.change_amount, 0)), 0) INTO v_change
+  FROM transactions t
+  WHERE t.type IN ('SELL', 'TRADEIN', 'EXCHANGE')
+    AND t.status IN ('COMPLETED', 'PAID', 'PARTIAL')
+    AND (t.date AT TIME ZONE 'Asia/Bangkok')::date BETWEEN p_date_from AND p_date_to;
+
+  RETURN jsonb_build_object(
+    'sales',    COALESCE(v_blocks->'sales',    '{}'::jsonb),
+    'buyback',  COALESCE(v_blocks->'buyback',  '{}'::jsonb),
+    'withdraw', COALESCE(v_blocks->'withdraw', '{}'::jsonb),
+    'change_lak', v_change
+  );
+END;
+$$;
+GRANT EXECUTE ON FUNCTION get_payment_channel_summary(DATE, DATE) TO authenticated;
+
+
+-- [R13-4] create_exchange_tx — ตัดเงื่อนไขตรวจสอบบิล Free-Ex ออก
+--   แก้ในตัวฟังก์ชันเดิมด้านบน (หัวข้อ "ข้อ7") ไม่ได้ประกาศซ้ำที่นี่
+
+
+-- ============================================================
+-- [R13-5] get_live_report (Box Wealth) — เพิ่ม "เงินคิดเป็นทอง"
+--   เดิมคืนแต่ทองในสต๊อก (g) → Box Wealth ไม่ผูกกับเงินเลย
+--   ใหม่: ความมั่งคั่งรวม (g) = ทองในสต๊อก + (เงินทั้งหมด ÷ ราคาทอง 1 g)
+--     เงินทั้งหมด (LAK) = cashbank ทุกช่องทาง/ทุกสกุล + เงินสดที่ Sales ถือ (user_cashbook)
+--       - THB/USD แปลงเป็น LAK ด้วยเรทรับซื้อล่าสุด (thb_buy/usd_buy) = มูลค่าที่ร้านขายคืนได้จริง
+--       - นับ user_cashbook เฉพาะ method='CASH' เพราะเงินโอนถูกบันทึกใน cashbank แล้ว (กันนับซ้ำ)
+--     ราคาทอง 1 g = sell_1baht ล่าสุด ÷ 15
+--   คืนทั้งยอดวันนี้และยอดสิ้นวันก่อน เพื่อให้ Box คำนวณส่วนต่างได้
+-- ============================================================
+CREATE OR REPLACE FUNCTION get_live_report()
+RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER AS $$
+DECLARE
+  v_today DATE;
+  v_today_start TIMESTAMPTZ;
+  v_gold_now NUMERIC := 0;
+  v_gold_prev NUMERIC := 0;
+  v_money_now NUMERIC := 0;
+  v_money_prev NUMERIC := 0;
+  v_s1b NUMERIC := 0;
+  v_price_g NUMERIC := 0;
+  v_thb_buy NUMERIC := 0;
+  v_usd_buy NUMERIC := 0;
+  v_money_g_now NUMERIC := 0;
+  v_money_g_prev NUMERIC := 0;
+BEGIN
+  v_today := (NOW() AT TIME ZONE 'Asia/Bangkok')::date;
+  v_today_start := (v_today::text || ' 00:00:00')::timestamp AT TIME ZONE 'Asia/Bangkok';
+
+  -- ทองในสต๊อก (g)
+  SELECT COALESCE(SUM(CASE WHEN direction = 'IN' THEN gold_g ELSE -gold_g END), 0)
+    INTO v_gold_now FROM stock_moves;
+  SELECT COALESCE(SUM(CASE WHEN direction = 'IN' THEN gold_g ELSE -gold_g END), 0)
+    INTO v_gold_prev FROM stock_moves WHERE date < v_today_start;
+
+  -- เรทแลกเงิน + ราคาทองล่าสุด
+  SELECT COALESCE(thb_buy, 0), COALESCE(usd_buy, 0) INTO v_thb_buy, v_usd_buy
+  FROM price_rates ORDER BY date DESC LIMIT 1;
+  SELECT COALESCE(sell_1baht, 0) INTO v_s1b FROM pricing ORDER BY date DESC LIMIT 1;
+  v_price_g := CASE WHEN COALESCE(v_s1b, 0) > 0 THEN v_s1b / 15.0 ELSE 0 END;
+
+  -- เงินทั้งหมด (LAK) — ปัจจุบัน
+  SELECT COALESCE(SUM(amount * CASE currency
+           WHEN 'THB' THEN COALESCE(NULLIF(v_thb_buy, 0), 1)
+           WHEN 'USD' THEN COALESCE(NULLIF(v_usd_buy, 0), 1)
+           ELSE 1 END), 0)
+    INTO v_money_now FROM cashbank;
+  SELECT v_money_now + COALESCE(SUM(amount * CASE currency
+           WHEN 'THB' THEN COALESCE(NULLIF(v_thb_buy, 0), 1)
+           WHEN 'USD' THEN COALESCE(NULLIF(v_usd_buy, 0), 1)
+           ELSE 1 END), 0)
+    INTO v_money_now FROM user_cashbook WHERE method = 'CASH';
+
+  -- เงินทั้งหมด (LAK) — สิ้นวันก่อน
+  SELECT COALESCE(SUM(amount * CASE currency
+           WHEN 'THB' THEN COALESCE(NULLIF(v_thb_buy, 0), 1)
+           WHEN 'USD' THEN COALESCE(NULLIF(v_usd_buy, 0), 1)
+           ELSE 1 END), 0)
+    INTO v_money_prev FROM cashbank WHERE date < v_today_start;
+  SELECT v_money_prev + COALESCE(SUM(amount * CASE currency
+           WHEN 'THB' THEN COALESCE(NULLIF(v_thb_buy, 0), 1)
+           WHEN 'USD' THEN COALESCE(NULLIF(v_usd_buy, 0), 1)
+           ELSE 1 END), 0)
+    INTO v_money_prev FROM user_cashbook WHERE method = 'CASH' AND date < v_today_start;
+
+  IF v_price_g > 0 THEN
+    v_money_g_now  := v_money_now  / v_price_g;
+    v_money_g_prev := v_money_prev / v_price_g;
+  END IF;
+
+  RETURN jsonb_build_object(
+    -- ‼️ คงคีย์เดิมไว้ (ทองล้วน) เพื่อไม่ให้ของเดิมที่อ่านอยู่พัง
+    'netTotal', v_gold_now,
+    'carryForward', v_gold_prev,
+    'diff', v_gold_now - v_gold_prev,
+    -- ใหม่: ฝั่งเงิน + ความมั่งคั่งรวม
+    'goldPricePerG', v_price_g,
+    'moneyLak', v_money_now,
+    'moneyLakPrev', v_money_prev,
+    'moneyGoldG', v_money_g_now,
+    'moneyGoldGPrev', v_money_g_prev,
+    'wealthG', v_gold_now + v_money_g_now,
+    'wealthGPrev', v_gold_prev + v_money_g_prev,
+    'wealthDiff', (v_gold_now + v_money_g_now) - (v_gold_prev + v_money_g_prev)
+  );
+END;
+$$;
+GRANT EXECUTE ON FUNCTION get_live_report() TO authenticated;
+
+
+-- ============================================================
+-- [R13-6] get_stock_moves — NEW: หักต้นทุนตอนขายออกด้วย "ต้นทุน" ไม่ใช่ "ราคาขาย"
+--   ‼️ ต้นเหตุที่ WAC เพี้ยน:
+--     confirm_sell/tradein/exchange/withdraw_tx เก็บ stock_moves.price ของแถว OUT
+--     = v_total (ยอดที่ลูกค้าจ่าย = ราคาขาย) ไม่ใช่ต้นทุน
+--     แต่หน้า Stock(NEW)/tab WAC คิด "มูลค่าคงเหลือ = Σprice(IN) − Σprice(OUT)"
+--     → หักด้วยราคาขาย (รวมกำไร) ทุกบิล ⇒ มูลค่าต่ำกว่าจริง ⇒ WAC/g ต่ำกว่าจริง
+--   แก้ตอนอ่าน (ไม่แตะข้อมูลเดิม): OUT ของ NEW ใช้ wac_per_g × gold_g
+--     (แต่ละแถวมี snapshot wac_per_g ณ เวลาทำรายการอยู่แล้ว)
+--     แถวเก่าที่ wac_per_g ว่าง/0 → fallback ใช้ price เดิม
+--   ผลลัพธ์: tab WAC จะตรงกับ wac_state (Dashboard/Accounting) ที่หักด้วย WAC×g อยู่แล้ว
+--   คืนฟิลด์ 'salePrice' เพิ่มไว้ เผื่ออยากโชว์ยอดขายคู่กัน
+--   ‼️ ฝั่ง OLD คงเดิม (คิด FIFO จากราคา IN ตอนอ่าน — ถูกตามหลักอยู่แล้ว)
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.get_stock_moves(
+  p_gold_type gold_type,
+  p_date_from date DEFAULT NULL,
+  p_date_to date DEFAULT NULL
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $function$
+DECLARE
+  v_today_local DATE;
+  v_from DATE;
+  v_to DATE;
+  v_prev_w NUMERIC := 0;
+  v_prev_c NUMERIC := 0;
+  v_moves JSONB;
+
+  -- FIFO state (สำหรับ OLD)
+  v_fifo JSONB := '[]'::jsonb;
+  v_row RECORD;
+  v_results JSONB := '[]'::jsonb;
+  v_unit NUMERIC;
+  v_remaining NUMERIC;
+  v_cost NUMERIC;
+  v_head_qty NUMERIC;
+  v_head_unit NUMERIC;
+  v_display_price NUMERIC;
+  v_row_date DATE;
+BEGIN
+  v_today_local := (NOW() AT TIME ZONE 'Asia/Bangkok')::date;
+  v_from := COALESCE(p_date_from, v_today_local);
+  v_to := COALESCE(p_date_to, v_today_local);
+
+  ----------------------------------------------------------------
+  -- NEW gold: IN = ต้นทุนซื้อเข้าจริง / OUT = WAC × น้ำหนัก (fallback: price)
+  ----------------------------------------------------------------
+  IF p_gold_type = 'NEW' THEN
+    SELECT
+      COALESCE(SUM(CASE WHEN direction = 'IN' THEN gold_g ELSE -gold_g END), 0),
+      COALESCE(SUM(CASE WHEN direction = 'IN'
+                        THEN COALESCE(price, 0)
+                        ELSE -COALESCE(NULLIF(wac_per_g, 0) * gold_g, price, 0) END), 0)
+    INTO v_prev_w, v_prev_c
+    FROM stock_moves
+    WHERE gold_type = p_gold_type
+      AND (date AT TIME ZONE 'Asia/Bangkok')::date < v_from;
+
+    SELECT COALESCE(jsonb_agg(jsonb_build_object(
+      'id', ref_id, 'type', type, 'dir', direction,
+      'goldG', gold_g,
+      'price', CASE WHEN direction = 'IN'
+                    THEN COALESCE(price, 0)
+                    ELSE COALESCE(NULLIF(wac_per_g, 0) * gold_g, price, 0) END,
+      'salePrice', COALESCE(price, 0),
+      'date', date, 'note', note
+    ) ORDER BY date), '[]'::jsonb)
+    INTO v_moves
+    FROM stock_moves
+    WHERE gold_type = p_gold_type
+      AND (date AT TIME ZONE 'Asia/Bangkok')::date BETWEEN v_from AND v_to;
+
+    RETURN jsonb_build_object('prevW', v_prev_w, 'prevC', v_prev_c, 'moves', v_moves);
+  END IF;
+
+  ----------------------------------------------------------------
+  -- OLD gold: FIFO compute price (per gold_g, ไม่ break ต่อ product)
+  ----------------------------------------------------------------
+  FOR v_row IN
+    SELECT id, ref_id, type, direction, gold_g, COALESCE(price, 0) AS price, date, note
+    FROM stock_moves
+    WHERE gold_type = 'OLD'
+    ORDER BY date ASC, id ASC
+  LOOP
+    v_row_date := (v_row.date AT TIME ZONE 'Asia/Bangkok')::date;
+
+    IF v_row.direction = 'IN' THEN
+      v_unit := CASE WHEN v_row.gold_g > 0
+                     THEN v_row.price / v_row.gold_g
+                     ELSE 0 END;
+      v_fifo := v_fifo || jsonb_build_array(jsonb_build_object(
+        'qty', v_row.gold_g,
+        'unit', v_unit
+      ));
+      v_display_price := v_row.price;
+    ELSE
+      v_remaining := v_row.gold_g;
+      v_cost := 0;
+      WHILE v_remaining > 0 AND jsonb_array_length(v_fifo) > 0 LOOP
+        v_head_qty := (v_fifo->0->>'qty')::numeric;
+        v_head_unit := (v_fifo->0->>'unit')::numeric;
+        IF v_head_qty <= v_remaining THEN
+          v_cost := v_cost + v_head_qty * v_head_unit;
+          v_remaining := v_remaining - v_head_qty;
+          v_fifo := v_fifo - 0;
+        ELSE
+          v_cost := v_cost + v_remaining * v_head_unit;
+          v_fifo := jsonb_set(v_fifo, ARRAY['0','qty'],
+                              to_jsonb(v_head_qty - v_remaining));
+          v_remaining := 0;
+        END IF;
+      END LOOP;
+      v_display_price := v_cost;
+    END IF;
+
+    -- prev/results split
+    IF v_row_date < v_from THEN
+      IF v_row.direction = 'IN' THEN
+        v_prev_w := v_prev_w + v_row.gold_g;
+        v_prev_c := v_prev_c + v_display_price;
+      ELSE
+        v_prev_w := v_prev_w - v_row.gold_g;
+        v_prev_c := v_prev_c - v_display_price;
+      END IF;
+    ELSIF v_row_date <= v_to THEN
+      v_results := v_results || jsonb_build_array(jsonb_build_object(
+        'id', v_row.ref_id,
+        'type', v_row.type,
+        'dir', v_row.direction,
+        'goldG', v_row.gold_g,
+        'price', v_display_price,
+        'date', v_row.date,
+        'note', v_row.note
+      ));
+    END IF;
+  END LOOP;
+
+  RETURN jsonb_build_object('prevW', v_prev_w, 'prevC', v_prev_c, 'moves', v_results);
+END;
+$function$;
+GRANT EXECUTE ON FUNCTION public.get_stock_moves(gold_type, date, date) TO authenticated;

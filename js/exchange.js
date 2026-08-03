@@ -1,6 +1,4 @@
 var _exRowCounter = 0;
-var _exFreeExVerified = false;
-var _exFreeExBillData = null;
 
 async function loadExchanges() {
   try {
@@ -198,83 +196,10 @@ function calcPremium(items) {
   return p;
 }
 
+// [R13] ยกเลิกการตรวจสอบบิล Free Ex — เหลือไว้เป็น no-op เพราะ index.html ยังเรียกอยู่
 function onFreeExChanged() {
-  _exFreeExVerified = false;
-  _exFreeExBillData = null;
-  document.getElementById('exFreeExStatus').innerHTML = '<span style="color:#ff9800;">⚠ กรุณากดตรวจสอบ</span>';
-}
-
-async function verifyFreeExBill() {
-  var billId = document.getElementById('exFreeExBillId').value.trim();
-  var freeExItems = getItemsFromContainer('exOldFreeEx');
-  var statusEl = document.getElementById('exFreeExStatus');
-
-  if (!billId) { statusEl.innerHTML = '<span style="color:#f44336;">❌ กรุณากรอกรหัสบิล</span>'; return; }
-  if (freeExItems.length === 0) { statusEl.innerHTML = '<span style="color:#f44336;">❌ กรุณาเพิ่มทองเก่า Free Ex</span>'; return; }
-
-  try {
-    showLoading();
-    var billRows = await dbSelect('transactions', {
-      select: '*,items:transaction_items(product_id,qty,item_role)',
-      filters: { bill_id: 'eq.' + billId },
-      useCache: false
-    });
-    hideLoading();
-
-    if (!billRows || billRows.length === 0) {
-      statusEl.innerHTML = '<span style="color:#f44336;">❌ ไม่พบบิล ' + billId + '</span>';
-      return;
-    }
-
-    var bill = billRows.find(function(b) { return b.status === 'COMPLETED' || b.status === 'PAID'; }) || billRows[0];
-
-    if (bill.status !== 'COMPLETED' && bill.status !== 'PAID') {
-      statusEl.innerHTML = '<span style="color:#f44336;">❌ บิลนี้สถานะ ' + bill.status + '</span>';
-      return;
-    }
-
-    var usedCheck = await dbSelect('transactions', {
-      select: 'id',
-      filters: { free_ex_bill_ref: 'eq.' + billId },
-      useCache: false
-    });
-    if (usedCheck && usedCheck.length > 0) {
-      statusEl.innerHTML = '<span style="color:#f44336;">❌ บิลนี้ถูกนำไปแลก Free Ex แล้ว</span>';
-      return;
-    }
-
-    if (bill.date) {
-      var bd = new Date(bill.date);
-      var now = new Date();
-      var diffDays = (now - bd) / (1000 * 60 * 60 * 24);
-      if (diffDays > 30) {
-        statusEl.innerHTML = '<span style="color:#f44336;">❌ บิลนี้เกิน 1 เดือนแล้ว (' + Math.floor(diffDays) + ' วัน)</span>';
-        return;
-      }
-    }
-
-    var billItems = {};
-    (bill.items || []).filter(function(i) { return i.item_role === 'NEW'; }).forEach(function(i) {
-      billItems[i.product_id] = (billItems[i.product_id] || 0) + parseFloat(i.qty);
-    });
-
-    for (var fi = 0; fi < freeExItems.length; fi++) {
-      var fItem = freeExItems[fi];
-      var available = billItems[fItem.productId] || 0;
-      if (fItem.qty > available) {
-        statusEl.innerHTML = '<span style="color:#f44336;">❌ ' + fItem.productId + ' ในบิลมี ' + available + ' ชิ้น แต่กรอก ' + fItem.qty + ' ชิ้น</span>';
-        return;
-      }
-    }
-
-    _exFreeExVerified = true;
-    _exFreeExBillData = { billId: billId };
-    statusEl.innerHTML = '<span style="color:#4caf50;">✅ ตรวจสอบผ่าน — บิล ' + billId + '</span>';
-
-  } catch(e) {
-    hideLoading();
-    statusEl.innerHTML = '<span style="color:#f44336;">❌ ' + e.message + '</span>';
-  }
+  var el = document.getElementById('exFreeExStatus');
+  if (el) el.innerHTML = '';
 }
 
 async function calculateExchangeNew() {
@@ -305,14 +230,10 @@ async function calculateExchangeNew() {
   var exchangeFee = 0;
   oldExchange.forEach(function(item) { exchangeFee += (EXCHANGE_FEES[item.productId] || 0) * item.qty; });
 
+  // [R13] Free Exchange — ไม่ตรวจสอบบิลเก่าแล้ว บันทึกรหัสบิลไว้อ้างอิงเฉย ๆ
   if (oldFreeEx.length > 0) {
     var freeBillId = document.getElementById('exFreeExBillId').value.trim();
     if (!freeBillId) { alert('❌ กรุณากรอกรหัสบิลเก่าสำหรับ Free Exchange'); return; }
-    // บังคับให้ผ่านการตรวจสอบบิลก่อน — และบิลที่ตรวจต้องเป็นเลขเดียวกับในช่อง
-    if (!_exFreeExVerified || !_exFreeExBillData || _exFreeExBillData.billId !== freeBillId) {
-      alert('❌ กรุณากดปุ่ม "ตรวจสอบ" บิล Free Ex ให้ผ่านก่อนทำรายการ');
-      return;
-    }
   }
 
   var switchFee = 0;
@@ -372,8 +293,6 @@ function resetExchangeForm() {
   ['exNewGold', 'exOldExchange', 'exOldSwitch', 'exOldFreeEx'].forEach(function(id) { document.getElementById(id).innerHTML = ''; });
   document.getElementById('exFreeExBillId').value = '';
   document.getElementById('exFreeExStatus').innerHTML = '';
-  _exFreeExVerified = false;
-  _exFreeExBillData = null;
   _exRowCounter = 0;
 }
 

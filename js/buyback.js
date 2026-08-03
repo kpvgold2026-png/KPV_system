@@ -68,16 +68,22 @@ async function loadBuybacks() {
           actions += ' <button class="btn-action" onclick="deleteTransactionSupabase(\'' + row.id + '\',\'BUYBACK\')" style="background:#f44336;margin-left:4px;">🗑️</button>';
         }
       } else {
+        // [R13] Buyback = เงินออกจากร้าน → แสดงเป็นยอดลบ (สีแดง) กันสับสน
+        var neg = function(n) {
+          var v = parseFloat(n) || 0;
+          if (v === 0) return '0 LAK';
+          return '<span style="color:#f44336;">-' + formatNumber(Math.abs(v)) + ' LAK</span>';
+        };
         var detail = encodeURIComponent(JSON.stringify([
           ['Transaction ID', row.id],
           ['BILL ID', row.bill_id || '-'],
           ['Phone', row.phone],
           ['Items', items],
-          ['Price', formatNumber(price) + ' LAK'],
+          ['Price (ร้านจ่าย)', neg(price)],
           ['Fee', formatNumber(fee) + ' LAK'],
-          ['Total', formatNumber(total) + ' LAK'],
-          ['Paid', formatNumber(paid) + ' LAK'],
-          ['Balance', formatNumber(balance) + ' LAK'],
+          ['Total (ร้านจ่าย)', neg(total)],
+          ['Paid (จ่ายแล้ว)', neg(paid)],
+          ['Balance (ค้างจ่าย)', neg(balance)],
           ['Date', formatDateTime(row.date)],
           ['Status', status],
           ['Sale', saleName]

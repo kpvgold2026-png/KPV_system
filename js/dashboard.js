@@ -256,18 +256,39 @@ async function refreshDashReport() {
     if (!data) return;
     var net = parseFloat(data.netTotal) || 0;
     var carry = parseFloat(data.carryForward) || 0;
-    var diff = parseFloat(data.diff) || 0;
+
+    // [R13] Wealth = ทองในสต๊อก + เงินทั้งหมดแปลงเป็นทอง (ราคาขายทอง 1 g)
+    //   RPC เก่าไม่มีคีย์ฝั่งเงิน → fallback เป็นทองล้วนเหมือนเดิม
+    var hasMoney = data.wealthG !== undefined && data.wealthG !== null;
+    var moneyG = parseFloat(data.moneyGoldG) || 0;
+    var moneyLak = parseFloat(data.moneyLak) || 0;
+    var wealth = hasMoney ? (parseFloat(data.wealthG) || 0) : net;
+    var wealthPrev = hasMoney ? (parseFloat(data.wealthGPrev) || 0) : carry;
+    var diff = hasMoney ? (parseFloat(data.wealthDiff) || 0) : (parseFloat(data.diff) || 0);
+    var priceG = parseFloat(data.goldPricePerG) || 0;
     var diffColor = diff >= 0 ? '#4caf50' : '#f44336';
     var diffSign = diff >= 0 ? '+' : '';
 
-    document.getElementById('dashReportBox').innerHTML =
+    var rowStyle = 'display:flex;justify-content:space-between;font-size:12px;margin:3px 0;';
+    var html =
       '<h3 style="color:var(--gold-primary);margin-bottom:8px;">📋 Wealth</h3>' +
-      '<p style="font-size:11px;color:var(--text-secondary);margin:0;">ส่วนต่างทอง (ปัจจุบัน − เมื่อวาน)</p>' +
+      '<p style="font-size:11px;color:var(--text-secondary);margin:0;">ส่วนต่างความมั่งคั่ง (ปัจจุบัน − เมื่อวาน)</p>' +
       '<p style="font-size:26px;font-weight:bold;color:' + diffColor + ';margin:4px 0;">' + diffSign + diff.toFixed(2) + ' g</p>' +
       '<div style="border-top:1px solid var(--border-color);margin-top:8px;padding-top:8px;">' +
-      '<div style="display:flex;justify-content:space-between;font-size:12px;margin:3px 0;"><span style="color:var(--text-secondary);">ทองเมื่อวาน</span><span style="font-weight:bold;">' + carry.toFixed(2) + ' g</span></div>' +
-      '<div style="display:flex;justify-content:space-between;font-size:12px;margin:3px 0;"><span style="color:var(--text-secondary);">ทองปัจจุบัน</span><span style="font-weight:bold;">' + net.toFixed(2) + ' g</span></div>' +
-      '</div>';
+      '<div style="' + rowStyle + '"><span style="color:var(--text-secondary);">ทองในสต๊อก</span><span style="font-weight:bold;">' + net.toFixed(2) + ' g</span></div>';
+
+    if (hasMoney) {
+      html += '<div style="' + rowStyle + '"><span style="color:var(--text-secondary);">เงินคิดเป็นทอง</span><span style="font-weight:bold;color:#4caf50;">' + (moneyG >= 0 ? '+' : '') + moneyG.toFixed(2) + ' g</span></div>' +
+        '<div style="' + rowStyle + 'border-top:1px solid var(--border-color);padding-top:6px;margin-top:6px;"><span style="color:var(--gold-primary);font-weight:bold;">รวมความมั่งคั่ง</span><span style="font-weight:bold;color:var(--gold-primary);">' + wealth.toFixed(2) + ' g</span></div>' +
+        '<div style="' + rowStyle + '"><span style="color:var(--text-secondary);">เมื่อวาน</span><span style="font-weight:bold;">' + wealthPrev.toFixed(2) + ' g</span></div>' +
+        '<div style="font-size:10px;color:var(--text-secondary);margin-top:6px;line-height:1.5;">' +
+        'เงินรวม ' + formatNumber(Math.round(moneyLak)) + ' LAK ÷ ราคาทอง ' + formatNumber(Math.round(priceG)) + ' LAK/g' +
+        '</div>';
+    } else {
+      html += '<div style="' + rowStyle + '"><span style="color:var(--text-secondary);">ทองเมื่อวาน</span><span style="font-weight:bold;">' + carry.toFixed(2) + ' g</span></div>';
+    }
+    html += '</div>';
+    document.getElementById('dashReportBox').innerHTML = html;
   } catch(e) {}
 }
 

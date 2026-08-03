@@ -72,6 +72,7 @@ function renderAccounting(dashData, gramData, gramV2, diffData, accData, incompl
   var tradeinOldG_v2  = gramV2 ? parseFloat(gramV2.tradein_old_g) || 0 : 0;
   var exchangeNewG_v2 = gramV2 ? parseFloat(gramV2.exchange_new_g) || 0 : 0;
   var exchangeOldG_v2 = gramV2 ? parseFloat(gramV2.exchange_old_g) || 0 : 0;
+  var bbOldG_v2       = gramV2 ? parseFloat(gramV2.buyback_old_g) || 0 : bbOldG;
 
   var totalOldGIn = salesOldG + bbOldG;
   var totalNewGOut = salesNewG + wdNewG;
@@ -130,6 +131,8 @@ function renderAccounting(dashData, gramData, gramV2, diffData, accData, incompl
     '<p style="font-size:13px;color:var(--text-secondary);margin:2px 0;">ยอดขาย</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + formatNumber(Math.round(sellMoney)) + ' <span style="font-size:11px;">LAK</span></p>' +
     '<p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">ต้นทุน (WAC)</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + formatNumber(Math.round(sellCostLAK)) + ' <span style="font-size:11px;">LAK</span></p>' +
     '<p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">Diff</p><p style="font-size:16px;font-weight:bold;margin:2px 0;color:' + (sellDiff >= 0 ? '#4caf50' : '#f44336') + ';">' + formatNumber(Math.round(sellDiff)) + ' <span style="font-size:11px;">LAK</span></p>' +
+    // [R13] เพิ่มน้ำหนักทองใหม่ที่ออกไป (เดิม Box Sell ไม่แสดง)
+    '<p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">New Out</p><p style="font-size:14px;font-weight:bold;margin:2px 0;color:#4caf50;">' + sellNewG_v2.toFixed(2) + ' g</p>' +
     '<p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">Transactions</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + sellCount + '</p></div>' +
 
     '<div class="stat-card"><h3 style="color:var(--gold-primary);margin-bottom:8px;">TRADE-IN</h3>' +
@@ -157,6 +160,8 @@ function renderAccounting(dashData, gramData, gramV2, diffData, accData, incompl
     '<p style="font-size:13px;color:var(--text-secondary);margin:2px 0;">ยอดจ่าย</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + formatNumber(Math.round(bbMoney)) + ' <span style="font-size:11px;">LAK</span></p>' +
     '<p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">ต้นทุน (WAC)</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + formatNumber(Math.round(bbCostLAK)) + ' <span style="font-size:11px;">LAK</span></p>' +
     '<p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">Diff</p><p style="font-size:16px;font-weight:bold;margin:2px 0;color:' + (bbDiff >= 0 ? '#4caf50' : '#f44336') + ';">' + formatNumber(Math.round(bbDiff)) + ' <span style="font-size:11px;">LAK</span></p>' +
+    // [R13] เพิ่มน้ำหนักทองเก่าที่รับเข้า (เดิม Box Buyback ไม่แสดง)
+    '<p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">Old In</p><p style="font-size:14px;font-weight:bold;margin:2px 0;color:#ff9800;">' + bbOldG_v2.toFixed(2) + ' g</p>' +
     '<p style="font-size:13px;color:var(--text-secondary);margin:6px 0 2px;">Tx</p><p style="font-size:16px;font-weight:bold;margin:2px 0;">' + bbCount + '</p></div>' +
 
     '<div class="stat-card" style="border:2px solid #c62828;background:linear-gradient(135deg,#1a1a1a 0%,#2d1a1a 100%);"><h3 style="color:#ef5350;margin-bottom:8px;">INCOMPLETE</h3>' +

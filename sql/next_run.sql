@@ -691,7 +691,9 @@ BEGIN
     WHERE id = p_tx_id;
 
   INSERT INTO stock_moves (ref_id, gold_type, type, direction, gold_g, price, wac_per_g, wac_per_baht, fulfilled, user_id, date)
-  VALUES (p_tx_id, 'NEW', 'SELL', 'OUT', v_gold_g, v_total, v_wac_per_g, v_wac_per_g * 15, TRUE, v_user_id, NOW())
+  -- [R13-8] price = ต้นทุนที่ตัดออก (น้ำหนัก × WAC) ไม่ใช่ยอดขาย — StockMove เป็นบัญชีต้นทุนล้วน
+  --   ยอดขายเก็บที่ transactions.total อยู่แล้ว
+  VALUES (p_tx_id, 'NEW', 'SELL', 'OUT', v_gold_g, v_cost, v_wac_per_g, v_wac_per_g * 15, TRUE, v_user_id, NOW())
   RETURNING id INTO v_move_id;
 
   FOR v_item IN SELECT product_id, qty FROM transaction_items
@@ -808,7 +810,9 @@ BEGIN
     WHERE id = p_tx_id;
 
   INSERT INTO stock_moves (ref_id, gold_type, type, direction, gold_g, price, wac_per_g, wac_per_baht, fulfilled, user_id, date)
-  VALUES (p_tx_id, 'NEW', 'TRADEIN', 'OUT', v_new_gold_g, v_total, v_wac_per_g, v_wac_per_g * 15, TRUE, v_user_id, NOW())
+  -- [R13-8] price = ต้นทุนทองใหม่ที่ออกไป "เต็มน้ำหนัก" × WAC (ไม่ใช่ยอดที่ลูกค้าจ่าย)
+  --   ‼️ คนละตัวกับ v_cost_diff ของชีท Diff ที่คิดเฉพาะส่วนต่างน้ำหนัก
+  VALUES (p_tx_id, 'NEW', 'TRADEIN', 'OUT', v_new_gold_g, v_new_gold_g * v_wac_per_g, v_wac_per_g, v_wac_per_g * 15, TRUE, v_user_id, NOW())
   RETURNING id INTO v_move_id;
 
   FOR v_item IN SELECT product_id, qty FROM transaction_items
@@ -931,7 +935,8 @@ BEGIN
     WHERE id = p_tx_id;
 
   INSERT INTO stock_moves (ref_id, gold_type, type, direction, gold_g, price, wac_per_g, wac_per_baht, fulfilled, user_id, date)
-  VALUES (p_tx_id, 'NEW', 'EXCHANGE', 'OUT', v_new_gold_g, v_total, v_wac_per_g, v_wac_per_g * 15, TRUE, v_user_id, NOW())
+  -- [R13-8] price = ต้นทุนที่ตัดออก (น้ำหนัก × WAC) ไม่ใช่ค่าธรรมเนียมที่ลูกค้าจ่าย
+  VALUES (p_tx_id, 'NEW', 'EXCHANGE', 'OUT', v_new_gold_g, v_new_cost, v_wac_per_g, v_wac_per_g * 15, TRUE, v_user_id, NOW())
   RETURNING id INTO v_move_id;
 
   FOR v_item IN SELECT product_id, qty FROM transaction_items
@@ -1041,7 +1046,8 @@ BEGIN
     WHERE id = p_tx_id;
 
   INSERT INTO stock_moves (ref_id, gold_type, type, direction, gold_g, price, wac_per_g, wac_per_baht, fulfilled, user_id, date)
-  VALUES (p_tx_id, 'NEW', 'WITHDRAW', 'OUT', v_gold_g, v_total, v_wac_per_g, v_wac_per_g * 15, TRUE, v_user_id, NOW())
+  -- [R13-8] price = ต้นทุนที่ตัดออก (น้ำหนัก × WAC) ไม่ใช่ยอดที่ลูกค้าจ่าย
+  VALUES (p_tx_id, 'NEW', 'WITHDRAW', 'OUT', v_gold_g, v_cost, v_wac_per_g, v_wac_per_g * 15, TRUE, v_user_id, NOW())
   RETURNING id INTO v_move_id;
 
   FOR v_item IN SELECT product_id, qty FROM transaction_items
@@ -1625,8 +1631,32 @@ GRANT EXECUTE ON FUNCTION submit_close_report(DATE, JSONB, JSONB, JSONB, INT, NU
 
 
 -- ============================================================
+-- [R13-7] helper: ต้นทุนจริงต่อชิ้นของทองเก่าที่รับมา (บัญชีต้นทุนล้วน)
+--   BUYBACK          → เงินที่ร้านจ่ายจริงต่อชิ้น (price_per_unit ที่ confirm_buyback_tx บันทึกไว้)
+--   TRADEIN/EXCHANGE → 0 (ลูกค้าเอามาแลก ไม่มีเงินจ่ายออก)
+--   fallback: แถวเก่าที่ price_per_unit ว่าง/0 → คำนวณจาก transactions.price ÷ จำนวนชิ้นของบิลนั้น
+--   internal เท่านั้น
+-- ============================================================
+CREATE OR REPLACE FUNCTION _ug_cost_per_unit(p_ug_id BIGINT)
+RETURNS NUMERIC LANGUAGE sql STABLE AS $$
+  SELECT COALESCE(
+    NULLIF(ug.price_per_unit, 0),
+    CASE WHEN ug.type = 'BUYBACK' THEN
+      COALESCE((SELECT t.price FROM transactions t WHERE t.id = ug.ref_tx_id), 0)
+      / NULLIF((SELECT SUM(u2.qty) FROM user_gold_received u2
+                WHERE u2.ref_tx_id = ug.ref_tx_id), 0)
+    ELSE 0 END,
+    0)
+  FROM user_gold_received ug
+  WHERE ug.id = p_ug_id;
+$$;
+REVOKE ALL ON FUNCTION _ug_cost_per_unit(BIGINT) FROM PUBLIC, anon, authenticated;
+
+
+-- ============================================================
 -- ข้อ5) approve_close_report — FOR UPDATE + guard เฉพาะ PENDING
 --   (กัน approve ซ้ำ / approve แถวที่ Sales ยกเลิกไปแล้ว / 2 Manager กดพร้อมกัน)
+--   [R13-7] ตีราคาทองเก่าเข้าสต๊อกด้วย "เงินที่จ่ายซื้อจริง" แทนราคาขาย
 -- ============================================================
 CREATE OR REPLACE FUNCTION approve_close_report(
   p_close_id TEXT,
@@ -1694,14 +1724,17 @@ BEGIN
 
   v_ref_id := _next_admin_ref('CL', 'CLOSE');
 
+  -- [R13-7] ‼️ ต้นทุนทองเก่า = "เงินที่จ่ายซื้อจริง" เท่านั้น (บัญชีต้นทุนล้วน)
+  --   BUYBACK          → เงินที่จ่ายต่อชิ้น (_ug_cost_per_unit)
+  --   TRADEIN/EXCHANGE → 0 (ลูกค้าเอามาแลก ร้านไม่ได้จ่ายเงิน) น้ำหนักเข้าแต่มูลค่า 0
+  --   เดิมใช้ weight_baht × sell_1baht (ราคา"ขาย") กับทุกประเภท → Stock OLD/WAC สูงเกินจริง
   SELECT
     COALESCE(SUM(ug.qty), 0),
     COALESCE(SUM(ug.qty * p.weight_baht * 15), 0),
-    COALESCE(SUM(ug.qty * p.weight_baht * COALESCE(tx.sell_1baht, 0)), 0)
+    COALESCE(SUM(ug.qty * _ug_cost_per_unit(ug.id)), 0)
     INTO v_total_qty, v_total_gold_g, v_total_value
   FROM user_gold_received ug
   JOIN products p ON p.id = ug.product_id
-  LEFT JOIN transactions tx ON tx.id = ug.ref_tx_id
   WHERE ug.user_id = v_close_user
     AND ug.settled = FALSE;
 
@@ -1725,16 +1758,16 @@ BEGIN
       DO UPDATE SET qty = stock_balances.qty + v_item.qty, updated_at = NOW();
     END LOOP;
 
-    -- [R11.1] สร้าง lot ทองเก่า (FIFO): 1 lot ต่อ product × ราคารับซื้อ (sell_1baht ของ tx ต้นทาง)
-    -- Σ(qty × g/unit × cost_per_g) = v_total_value เป๊ะ (สูตรเดียวกับ SELECT ด้านบน)
+    -- [R13-7] lot ทองเก่า (FIFO): 1 lot ต่อ (product × ต้นทุนจริงต่อชิ้น)
+    --   cost_per_g = เงินที่จ่ายต่อชิ้น ÷ น้ำหนักต่อชิ้น (Trade-in/Exchange = 0)
+    --   Σ(qty × g/unit × cost_per_g) = Σ(qty × ต้นทุนต่อชิ้น) = v_total_value เป๊ะ
     INSERT INTO old_gold_lots (product_id, qty_in, qty_left, gold_g_per_unit, cost_per_g, source_ref, date)
     SELECT ug.product_id, SUM(ug.qty), SUM(ug.qty), p.weight_baht * 15,
-           COALESCE(tx.sell_1baht, 0) / 15.0, p_close_id, NOW()
+           _ug_cost_per_unit(ug.id) / (p.weight_baht * 15), p_close_id, NOW()
     FROM user_gold_received ug
     JOIN products p ON p.id = ug.product_id
-    LEFT JOIN transactions tx ON tx.id = ug.ref_tx_id
     WHERE ug.user_id = v_close_user AND ug.settled = FALSE
-    GROUP BY ug.product_id, p.weight_baht, COALESCE(tx.sell_1baht, 0);
+    GROUP BY ug.product_id, p.weight_baht, _ug_cost_per_unit(ug.id);
 
     UPDATE wac_state
       SET old_gold_g = COALESCE(old_gold_g, 0) + v_total_gold_g,
@@ -2783,9 +2816,12 @@ GRANT EXECUTE ON FUNCTION get_live_report() TO authenticated;
 --     = v_total (ยอดที่ลูกค้าจ่าย = ราคาขาย) ไม่ใช่ต้นทุน
 --     แต่หน้า Stock(NEW)/tab WAC คิด "มูลค่าคงเหลือ = Σprice(IN) − Σprice(OUT)"
 --     → หักด้วยราคาขาย (รวมกำไร) ทุกบิล ⇒ มูลค่าต่ำกว่าจริง ⇒ WAC/g ต่ำกว่าจริง
+--   [R13-8] แก้ที่ต้นทางแล้ว (confirm_* เขียน price = ต้นทุน) แต่ยังต้องเก็บบล็อกนี้ไว้
+--     เพราะ "แถวเก่า" ที่บันทึกราคาขายไปแล้วไม่ได้ backfill (user สั่งไม่ต้อง)
 --   แก้ตอนอ่าน (ไม่แตะข้อมูลเดิม): OUT ของ NEW ใช้ wac_per_g × gold_g
 --     (แต่ละแถวมี snapshot wac_per_g ณ เวลาทำรายการอยู่แล้ว)
 --     แถวเก่าที่ wac_per_g ว่าง/0 → fallback ใช้ price เดิม
+--     แถวใหม่ (R13-8) ค่าทั้งสองเท่ากันอยู่แล้ว → ไม่มีผลอะไร
 --   ผลลัพธ์: tab WAC จะตรงกับ wac_state (Dashboard/Accounting) ที่หักด้วย WAC×g อยู่แล้ว
 --   คืนฟิลด์ 'salePrice' เพิ่มไว้ เผื่ออยากโชว์ยอดขายคู่กัน
 --   ‼️ ฝั่ง OLD คงเดิม (คิด FIFO จากราคา IN ตอนอ่าน — ถูกตามหลักอยู่แล้ว)
@@ -2843,7 +2879,8 @@ BEGIN
       'price', CASE WHEN direction = 'IN'
                     THEN COALESCE(price, 0)
                     ELSE COALESCE(NULLIF(wac_per_g, 0) * gold_g, price, 0) END,
-      'salePrice', COALESCE(price, 0),
+      -- ค่าดิบที่เก็บในตาราง: แถวก่อน R13-8 = ราคาขาย / ตั้งแต่ R13-8 = ต้นทุน (เท่ากับ price ด้านบน)
+      'rawPrice', COALESCE(price, 0),
       'date', date, 'note', note
     ) ORDER BY date), '[]'::jsonb)
     INTO v_moves

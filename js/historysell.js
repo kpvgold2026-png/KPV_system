@@ -49,44 +49,56 @@ async function loadHistorySell() {
       var items = r.items || [];
       // [R13] ทองเก่าของแต่ละประเภทไม่เหมือนกัน — EXCHANGE มี SWITCH/FREE_EX ด้วย
       //   เดิมกรองแค่ OLD/FOC → คอลัมน์ OLD Gold ของ Exchange อ่านไม่ครบ
+      //   ในตาราง = รวมทองเก่าทุกชนิด / ใน popup = แจงแยก (ดู detailArr ข้างล่าง)
       var OLD_ROLES = { 'EXCHANGE': ['OLD','SWITCH','FREE_EX'], 'TRADEIN': ['OLD','FOC'] };
       var oldRoles = OLD_ROLES[r.type] || ['OLD','FOC','SWITCH','FREE_EX'];
-      var oldItems = items.filter(function(i) { return oldRoles.indexOf(i.role) !== -1; }).map(function(i) { return { productId: i.productId, qty: i.qty }; });
-      var newItems = items.filter(function(i) { return i.role === 'NEW'; }).map(function(i) { return { productId: i.productId, qty: i.qty }; });
-      var oldGoldStr = oldItems.length > 0 ? formatItemsForTable(JSON.stringify(oldItems)) : '-';
-      var newGoldStr = newItems.length > 0 ? formatItemsForTable(JSON.stringify(newItems)) : '-';
+      var pick = function(roles) {
+        return items.filter(function(i) { return roles.indexOf(i.role) !== -1; })
+                    .map(function(i) { return { productId: i.productId, qty: i.qty }; });
+      };
+      var fmtItems = function(arr) { return arr.length ? formatItemsForTable(JSON.stringify(arr)) : '-'; };
+
+      var oldItems = pick(oldRoles);
+      var newItems = pick(['NEW']);
+      var oldGoldStr = fmtItems(oldItems);
+      var newGoldStr = fmtItems(newItems);
 
       var paid = parseFloat(r.paid) || 0;
       var total = parseFloat(r.total) || 0;
       var actions = '';
 
       if (r.status === 'COMPLETED' || r.status === 'PARTIAL' || r.status === 'PAID') {
-        // type-specific item slices for richer detail popup
-        var switchItems = items.filter(function(i) { return i.role === 'SWITCH'; }).map(function(i) { return { productId: i.productId, qty: i.qty }; });
-        var freeExItems = items.filter(function(i) { return i.role === 'FREE_EX'; }).map(function(i) { return { productId: i.productId, qty: i.qty }; });
-        var focItems = items.filter(function(i) { return i.role === 'FOC'; }).map(function(i) { return { productId: i.productId, qty: i.qty }; });
-        var switchStr = switchItems.length ? formatItemsForTable(JSON.stringify(switchItems)) : '-';
-        var freeExStr = freeExItems.length ? formatItemsForTable(JSON.stringify(freeExItems)) : '-';
-        var focStr = focItems.length ? formatItemsForTable(JSON.stringify(focItems)) : '-';
+        // [R13] popup แจงทองเก่าแยกชนิด (ตารางแสดงรวม)
+        var pureOldItems = pick(['OLD']);
+        var switchItems  = pick(['SWITCH']);
+        var freeExItems  = pick(['FREE_EX']);
+        var focItems     = pick(['FOC']);
+        var hasSplit = (switchItems.length + freeExItems.length + focItems.length) > 0;
 
         var detailArr = [
           ['Type', typeLabel],
           ['Transaction ID', r.id],
           ['BILL ID', r.bill_id || '-'],
           ['Phone', r.phone],
-          ['Old Gold', oldGoldStr],
-          ['New Gold', newGoldStr]
+          // มีทองเก่าหลายชนิด → บรรทัดนี้แสดงเฉพาะ OLD แท้ ๆ แล้วแจงชนิดอื่นต่อข้างล่าง
+          ['Old Gold', hasSplit ? fmtItems(pureOldItems) : oldGoldStr]
         ];
         // type-specific extras
         if (r.type === 'TRADEIN') {
-          if (focItems.length) detailArr.push(['FOC Gold', focStr]);
+          if (focItems.length) detailArr.push(['F.O.C (Old Gold)', fmtItems(focItems)]);
           if (r.foc_premium_deduct) detailArr.push(['FOC Premium Deduct', formatNumber(parseFloat(r.foc_premium_deduct) || 0) + ' LAK']);
           if (r.foc_bill_ref) detailArr.push(['FOC Bill Ref', r.foc_bill_ref]);
+        } else if (r.type === 'EXCHANGE') {
+          if (switchItems.length) detailArr.push(['Switch Old Gold', fmtItems(switchItems)]);
+          if (freeExItems.length) detailArr.push(['Free Ex Old Gold', fmtItems(freeExItems)]);
+          if (r.free_ex_bill_ref) detailArr.push(['Free Ex Bill Ref', r.free_ex_bill_ref]);
+        }
+        if (hasSplit) detailArr.push(['ทองเก่ารวม', oldGoldStr]);
+        detailArr.push(['New Gold', newGoldStr]);
+
+        if (r.type === 'TRADEIN') {
           if (r.diff) detailArr.push(['Difference', formatNumber(parseFloat(r.diff) || 0) + ' LAK']);
         } else if (r.type === 'EXCHANGE') {
-          if (switchItems.length) detailArr.push(['Switch Old Gold', switchStr]);
-          if (freeExItems.length) detailArr.push(['Free Ex Old Gold', freeExStr]);
-          if (r.free_ex_bill_ref) detailArr.push(['Free Ex Bill Ref', r.free_ex_bill_ref]);
           if (r.ex_fee) detailArr.push(['Exchange Fee', formatNumber(parseFloat(r.ex_fee) || 0) + ' LAK']);
           if (r.switch_fee) detailArr.push(['Switch Fee', formatNumber(parseFloat(r.switch_fee) || 0) + ' LAK']);
         } else if (r.type === 'WITHDRAW') {

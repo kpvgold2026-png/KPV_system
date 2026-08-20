@@ -90,7 +90,7 @@ async function loadTradeins() {
           ['FOC Premium หัก', focPremDeduct],
           ['Total', formatNumber(row.total) + ' LAK'],
           ['Customer Paid', payInfo],
-          ['Change', change > 0 ? formatNumber(change) + ' LAK' : '-'],
+          ['เงินทอน (หักจาก Sales)', change > 0 ? '<span style="color:#ff9800;">-' + formatNumber(change) + ' LAK</span>' : '-'],
           ['Date', formatDateTime(row.date)],
           ['Status', status],
           ['Sale', saleName]

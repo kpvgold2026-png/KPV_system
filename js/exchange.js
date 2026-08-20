@@ -95,7 +95,7 @@ async function loadExchanges() {
           ['Premium', formatNumber(premium) + ' LAK'],
           ['Total', formatNumber(total) + ' LAK'],
           ['Customer Paid', exPayInfo],
-          ['Change', exChange > 0 ? formatNumber(exChange) + ' LAK' : '-'],
+          ['เงินทอน (หักจาก Sales)', exChange > 0 ? '<span style="color:#ff9800;">-' + formatNumber(exChange) + ' LAK</span>' : '-'],
           ['Date', formatDateTime(row.date)],
           ['Status', status],
           ['Sale', sale]

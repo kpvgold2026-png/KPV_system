@@ -363,7 +363,9 @@ async function confirmMultiPayment() {
       lakItems.forEach(function(i) { paymentEntries.push(i); });
       nonLakItems.forEach(function(i) { paymentEntries.push(i); });
 
-      if (paymentEntries.length === 0) {
+      // [R14] บิลที่ยอดรวม = 0 (เช่น Free Exchange / เปลี่ยนฟรี) ยืนยันได้เลย
+      //   ขอแค่ Remaining = 0 ก็พอ ไม่ต้องเพิ่มรายการชำระเงิน
+      if (paymentEntries.length === 0 && total > 0) {
         alert('❌ ไม่มีรายการชำระเงิน');
         endSubmit();
         return;

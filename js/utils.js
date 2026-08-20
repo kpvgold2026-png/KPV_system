@@ -484,7 +484,9 @@ async function viewTransactionDetail(type, jsonData) {
   html += '<h3 style="color:var(--gold-primary);margin-bottom:15px;">' + type.toUpperCase() + ' Detail</h3>';
   html += '<table style="width:100%;border-collapse:collapse;">';
   row.forEach(function(item) {
-    if (item[0] === 'Customer Paid' || item[0] === 'Change') return;
+    // [R14] ซ่อนแค่ Customer Paid (ซ้ำกับบล็อก "รายละเอียดการชำระเงิน" ด้านล่าง)
+    //   ‼️ แถวเงินทอนต้องแสดง — transaction_payments ไม่มีแถวเงินทอน (ลง user_cashbook/cashbank)
+    if (item[0] === 'Customer Paid') return;
     html += '<tr style="border-bottom:1px solid var(--border-color);">';
     html += '<td style="padding:8px 12px;color:var(--text-secondary);white-space:nowrap;">' + item[0] + '</td>';
     html += '<td style="padding:8px 12px;font-weight:600;">' + item[1] + '</td>';

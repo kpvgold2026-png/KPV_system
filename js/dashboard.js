@@ -148,11 +148,23 @@ function renderDashDB(data) {
     '<p style="font-size:16px;margin:3px 0;">' + formatCurrency(bankTHB, 'THB') + ' <span style="font-size:12px;">THB</span></p>' +
     '<p style="font-size:16px;margin:3px 0;">' + formatCurrency(bankUSD, 'USD') + ' <span style="font-size:12px;">USD</span></p>';
 
+  // สูตร: Σ(จำนวนชิ้น × น้ำหนัก(บาท) × 15) ของทุกสินค้า = กรัม  (G07 = 0.0666667 บาท = 1 g)
+  // [R14-2] ‼️ ยอดนี้อ่านจาก stock_balances → "ทองเก่าที่ Sales ถือแต่ยังไม่ปิดกะ" ยังไม่ถูกนับ
+  //   (ทองเก่าจะเข้าสต๊อกตอน Manager approve ปิดกะ) → แจงให้เห็นใต้กล่อง กันงงเวลาเทียบกับบิล
   var totalGoldG = newG + oldG;
-  document.getElementById('dashTotalGoldBox').innerHTML =
+  var pendOldG = parseFloat(data.pending_old_g) || 0;
+  var pendOldPieces = parseFloat(data.pending_old_pieces) || 0;
+  var totalGoldHtml =
     '<h3 style="color:var(--gold-primary);margin-bottom:10px;">TOTAL GOLD</h3>' +
     '<p style="font-size:28px;margin:5px 0;font-weight:bold;">' + totalGoldG.toFixed(2) + ' g</p>' +
     '<p style="font-size:13px;color:var(--text-secondary);">NEW: ' + newG.toFixed(2) + ' g | OLD: ' + oldG.toFixed(2) + ' g</p>';
+  if (pendOldG > 0) {
+    totalGoldHtml +=
+      '<p style="font-size:12px;color:#ff9800;margin-top:6px;border-top:1px solid var(--border-color);padding-top:6px;">' +
+      '⏳ ทองเก่ารอปิดกะ: ' + pendOldG.toFixed(2) + ' g (' + pendOldPieces + ' ชิ้น)</p>' +
+      '<p style="font-size:12px;color:var(--text-secondary);">รวมทั้งหมด: ' + (totalGoldG + pendOldG).toFixed(2) + ' g</p>';
+  }
+  document.getElementById('dashTotalGoldBox').innerHTML = totalGoldHtml;
 
   document.getElementById('dashTotalCashBox').innerHTML =
     '<h3 style="color:var(--gold-primary);margin-bottom:10px;">TOTAL CASH + BANK</h3>' +

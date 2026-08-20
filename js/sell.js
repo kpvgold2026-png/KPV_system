@@ -79,7 +79,7 @@ async function loadSells() {
           ['Items', formatItemsForTable(row._itemsJson)],
           ['Total', formatNumber(row.total) + ' LAK'],
           ['Customer Paid', payInfo],
-          ['Change', changeLak > 0 ? formatNumber(changeLak) + ' LAK' : '-'],
+          ['เงินทอน (หักจาก Sales)', changeLak > 0 ? '<span style="color:#ff9800;">-' + formatNumber(changeLak) + ' LAK</span>' : '-'],
           ['Date', formatDateTime(row.date)],
           ['Status', status],
           ['Sale', saleName]

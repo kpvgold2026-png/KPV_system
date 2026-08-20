@@ -59,6 +59,7 @@ async function loadWithdraws() {
         }
       } else {
         var wdPaid = parseFloat(row.paid) || 0;
+        var wdChange = parseFloat(row.change_amount) || 0;
         var detail = encodeURIComponent(JSON.stringify([
           ['Transaction ID', row.id],
           ['BILL ID', row.bill_id || '-'],
@@ -68,6 +69,7 @@ async function loadWithdraws() {
           ['Premium', formatNumber(premium) + ' LAK'],
           ['Total', formatNumber(total) + ' LAK'],
           ['Customer Paid', wdPaid > 0 ? formatNumber(wdPaid) + ' LAK' : '-'],
+          ['เงินทอน (หักจาก Sales)', wdChange > 0 ? '<span style="color:#ff9800;">-' + formatNumber(wdChange) + ' LAK</span>' : '-'],
           ['Note', row.note || '-'],
           ['Date', formatDateTime(row.date)],
           ['Status', status],

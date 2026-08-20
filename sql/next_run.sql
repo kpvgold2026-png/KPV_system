@@ -1,4 +1,17 @@
 -- ============================================================
+-- KPV — Round 14 (2026-08-20)  [แก้ทับของเดิมในไฟล์นี้ — รันทั้งไฟล์ได้เหมือนเดิม]
+--  R14-1) get_live_report (Box Wealth) — แปลง THB/USD เป็น LAK ด้วย "เรทขาย"
+--         (thb_sell/usd_sell) แทนเรทรับซื้อ
+--  R14-2) get_dashboard_data — คืน pending_old_g/pending_old_pieces
+--         = ทองเก่าที่ Sales ถืออยู่แต่ยังไม่ปิดกะ (ยังไม่เข้า stock_balances)
+--         → TOTAL GOLD บน Dashboard แจงให้เห็นว่าทำไมยอดน้อยกว่าที่นับจากบิล
+--  R14-3) confirm_sell/tradein/exchange/withdraw_tx + _apply_confirm_payments
+--         — ยืนยันบิลที่ยอดรวม = 0 ได้โดยไม่ต้องมีรายการชำระเงิน (Free Exchange)
+--         ยอด > 0 ยังบังคับต้องมีรายการชำระเหมือนเดิม
+-- ============================================================
+
+
+-- ============================================================
 -- KPV — Round 11 + 11.1 (2026-07-06)  [เขียนทับ next_run.sql เดิม — รัน idempotent ได้]
 -- Round 11.1 (เพิ่มจาก R11 — user ยังไม่ได้รัน R11 รันไฟล์นี้ครั้งเดียวได้ครบ):
 --  L1) Lot tracking ทองเก่า (FIFO): ตาราง old_gold_lots + backfill เปิดยอดจาก WAC
@@ -192,9 +205,8 @@ BEGIN
     v_n := v_n + 1;
   END LOOP;
 
-  IF v_n = 0 THEN
-    RAISE EXCEPTION 'ไม่มีรายการชำระเงินที่ยอดมากกว่า 0';
-  END IF;
+  -- [R14-3] ไม่มีรายการที่ยอด > 0 → ไม่ error ที่นี่ (บิลยอด 0 ต้องผ่านได้)
+  --   caller เป็นคนตัดสินใจ โดยดู entries เทียบกับยอดรวมของบิล
 
   RETURN jsonb_build_object('paid_lak', v_paid_lak,
                             'first_currency', COALESCE(v_first_currency, 'LAK'),
@@ -644,8 +656,11 @@ BEGIN
   v_role := current_user_role();
   v_is_sales := (v_role = 'Sales' OR v_role IS NULL);
 
-  IF p_payments IS NULL OR jsonb_typeof(p_payments) <> 'array' OR jsonb_array_length(p_payments) = 0 THEN
-    RETURN jsonb_build_object('success', false, 'message', 'ไม่มีรายการชำระเงิน');
+  -- [R14-3] อนุญาตยืนยันโดยไม่มีรายการชำระเงินได้ ถ้ายอดรวมของบิล = 0
+  --   (เช่น Free Exchange / เปลี่ยนฟรี — ลูกค้าไม่ต้องจ่ายเพิ่ม)
+  --   ตรงนี้เช็คแค่ "รูปแบบ" ส่วนเช็คว่าต้องมีเงินหรือไม่ ย้ายไปหลังอ่าน total
+  IF p_payments IS NULL OR jsonb_typeof(p_payments) <> 'array' THEN
+    RETURN jsonb_build_object('success', false, 'message', 'รูปแบบรายการชำระเงินไม่ถูกต้อง');
   END IF;
 
   SELECT t.status, t.total, t.phone, t.premium, COALESCE(t.sell_1baht, 0)
@@ -655,6 +670,11 @@ BEGIN
 
   IF v_status IS NULL THEN RETURN jsonb_build_object('success', false, 'message', 'Transaction not found'); END IF;
   IF v_status <> 'APPROVED' THEN RETURN jsonb_build_object('success', false, 'message', 'Must be APPROVED first'); END IF;
+
+  -- [R14-3] ยอดรวม > 0 → ต้องมีรายการชำระเงินอย่างน้อย 1 รายการ (ยอด 0 = ผ่านได้)
+  IF jsonb_array_length(p_payments) = 0 AND COALESCE(v_total, 0) > 0 THEN
+    RETURN jsonb_build_object('success', false, 'message', 'ไม่มีรายการชำระเงิน');
+  END IF;
 
   -- ‼️ เช็คสต๊อกพอก่อนตัด (ไม่พอ = ไม่แตะอะไรเลย tx คง APPROVED)
   FOR v_item IN SELECT ti.product_id, ti.qty FROM transaction_items ti
@@ -677,6 +697,11 @@ BEGIN
 
   -- ลงบัญชีทุกรายการจ่าย (transaction_payments + cashbank/user_cashbook)
   v_pay := _apply_confirm_payments(p_tx_id, p_payments, 'SELL', 'Sell ' || p_tx_id, v_user_id, v_is_sales);
+
+  -- [R14-3] ยอด > 0 แต่ไม่มีรายการชำระที่ยอดมากกว่า 0 → rollback
+  IF (v_pay->>'entries')::int = 0 AND COALESCE(v_total, 0) > 0 THEN
+    RAISE EXCEPTION 'ไม่มีรายการชำระเงินที่ยอดมากกว่า 0';
+  END IF;
 
   -- เงินทอน — หักออกจากกระเป๋าเดียวกับที่เงินสดเข้า (ไม่พอ = rollback ทั้งบิล)
   v_err := _apply_change_deduction(p_tx_id, v_change, v_user_id, v_is_sales);
@@ -761,8 +786,11 @@ BEGIN
   v_role := current_user_role();
   v_is_sales := (v_role = 'Sales' OR v_role IS NULL);
 
-  IF p_payments IS NULL OR jsonb_typeof(p_payments) <> 'array' OR jsonb_array_length(p_payments) = 0 THEN
-    RETURN jsonb_build_object('success', false, 'message', 'ไม่มีรายการชำระเงิน');
+  -- [R14-3] อนุญาตยืนยันโดยไม่มีรายการชำระเงินได้ ถ้ายอดรวมของบิล = 0
+  --   (เช่น Free Exchange / เปลี่ยนฟรี — ลูกค้าไม่ต้องจ่ายเพิ่ม)
+  --   ตรงนี้เช็คแค่ "รูปแบบ" ส่วนเช็คว่าต้องมีเงินหรือไม่ ย้ายไปหลังอ่าน total
+  IF p_payments IS NULL OR jsonb_typeof(p_payments) <> 'array' THEN
+    RETURN jsonb_build_object('success', false, 'message', 'รูปแบบรายการชำระเงินไม่ถูกต้อง');
   END IF;
 
   SELECT t.status, t.total, t.premium, t.sale_user_id, COALESCE(t.sell_1baht, 0)
@@ -772,6 +800,11 @@ BEGIN
 
   IF v_status IS NULL THEN RETURN jsonb_build_object('success', false, 'message', 'Not found'); END IF;
   IF v_status <> 'APPROVED' THEN RETURN jsonb_build_object('success', false, 'message', 'Must be APPROVED first'); END IF;
+
+  -- [R14-3] ยอดรวม > 0 → ต้องมีรายการชำระเงินอย่างน้อย 1 รายการ (ยอด 0 = ผ่านได้)
+  IF jsonb_array_length(p_payments) = 0 AND COALESCE(v_total, 0) > 0 THEN
+    RETURN jsonb_build_object('success', false, 'message', 'ไม่มีรายการชำระเงิน');
+  END IF;
 
   FOR v_item IN SELECT ti.product_id, ti.qty FROM transaction_items ti
                 WHERE ti.tx_id = p_tx_id AND ti.item_role = 'NEW' LOOP
@@ -797,6 +830,11 @@ BEGIN
   v_cost_diff := (v_new_gold_g - v_old_gold_g) * v_wac_per_g;
 
   v_pay := _apply_confirm_payments(p_tx_id, p_payments, 'TRADEIN', 'Tradein ' || p_tx_id, v_user_id, v_is_sales);
+
+  -- [R14-3] ยอด > 0 แต่ไม่มีรายการชำระที่ยอดมากกว่า 0 → rollback
+  IF (v_pay->>'entries')::int = 0 AND COALESCE(v_total, 0) > 0 THEN
+    RAISE EXCEPTION 'ไม่มีรายการชำระเงินที่ยอดมากกว่า 0';
+  END IF;
 
   v_err := _apply_change_deduction(p_tx_id, v_change, v_user_id, v_is_sales);
   IF v_err IS NOT NULL THEN RAISE EXCEPTION '%', v_err; END IF;
@@ -890,8 +928,11 @@ BEGIN
   v_role := current_user_role();
   v_is_sales := (v_role = 'Sales' OR v_role IS NULL);
 
-  IF p_payments IS NULL OR jsonb_typeof(p_payments) <> 'array' OR jsonb_array_length(p_payments) = 0 THEN
-    RETURN jsonb_build_object('success', false, 'message', 'ไม่มีรายการชำระเงิน');
+  -- [R14-3] อนุญาตยืนยันโดยไม่มีรายการชำระเงินได้ ถ้ายอดรวมของบิล = 0
+  --   (เช่น Free Exchange / เปลี่ยนฟรี — ลูกค้าไม่ต้องจ่ายเพิ่ม)
+  --   ตรงนี้เช็คแค่ "รูปแบบ" ส่วนเช็คว่าต้องมีเงินหรือไม่ ย้ายไปหลังอ่าน total
+  IF p_payments IS NULL OR jsonb_typeof(p_payments) <> 'array' THEN
+    RETURN jsonb_build_object('success', false, 'message', 'รูปแบบรายการชำระเงินไม่ถูกต้อง');
   END IF;
 
   SELECT t.status, t.total, t.ex_fee, t.switch_fee, t.premium, t.sale_user_id, COALESCE(t.sell_1baht, 0)
@@ -901,6 +942,11 @@ BEGIN
 
   IF v_status IS NULL THEN RETURN jsonb_build_object('success', false, 'message', 'Not found'); END IF;
   IF v_status <> 'APPROVED' THEN RETURN jsonb_build_object('success', false, 'message', 'Must be APPROVED first'); END IF;
+
+  -- [R14-3] ยอดรวม > 0 → ต้องมีรายการชำระเงินอย่างน้อย 1 รายการ (ยอด 0 = ผ่านได้)
+  IF jsonb_array_length(p_payments) = 0 AND COALESCE(v_total, 0) > 0 THEN
+    RETURN jsonb_build_object('success', false, 'message', 'ไม่มีรายการชำระเงิน');
+  END IF;
 
   FOR v_item IN SELECT ti.product_id, ti.qty FROM transaction_items ti
                 WHERE ti.tx_id = p_tx_id AND ti.item_role = 'NEW' LOOP
@@ -922,6 +968,11 @@ BEGIN
   v_old_sell_total := _diff_items_sell_total(p_tx_id, ARRAY['OLD','SWITCH','FREE_EX'], v_s1b);
 
   v_pay := _apply_confirm_payments(p_tx_id, p_payments, 'EXCHANGE', 'Exchange ' || p_tx_id, v_user_id, v_is_sales);
+
+  -- [R14-3] ยอด > 0 แต่ไม่มีรายการชำระที่ยอดมากกว่า 0 → rollback
+  IF (v_pay->>'entries')::int = 0 AND COALESCE(v_total, 0) > 0 THEN
+    RAISE EXCEPTION 'ไม่มีรายการชำระเงินที่ยอดมากกว่า 0';
+  END IF;
 
   v_err := _apply_change_deduction(p_tx_id, v_change, v_user_id, v_is_sales);
   IF v_err IS NOT NULL THEN RAISE EXCEPTION '%', v_err; END IF;
@@ -1006,8 +1057,11 @@ BEGIN
   v_role := current_user_role();
   v_is_sales := (v_role = 'Sales' OR v_role IS NULL);
 
-  IF p_payments IS NULL OR jsonb_typeof(p_payments) <> 'array' OR jsonb_array_length(p_payments) = 0 THEN
-    RETURN jsonb_build_object('success', false, 'message', 'ไม่มีรายการชำระเงิน');
+  -- [R14-3] อนุญาตยืนยันโดยไม่มีรายการชำระเงินได้ ถ้ายอดรวมของบิล = 0
+  --   (เช่น Free Exchange / เปลี่ยนฟรี — ลูกค้าไม่ต้องจ่ายเพิ่ม)
+  --   ตรงนี้เช็คแค่ "รูปแบบ" ส่วนเช็คว่าต้องมีเงินหรือไม่ ย้ายไปหลังอ่าน total
+  IF p_payments IS NULL OR jsonb_typeof(p_payments) <> 'array' THEN
+    RETURN jsonb_build_object('success', false, 'message', 'รูปแบบรายการชำระเงินไม่ถูกต้อง');
   END IF;
 
   SELECT t.status, t.total INTO v_status, v_total
@@ -1016,6 +1070,11 @@ BEGIN
 
   IF v_status IS NULL THEN RETURN jsonb_build_object('success', false, 'message', 'Not found'); END IF;
   IF v_status <> 'APPROVED' THEN RETURN jsonb_build_object('success', false, 'message', 'Must be APPROVED'); END IF;
+
+  -- [R14-3] ยอดรวม > 0 → ต้องมีรายการชำระเงินอย่างน้อย 1 รายการ (ยอด 0 = ผ่านได้)
+  IF jsonb_array_length(p_payments) = 0 AND COALESCE(v_total, 0) > 0 THEN
+    RETURN jsonb_build_object('success', false, 'message', 'ไม่มีรายการชำระเงิน');
+  END IF;
 
   FOR v_item IN SELECT ti.product_id, ti.qty FROM transaction_items ti
                 WHERE ti.tx_id = p_tx_id AND ti.item_role = 'NEW' LOOP
@@ -1033,6 +1092,11 @@ BEGIN
   v_cost := v_gold_g * v_wac_per_g;
 
   v_pay := _apply_confirm_payments(p_tx_id, p_payments, 'WITHDRAW', 'Withdraw ' || p_tx_id, v_user_id, v_is_sales);
+
+  -- [R14-3] ยอด > 0 แต่ไม่มีรายการชำระที่ยอดมากกว่า 0 → rollback
+  IF (v_pay->>'entries')::int = 0 AND COALESCE(v_total, 0) > 0 THEN
+    RAISE EXCEPTION 'ไม่มีรายการชำระเงินที่ยอดมากกว่า 0';
+  END IF;
 
   v_err := _apply_change_deduction(p_tx_id, v_change, v_user_id, v_is_sales);
   IF v_err IS NOT NULL THEN RAISE EXCEPTION '%', v_err; END IF;
@@ -2236,6 +2300,8 @@ DECLARE
   v_new_g NUMERIC := 0;
   v_old_pieces NUMERIC := 0;
   v_old_g NUMERIC := 0;
+  v_pend_pieces NUMERIC := 0;
+  v_pend_g NUMERIC := 0;
   v_cash JSONB;
   v_banks JSONB;
   v_sales JSONB;
@@ -2267,6 +2333,15 @@ BEGIN
   INTO v_old_pieces, v_old_g
   FROM stock_balances sb JOIN products p ON p.id = sb.product_id
   WHERE sb.gold_type = 'OLD';
+
+  -- [R14-2] ทองเก่าที่ Sales รับมาแล้วแต่ยังไม่ปิดกะ — ยังไม่เข้า stock_balances
+  --   ‼️ นี่คือสาเหตุที่ TOTAL GOLD น้อยกว่าที่นับจากบิลจริง (materialize ตอน approve ปิดกะ)
+  SELECT
+    COALESCE(SUM(ug.qty), 0),
+    COALESCE(SUM(ug.qty * p.weight_baht * 15), 0)
+  INTO v_pend_pieces, v_pend_g
+  FROM user_gold_received ug JOIN products p ON p.id = ug.product_id
+  WHERE COALESCE(ug.settled, FALSE) = FALSE;
 
   SELECT COALESCE(jsonb_object_agg(currency, total), '{}'::jsonb) INTO v_cash FROM (
     SELECT currency::text, COALESCE(SUM(amount), 0) AS total
@@ -2328,6 +2403,8 @@ BEGIN
     'new_g', v_new_g,
     'old_pieces', v_old_pieces,
     'old_g', v_old_g,
+    'pending_old_pieces', v_pend_pieces,
+    'pending_old_g', v_pend_g,
     'cash', v_cash,
     'banks', v_banks,
     'sales', v_sales,
@@ -2724,7 +2801,8 @@ GRANT EXECUTE ON FUNCTION get_payment_channel_summary(DATE, DATE) TO authenticat
 --   เดิมคืนแต่ทองในสต๊อก (g) → Box Wealth ไม่ผูกกับเงินเลย
 --   ใหม่: ความมั่งคั่งรวม (g) = ทองในสต๊อก + (เงินทั้งหมด ÷ ราคาทอง 1 g)
 --     เงินทั้งหมด (LAK) = cashbank ทุกช่องทาง/ทุกสกุล + เงินสดที่ Sales ถือ (user_cashbook)
---       - THB/USD แปลงเป็น LAK ด้วยเรทรับซื้อล่าสุด (thb_buy/usd_buy) = มูลค่าที่ร้านขายคืนได้จริง
+--       - [R14-1] THB/USD แปลงเป็น LAK ด้วย "เรทขาย" ล่าสุด (thb_sell/usd_sell) ตามที่ user สั่ง
+--         (เดิมใช้เรทรับซื้อ thb_buy/usd_buy → ตีมูลค่าต่ำกว่าจริง)
 --       - นับ user_cashbook เฉพาะ method='CASH' เพราะเงินโอนถูกบันทึกใน cashbank แล้ว (กันนับซ้ำ)
 --     ราคาทอง 1 g = sell_1baht ล่าสุด ÷ 15
 --   คืนทั้งยอดวันนี้และยอดสิ้นวันก่อน เพื่อให้ Box คำนวณส่วนต่างได้
@@ -2740,8 +2818,8 @@ DECLARE
   v_money_prev NUMERIC := 0;
   v_s1b NUMERIC := 0;
   v_price_g NUMERIC := 0;
-  v_thb_buy NUMERIC := 0;
-  v_usd_buy NUMERIC := 0;
+  v_thb_sell NUMERIC := 0;
+  v_usd_sell NUMERIC := 0;
   v_money_g_now NUMERIC := 0;
   v_money_g_prev NUMERIC := 0;
 BEGIN
@@ -2755,32 +2833,32 @@ BEGIN
     INTO v_gold_prev FROM stock_moves WHERE date < v_today_start;
 
   -- เรทแลกเงิน + ราคาทองล่าสุด
-  SELECT COALESCE(thb_buy, 0), COALESCE(usd_buy, 0) INTO v_thb_buy, v_usd_buy
+  SELECT COALESCE(thb_sell, 0), COALESCE(usd_sell, 0) INTO v_thb_sell, v_usd_sell
   FROM price_rates ORDER BY date DESC LIMIT 1;
   SELECT COALESCE(sell_1baht, 0) INTO v_s1b FROM pricing ORDER BY date DESC LIMIT 1;
   v_price_g := CASE WHEN COALESCE(v_s1b, 0) > 0 THEN v_s1b / 15.0 ELSE 0 END;
 
   -- เงินทั้งหมด (LAK) — ปัจจุบัน
   SELECT COALESCE(SUM(amount * CASE currency
-           WHEN 'THB' THEN COALESCE(NULLIF(v_thb_buy, 0), 1)
-           WHEN 'USD' THEN COALESCE(NULLIF(v_usd_buy, 0), 1)
+           WHEN 'THB' THEN COALESCE(NULLIF(v_thb_sell, 0), 1)
+           WHEN 'USD' THEN COALESCE(NULLIF(v_usd_sell, 0), 1)
            ELSE 1 END), 0)
     INTO v_money_now FROM cashbank;
   SELECT v_money_now + COALESCE(SUM(amount * CASE currency
-           WHEN 'THB' THEN COALESCE(NULLIF(v_thb_buy, 0), 1)
-           WHEN 'USD' THEN COALESCE(NULLIF(v_usd_buy, 0), 1)
+           WHEN 'THB' THEN COALESCE(NULLIF(v_thb_sell, 0), 1)
+           WHEN 'USD' THEN COALESCE(NULLIF(v_usd_sell, 0), 1)
            ELSE 1 END), 0)
     INTO v_money_now FROM user_cashbook WHERE method = 'CASH';
 
   -- เงินทั้งหมด (LAK) — สิ้นวันก่อน
   SELECT COALESCE(SUM(amount * CASE currency
-           WHEN 'THB' THEN COALESCE(NULLIF(v_thb_buy, 0), 1)
-           WHEN 'USD' THEN COALESCE(NULLIF(v_usd_buy, 0), 1)
+           WHEN 'THB' THEN COALESCE(NULLIF(v_thb_sell, 0), 1)
+           WHEN 'USD' THEN COALESCE(NULLIF(v_usd_sell, 0), 1)
            ELSE 1 END), 0)
     INTO v_money_prev FROM cashbank WHERE date < v_today_start;
   SELECT v_money_prev + COALESCE(SUM(amount * CASE currency
-           WHEN 'THB' THEN COALESCE(NULLIF(v_thb_buy, 0), 1)
-           WHEN 'USD' THEN COALESCE(NULLIF(v_usd_buy, 0), 1)
+           WHEN 'THB' THEN COALESCE(NULLIF(v_thb_sell, 0), 1)
+           WHEN 'USD' THEN COALESCE(NULLIF(v_usd_sell, 0), 1)
            ELSE 1 END), 0)
     INTO v_money_prev FROM user_cashbook WHERE method = 'CASH' AND date < v_today_start;
 

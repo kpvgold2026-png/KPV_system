@@ -5,6 +5,8 @@
 --  R14-2) get_dashboard_data — คืน pending_old_g/pending_old_pieces
 --         = ทองเก่าที่ Sales ถืออยู่แต่ยังไม่ปิดกะ (ยังไม่เข้า stock_balances)
 --         → TOTAL GOLD บน Dashboard แจงให้เห็นว่าทำไมยอดน้อยกว่าที่นับจากบิล
+--  R14-4) get_live_report — เงินรวมของ Wealth ไม่นับเงินสดที่ Sales ถือ (user_cashbook)
+--         กฎเดียวกับทองเก่ารอปิดกะ: ยังอยู่ในมือ Sales = ยังไม่ใช่ทรัพย์สินร้าน
 --  R14-3) confirm_sell/tradein/exchange/withdraw_tx + _apply_confirm_payments
 --         — ยืนยันบิลที่ยอดรวม = 0 ได้โดยไม่ต้องมีรายการชำระเงิน (Free Exchange)
 --         ยอด > 0 ยังบังคับต้องมีรายการชำระเหมือนเดิม
@@ -2800,10 +2802,11 @@ GRANT EXECUTE ON FUNCTION get_payment_channel_summary(DATE, DATE) TO authenticat
 -- [R13-5] get_live_report (Box Wealth) — เพิ่ม "เงินคิดเป็นทอง"
 --   เดิมคืนแต่ทองในสต๊อก (g) → Box Wealth ไม่ผูกกับเงินเลย
 --   ใหม่: ความมั่งคั่งรวม (g) = ทองในสต๊อก + (เงินทั้งหมด ÷ ราคาทอง 1 g)
---     เงินทั้งหมด (LAK) = cashbank ทุกช่องทาง/ทุกสกุล + เงินสดที่ Sales ถือ (user_cashbook)
+--     เงินทั้งหมด (LAK) = cashbank ทุกช่องทาง/ทุกสกุล (‼️ [R14-4] ไม่รวมเงินสดที่ Sales ถือ)
 --       - [R14-1] THB/USD แปลงเป็น LAK ด้วย "เรทขาย" ล่าสุด (thb_sell/usd_sell) ตามที่ user สั่ง
 --         (เดิมใช้เรทรับซื้อ thb_buy/usd_buy → ตีมูลค่าต่ำกว่าจริง)
---       - นับ user_cashbook เฉพาะ method='CASH' เพราะเงินโอนถูกบันทึกใน cashbank แล้ว (กันนับซ้ำ)
+--       - [R14-4] ตัด user_cashbook ออกทั้งหมด — เงินที่ Sales ถือยังไม่นับเป็นของร้าน
+--         (กฎเดียวกับทองเก่ารอปิดกะ) → เข้ายอดตอน approve ปิดกะแล้วเงินไหลเข้า cashbank
 --     ราคาทอง 1 g = sell_1baht ล่าสุด ÷ 15
 --   คืนทั้งยอดวันนี้และยอดสิ้นวันก่อน เพื่อให้ Box คำนวณส่วนต่างได้
 -- ============================================================
@@ -2844,11 +2847,9 @@ BEGIN
            WHEN 'USD' THEN COALESCE(NULLIF(v_usd_sell, 0), 1)
            ELSE 1 END), 0)
     INTO v_money_now FROM cashbank;
-  SELECT v_money_now + COALESCE(SUM(amount * CASE currency
-           WHEN 'THB' THEN COALESCE(NULLIF(v_thb_sell, 0), 1)
-           WHEN 'USD' THEN COALESCE(NULLIF(v_usd_sell, 0), 1)
-           ELSE 1 END), 0)
-    INTO v_money_now FROM user_cashbook WHERE method = 'CASH';
+  -- [R14-4] ‼️ ไม่นับเงินสดที่ Sales ถืออยู่ (user_cashbook) — ตรงกับกฎของทองเก่า:
+  --   ของที่ยังอยู่ในมือ Sales ยังไม่ถือเป็นทรัพย์สินร้าน จนกว่า Manager จะ approve ปิดกะ
+  --   (ตอน approve เงินถูกกวาดเข้า cashbank → ถึงจะโผล่ในยอดนี้)
 
   -- เงินทั้งหมด (LAK) — สิ้นวันก่อน
   SELECT COALESCE(SUM(amount * CASE currency
@@ -2856,11 +2857,7 @@ BEGIN
            WHEN 'USD' THEN COALESCE(NULLIF(v_usd_sell, 0), 1)
            ELSE 1 END), 0)
     INTO v_money_prev FROM cashbank WHERE date < v_today_start;
-  SELECT v_money_prev + COALESCE(SUM(amount * CASE currency
-           WHEN 'THB' THEN COALESCE(NULLIF(v_thb_sell, 0), 1)
-           WHEN 'USD' THEN COALESCE(NULLIF(v_usd_sell, 0), 1)
-           ELSE 1 END), 0)
-    INTO v_money_prev FROM user_cashbook WHERE method = 'CASH' AND date < v_today_start;
+  -- [R14-4] ไม่นับ user_cashbook เช่นกัน (ดูเหตุผลด้านบน)
 
   IF v_price_g > 0 THEN
     v_money_g_now  := v_money_now  / v_price_g;
@@ -3035,3 +3032,70 @@ BEGIN
 END;
 $function$;
 GRANT EXECUTE ON FUNCTION public.get_stock_moves(gold_type, date, date) TO authenticated;
+
+
+-- ============================================================
+-- [R14-2] 🔍 DIAGNOSTIC — ตรวจว่า "ทอง" แต่ละที่ตรงกันมั้ย
+--   รันได้ตลอด (SELECT ล้วน ไม่แก้ข้อมูล) — รันทั้งไฟล์ก็แค่พ่นผลลัพธ์ออกมา
+--   อ่านผล:
+--     balances_g   = ที่ tab Stock (NEW/OLD) และกล่อง TOTAL GOLD ใช้  (stock_balances)
+--     moves_net_g  = ที่ Box Wealth / tab Wealth ใช้                  (stock_moves สะสม)
+--     pending_g    = ทองเก่าที่ Sales ถือ ยังไม่ปิดกะ                  (user_gold_received settled=false)
+--     wac_state_g  = ตัวเลขที่กล่อง WAC ใช้
+--   ‼️ balances_g กับ moves_net_g ต้องเท่ากัน ถ้าต่าง = สองตารางหลุด sync ต้อง recompute
+--   ‼️ pending_g ไม่อยู่ในทั้ง 2 ตัว (ตั้งใจ — เข้าสต๊อกตอน Manager approve ปิดกะ)
+-- ============================================================
+SELECT jsonb_build_object(
+  'balances_g', (
+    SELECT jsonb_object_agg(gt, g) FROM (
+      SELECT sb.gold_type::text AS gt, SUM(sb.qty * p.weight_baht * 15) AS g
+      FROM stock_balances sb JOIN products p ON p.id = sb.product_id
+      GROUP BY sb.gold_type) t),
+  'moves_net_g', (
+    SELECT jsonb_object_agg(gt, g) FROM (
+      SELECT sm.gold_type::text AS gt,
+             SUM(CASE WHEN sm.direction = 'IN' THEN sm.gold_g ELSE -sm.gold_g END) AS g
+      FROM stock_moves sm GROUP BY sm.gold_type) t),
+  'pending_g', COALESCE((
+    SELECT SUM(ug.qty * p.weight_baht * 15)
+    FROM user_gold_received ug JOIN products p ON p.id = ug.product_id
+    WHERE COALESCE(ug.settled, FALSE) = FALSE), 0),
+  'pending_by_user', COALESCE((
+    SELECT jsonb_object_agg(nick, g) FROM (
+      SELECT COALESCE(u.nickname, ug.user_id::text) AS nick,
+             SUM(ug.qty * p.weight_baht * 15) AS g
+      FROM user_gold_received ug
+      JOIN products p ON p.id = ug.product_id
+      LEFT JOIN users u ON u.id = ug.user_id
+      WHERE COALESCE(ug.settled, FALSE) = FALSE
+      GROUP BY 1) t), '{}'::jsonb),
+  'wac_state_g', (SELECT jsonb_build_object('new_g', new_gold_g, 'old_g', old_gold_g,
+                                            'total_g', COALESCE(new_gold_g,0) + COALESCE(old_gold_g,0))
+                  FROM wac_state WHERE id = 1),
+  'balances_by_product', (
+    SELECT jsonb_object_agg(k, qty) FROM (
+      SELECT sb.gold_type::text || '-' || sb.product_id AS k, SUM(sb.qty) AS qty
+      FROM stock_balances sb GROUP BY 1) t),
+  'pending_by_product', COALESCE((
+    SELECT jsonb_object_agg(product_id, qty) FROM (
+      SELECT ug.product_id, SUM(ug.qty) AS qty
+      FROM user_gold_received ug
+      WHERE COALESCE(ug.settled, FALSE) = FALSE
+      GROUP BY 1) t), '{}'::jsonb),
+  -- ---- ฝั่งเงิน ----
+  --   shop_money = เงินของร้านจริง (cashbank) = ที่ Box Wealth ใช้
+  --   sales_cash = เงินสดที่ Sales ถืออยู่ — [R14-4] ไม่นับเข้า Wealth จนกว่าจะปิดกะ
+  'shop_money', COALESCE((
+    SELECT jsonb_object_agg(cur, amt) FROM (
+      SELECT currency::text AS cur, SUM(amount) AS amt FROM cashbank GROUP BY 1) t), '{}'::jsonb),
+  'sales_cash', COALESCE((
+    SELECT jsonb_object_agg(cur, amt) FROM (
+      SELECT currency::text AS cur, SUM(amount) AS amt
+      FROM user_cashbook WHERE method = 'CASH' GROUP BY 1) t), '{}'::jsonb),
+  'sales_cash_by_user', COALESCE((
+    SELECT jsonb_object_agg(nick, amt) FROM (
+      SELECT COALESCE(u.nickname, ucb.user_id::text) AS nick, SUM(ucb.amount) AS amt
+      FROM user_cashbook ucb LEFT JOIN users u ON u.id = ucb.user_id
+      WHERE ucb.method = 'CASH' AND ucb.currency = 'LAK'
+      GROUP BY 1) t), '{}'::jsonb)
+) AS gold_diagnostic;

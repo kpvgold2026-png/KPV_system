@@ -67,15 +67,19 @@ async function loadStockOldFiltered() {
   } catch(e) { console.error('Error loading stock old filtered:', e); }
 }
 
+// [R14-2] ‼️ get_stock_summary คืน carry = stock_balances "ยอดปัจจุบัน" (รวมรายการวันนี้ไปแล้ว)
+//   เดิมแสดง carry เป็น "ทองตั้งต้น" แล้วคิด Balance = carry + IN - OUT → นับรายการวันนี้ซ้ำ 2 รอบ
+//   ที่ถูก: ทองตั้งต้น = ยอดปัจจุบัน - IN วันนี้ + OUT วันนี้ ; Balance = ยอดปัจจุบันตรง ๆ
 function renderStockOldSummary(carry, qtyIn, qtyOut) {
   document.getElementById('stockOldSummaryTable').innerHTML = FIXED_PRODUCTS.map(function(p) {
-    var c = parseFloat(carry[p.id]) || 0;
+    var bal = parseFloat(carry[p.id]) || 0;
     var i = parseFloat(qtyIn[p.id]) || 0;
     var o = parseFloat(qtyOut[p.id]) || 0;
-    return '<tr><td>' + p.id + '</td><td>' + p.name + '</td><td>' + c + '</td>' +
+    var start = bal - i + o;
+    return '<tr><td>' + p.id + '</td><td>' + p.name + '</td><td>' + start + '</td>' +
       '<td style="color:#4caf50;">' + i + '</td>' +
       '<td style="color:#f44336;">' + o + '</td>' +
-      '<td style="font-weight:bold;">' + (c + i - o) + '</td></tr>';
+      '<td style="font-weight:bold;">' + bal + '</td></tr>';
   }).join('');
 }
 

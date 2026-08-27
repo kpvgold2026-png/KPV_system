@@ -1,16 +1,20 @@
 -- ============================================================
--- reset.sql — รีเซ็ตข้อมูลเริ่มสด เป็น 0 ทุกอย่าง (อัปเดต 2026-06-11)
+-- reset.sql — รีเซ็ตข้อมูลเริ่มสด เป็น 0 ทุกอย่าง (อัปเดต 2026-08-27)
 -- ============================================================
 -- ผลลัพธ์หลังรัน:
 --   - ลบทุก tx + diff + cashbank + user_cashbook + closes + notifications
 --     + stock_moves + stock_transfers + inventory_snapshots + approvals
---     + user_gold_received + admin_ref_counter
+--     + user_gold_received + daily_reports + audit_logs
+--     + admin_ref_counter + bill_sequence + old_gold_lots
 --   - ‼️ ไม่ทำรายการ STOCK_IN bootstrap — ทุกอย่างเริ่มที่ 0
---   - ทองเก่า (OLD) = 0 (ทุก product)
---   - ทองใหม่ (NEW) = 0 (ทุก product)
+--   - ทองเก่า (OLD) = 0 (ทุก product ที่มีในตาราง products)
+--   - ทองใหม่ (NEW) = 0 (ทุก product ที่มีในตาราง products)
 --   - wac_state ทั้งหมด = 0 (new/old gold_g + value)
 --   - ไม่มี opening cash — cashbank ว่าง (ยอดทุกสกุล = 0)
---   - bill_sequence reset (เลขบิลเริ่ม 1 ใหม่)
+--   - bill_sequence + admin_ref_counter reset (เลขบิล/เลขอ้างอิงเริ่ม 1 ใหม่)
+--
+-- ไม่แตะ (master data): users, products, banks, pricing, price_rates, app_config
+--   หมายเหตุ: banks.balance ไม่ต้อง reset — ยอดธนาคารคำนวณสดจาก cashbank
 -- ============================================================
 
 BEGIN;
@@ -31,57 +35,54 @@ DELETE FROM cashbank;
 DELETE FROM user_cashbook;
 DELETE FROM closes;
 DELETE FROM approvals;
-DELETE FROM notifications;
+DELETE FROM notifications;          -- notification_reads ตกไปเองผ่าน CASCADE
 DELETE FROM transactions;
-DELETE FROM bill_sequence;
-DELETE FROM daily_reports;
 
--- reset ตัวนับเลขอ้างอิง SI/SO/CB/TF/CL (Round 7.5+) — safe ถ้ายังไม่มี table
-DO $$ BEGIN
-  IF to_regclass('public.admin_ref_counter') IS NOT NULL THEN
-    DELETE FROM admin_ref_counter;
-  END IF;
-END $$;
-
--- ล้าง lot ทองเก่า (R11.1 FIFO) — safe ถ้ายังไม่มี table
-DO $$ BEGIN
-  IF to_regclass('public.old_gold_lots') IS NOT NULL THEN
-    DELETE FROM old_gold_lots;
-  END IF;
+-- ============================================================
+-- 1.1) ตารางที่เพิ่มมาทีหลัง (แต่ละรอบ) — safe ถ้ายังไม่มี table
+--   bill_sequence      = counter เลขบิล SE/TI/EX/BB/WD (Round 4)
+--   admin_ref_counter  = counter SI/SO/CB/TF/CL       (Round 7.5)
+--   old_gold_lots      = lot ทองเก่า FIFO             (Round 11.1)
+--   daily_reports      = wealth snapshot รายวัน       (Round 12)
+--   audit_logs         = ‼️ ต้องล้างด้วย — แท็บ "รายการที่ถูกลบ" (utils.js
+--                        loadDeletedList) อ่านจากตารางนี้ ถ้าไม่ล้างแต่ reset
+--                        bill_sequence เลขบิลใหม่จะซ้ำกับ ref_id ของบิลที่ลบไปแล้ว
+-- ============================================================
+DO $$
+DECLARE t TEXT;
+BEGIN
+  FOREACH t IN ARRAY ARRAY[
+    'bill_sequence', 'admin_ref_counter', 'old_gold_lots', 'daily_reports', 'audit_logs'
+  ] LOOP
+    IF to_regclass('public.' || t) IS NOT NULL THEN
+      EXECUTE format('DELETE FROM public.%I', t);
+    END IF;
+  END LOOP;
 END $$;
 
 
 -- ============================================================
--- 2) Reset stock_balances → NEW 0, OLD 0 (ทุก product)
+-- 2) Reset stock_balances → NEW 0, OLD 0 (ทุก product ในตาราง products)
+--    ดึงจาก products โดยตรง — เพิ่มสินค้าใหม่ทีหลังก็ไม่ตกหล่น
 -- ============================================================
 DELETE FROM stock_balances;
-INSERT INTO stock_balances (product_id, gold_type, qty, updated_at) VALUES
-  ('G01', 'NEW', 0, NOW()),
-  ('G02', 'NEW', 0, NOW()),
-  ('G03', 'NEW', 0, NOW()),
-  ('G04', 'NEW', 0, NOW()),
-  ('G05', 'NEW', 0, NOW()),
-  ('G06', 'NEW', 0, NOW()),
-  ('G07', 'NEW', 0, NOW()),
-  ('G01', 'OLD', 0, NOW()),
-  ('G02', 'OLD', 0, NOW()),
-  ('G03', 'OLD', 0, NOW()),
-  ('G04', 'OLD', 0, NOW()),
-  ('G05', 'OLD', 0, NOW()),
-  ('G06', 'OLD', 0, NOW()),
-  ('G07', 'OLD', 0, NOW());
+INSERT INTO stock_balances (product_id, gold_type, qty, updated_at)
+SELECT p.id, g.gt::gold_type, 0, NOW()
+FROM products p
+CROSS JOIN (VALUES ('NEW'), ('OLD')) AS g(gt);
 
 
 -- ============================================================
--- 3) Reset wac_state → ทั้งหมด = 0
+-- 3) Reset wac_state → ทั้งหมด = 0 (upsert — ไม่พึ่งว่ามีแถว id=1 อยู่ก่อน)
 -- ============================================================
-UPDATE wac_state SET
+INSERT INTO wac_state (id, new_gold_g, new_value, old_gold_g, old_value, updated_at)
+VALUES (1, 0, 0, 0, 0, NOW())
+ON CONFLICT (id) DO UPDATE SET
   new_gold_g = 0,
   new_value  = 0,
   old_gold_g = 0,
   old_value  = 0,
-  updated_at = NOW()
-WHERE id = 1;
+  updated_at = NOW();
 
 
 -- ============================================================
@@ -96,24 +97,23 @@ COMMIT;
 -- ============================================================
 -- ตรวจสอบหลังรัน
 -- ============================================================
---   -- สต็อก
+--   -- สต็อก (ต้องได้ 0 ทุกแถว, จำนวนแถว = products × 2)
 --   SELECT product_id, gold_type, qty FROM stock_balances ORDER BY gold_type, product_id;
 --
---   -- WAC
+--   -- WAC (ต้อง 0 ทั้งหมด)
 --   SELECT new_gold_g, new_value, old_gold_g, old_value,
 --          new_value / NULLIF(new_gold_g, 0) AS new_wac_per_g
 --   FROM wac_state WHERE id = 1;
 --
---   -- stock_moves bootstrap
---   SELECT ref_id, gold_type, type, direction, gold_g, price, wac_per_g
---   FROM stock_moves ORDER BY date DESC LIMIT 1;
+--   -- ต้องว่างทั้งหมด (คาดหวัง 0 ทุกช่อง)
+--   SELECT (SELECT COUNT(*) FROM transactions)   AS tx,
+--          (SELECT COUNT(*) FROM stock_moves)    AS moves,
+--          (SELECT COUNT(*) FROM cashbank)       AS cashbank,
+--          (SELECT COUNT(*) FROM user_cashbook)  AS user_cashbook,
+--          (SELECT COUNT(*) FROM closes)         AS closes,
+--          (SELECT COUNT(*) FROM old_gold_lots)  AS old_lots,
+--          (SELECT COUNT(*) FROM audit_logs)     AS audit_logs,
+--          (SELECT COUNT(*) FROM bill_sequence)  AS bill_seq;
 --
---   -- payment breakdown
---   SELECT type, currency, amount, rate, amount * rate AS lak_eq, method, note
---   FROM cashbank ORDER BY date ASC;
---
---   -- net cash balance (LAK equivalent)
---   SELECT currency,
---          SUM(CASE WHEN type LIKE '%IN%' OR type LIKE 'BANK_DEPOSIT'  THEN amount ELSE 0 END) AS cash_in,
---          SUM(CASE WHEN type LIKE '%OUT%' OR type LIKE 'BANK_WITHDRAW' THEN amount ELSE 0 END) AS cash_out
---   FROM cashbank WHERE method = 'CASH' GROUP BY currency;
+--   -- payment breakdown (ต้องว่าง)
+--   SELECT type, currency, amount, method, note FROM cashbank ORDER BY date ASC;

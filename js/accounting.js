@@ -79,14 +79,15 @@ function renderAccounting(dashData, gramData, gramV2, diffData, accData, incompl
   var netBaht = (totalNewGOut - totalOldGIn) / 15;
   var netColor = netBaht >= 0 ? '#4caf50' : '#f44336';
 
+  // [R15-1] WAC/g จาก SQL get_wac_state() (ผ่าน get_dashboard_data) — ไม่คำนวณเองอีก
+  //   fallback เฉพาะกรณี DB ยังไม่ได้รัน R15
   var wac = dashData && dashData.wac ? dashData.wac : {};
-  var newGoldG_wac = parseFloat(wac.new_gold_g) || 0;
-  var newValue_wac = parseFloat(wac.new_value) || 0;
-  var oldGoldG_wac = parseFloat(wac.old_gold_g) || 0;
-  var oldValue_wac = parseFloat(wac.old_value) || 0;
-  var totalG_wac = newGoldG_wac + oldGoldG_wac;
-  var totalC_wac = newValue_wac + oldValue_wac;
-  var wacPerG = totalG_wac > 0 ? totalC_wac / totalG_wac : 0;
+  var wacPerG = parseFloat(wac.wac_per_g);
+  if (isNaN(wacPerG)) {
+    var totalG_wac = (parseFloat(wac.new_gold_g) || 0) + (parseFloat(wac.old_gold_g) || 0);
+    var totalC_wac = (parseFloat(wac.new_value) || 0) + (parseFloat(wac.old_value) || 0);
+    wacPerG = totalG_wac > 0 ? totalC_wac / totalG_wac : 0;
+  }
 
   var bbMoney = parseFloat(buybacks.amount) || 0;
   var bbCount = parseInt(buybacks.count) || 0;

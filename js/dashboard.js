@@ -86,14 +86,21 @@ function renderDashDB(data) {
   var otherExpense = parseFloat(data.other_expense) || 0;
   var todayPL = plDiff - otherExpense;
 
-  var newGoldG = data.wac ? parseFloat(data.wac.new_gold_g) || 0 : 0;
-  var newValue = data.wac ? parseFloat(data.wac.new_value) || 0 : 0;
-  var oldGoldG = data.wac ? parseFloat(data.wac.old_gold_g) || 0 : 0;
-  var oldValue = data.wac ? parseFloat(data.wac.old_value) || 0 : 0;
-  var totalGoldG_wac = newGoldG + oldGoldG;
-  var totalCost_wac = newValue + oldValue;
-  var wacPerG = totalGoldG_wac > 0 ? totalCost_wac / totalGoldG_wac : 0;
-  var wacPerBaht = wacPerG * 15;
+  // [R15-1] WAC มาจาก SQL get_wac_state() ผ่าน get_dashboard_data (แหล่งเดียวกับ confirm_* / tab WAC)
+  //   wac_per_baht = wac_per_g × 15 คิดฝั่ง SQL จากค่าไม่ปัดเศษ — JS ปัดตอนแสดงผลเท่านั้น
+  //   fallback คำนวณเองเฉพาะกรณี DB ยังไม่ได้รัน R15 (ไม่มี wac_per_g มาให้)
+  var wacSrc = data.wac || {};
+  var wacPerG = parseFloat(wacSrc.wac_per_g);
+  if (isNaN(wacPerG)) {
+    var newGoldG = parseFloat(wacSrc.new_gold_g) || 0;
+    var newValue = parseFloat(wacSrc.new_value) || 0;
+    var oldGoldG = parseFloat(wacSrc.old_gold_g) || 0;
+    var oldValue = parseFloat(wacSrc.old_value) || 0;
+    var totalGoldG_wac = newGoldG + oldGoldG;
+    wacPerG = totalGoldG_wac > 0 ? (newValue + oldValue) / totalGoldG_wac : 0;
+  }
+  var wacPerBaht = parseFloat(wacSrc.wac_per_baht);
+  if (isNaN(wacPerBaht)) wacPerBaht = wacPerG * 15;
 
   document.getElementById('dashPLBox').innerHTML =
     '<h3 style="color:var(--gold-primary);margin-bottom:10px;">📈 P/L</h3>' +

@@ -19,6 +19,9 @@
 --         ลง transactions.sell_1baht (เป็น 0 ตลอด) → confirm_*/Diff/PriceIn ไปใช้ราคา "ปัจจุบัน"
 --         แทนราคา ณ ตอนทำรายการ — แก้ให้เก็บ snapshot ตั้งแต่ตอนสร้างบิล
 --         (helper _snapshot_sell_1baht: ค่าจาก JS ว่าง/0 → ใช้ราคาขายล่าสุดใน pricing ณ ตอนนั้น)
+--  R15-6) ‼️ WAC/บาท ไม่ตรง (48,431,993 แทน 48,431,999): ทอง 1 กรัม weight_baht = 0.0666667
+--         × 15 = 1.0000005 g → น้ำหนักรวมจริง 799.5001 g (จอโชว์ 799.50) → ทุกจุดคิดกรัมผ่าน
+--         _gold_g() = ROUND(weight_baht × 15, 3) + sync น้ำหนักใน wac_state ให้ตรง stock_balances
 -- ============================================================
 
 
@@ -70,6 +73,40 @@ ALTER TYPE cashbank_type ADD VALUE IF NOT EXISTS 'CHANGE';
 
 
 -- ============================================================
+-- [R15-6] น้ำหนักกรัมต่อชิ้น "เป๊ะ" — _gold_g(weight_baht)
+--   ‼️ ต้นเหตุ WAC/บาท ไม่ตรง: products.weight_baht ของ 1 กรัม = 0.0666667 บาท
+--     × 15 = 1.0000005 g/แท่ง → สะสมหลายแท่งเป็นเศษ 0.0001 g ใน wac_state/stock_moves
+--     (หน้าจอปัดน้ำหนักเป็น 2 ตำแหน่งเลยมองไม่เห็นเศษ แต่ WAC/บาท ที่หารด้วยน้ำหนักจริงเพี้ยน)
+--   แก้: ทุกจุดใน SQL ที่คิดกรัมใช้ _gold_g() = ROUND(weight_baht × 15, 3)
+--     10บาท=150 / 5=75 / 2=30 / 1=15 / 2สลึง=7.5 / 1สลึง=3.75 / 1กรัม=1.000 (ตรงกับ JS getGoldWeight)
+--   + calc_items_gold_g ใช้ตัวเดียวกัน
+--   + sync น้ำหนักใน wac_state ให้ตรง stock_balances (ท้ายไฟล์ — ล้างเศษเดิมครั้งเดียว)
+-- ============================================================
+CREATE OR REPLACE FUNCTION _gold_g(p_weight_baht NUMERIC)
+RETURNS NUMERIC LANGUAGE sql IMMUTABLE AS $$
+  SELECT ROUND(COALESCE(p_weight_baht, 0) * 15, 3);
+$$;
+GRANT EXECUTE ON FUNCTION _gold_g(NUMERIC) TO authenticated;
+
+CREATE OR REPLACE FUNCTION calc_items_gold_g(p_items JSONB)
+RETURNS NUMERIC AS $$
+DECLARE
+  v_total NUMERIC := 0;
+  v_item JSONB;
+  v_weight NUMERIC;
+BEGIN
+  IF p_items IS NULL THEN RETURN 0; END IF;
+  FOR v_item IN SELECT * FROM jsonb_array_elements(p_items) LOOP
+    SELECT _gold_g(weight_baht) INTO v_weight FROM products
+    WHERE id = (v_item->>'productId');
+    v_total := v_total + (COALESCE(v_weight, 0) * (v_item->>'qty')::numeric);
+  END LOOP;
+  RETURN v_total;
+END;
+$$ LANGUAGE plpgsql STABLE;
+
+
+-- ============================================================
 -- L1.1) ตาราง lot ทองเก่า (FIFO ต้นทุนจริง)
 --   1 lot = ทองเก่า 1 กลุ่ม (product × ราคารับซื้อ) ที่เข้าสต๊อกพร้อมกัน
 --   เข้า: approve_close_report (materialize) / ออก: transfer, stock_out (FIFO เก่าสุดก่อน)
@@ -97,7 +134,7 @@ GRANT SELECT ON old_gold_lots TO authenticated;
 -- backfill เปิดยอด (ครั้งแรกเท่านั้น — ตารางว่าง): สต๊อก OLD ปัจจุบัน 1 lot/product
 -- ที่ cost_per_g = WAC เฉลี่ยปัจจุบัน (lot เปิดยอดจะเก่าสุด → ถูกตัดก่อนโดยอัตโนมัติ)
 INSERT INTO old_gold_lots (product_id, qty_in, qty_left, gold_g_per_unit, cost_per_g, source_ref, date)
-SELECT sb.product_id, sb.qty, sb.qty, p.weight_baht * 15,
+SELECT sb.product_id, sb.qty, sb.qty, _gold_g(p.weight_baht),
        CASE WHEN COALESCE(w.old_gold_g, 0) > 0 THEN w.old_value / w.old_gold_g ELSE 0 END,
        'OPENING', NOW()
 FROM stock_balances sb
@@ -140,7 +177,7 @@ BEGIN
   END LOOP;
 
   IF v_remain > 0 THEN
-    SELECT weight_baht * 15 INTO v_g FROM products WHERE id = p_product_id;
+    SELECT _gold_g(weight_baht) INTO v_g FROM products WHERE id = p_product_id;
     SELECT CASE WHEN COALESCE(old_gold_g, 0) > 0 THEN old_value / old_gold_g ELSE 0 END
       INTO v_wac FROM wac_state WHERE id = 1;
     v_cost := v_cost + (v_remain * COALESCE(v_g, 0) * COALESCE(v_wac, 0));
@@ -316,7 +353,7 @@ BEGIN
                 FROM jsonb_array_elements(p_items) LOOP
     DECLARE v_weight NUMERIC;
     BEGIN
-      SELECT weight_baht * 15 INTO v_weight FROM products WHERE id = v_item.pid;
+      SELECT _gold_g(weight_baht) INTO v_weight FROM products WHERE id = v_item.pid;
       IF v_weight IS NULL THEN
         RETURN jsonb_build_object('success', false, 'message', 'Unknown product: ' || v_item.pid);
       END IF;
@@ -511,9 +548,9 @@ BEGIN
   gold_g_per_sale AS (
     SELECT
       t.sale_user_id,
-      COALESCE(SUM(ti.qty * p.weight_baht * 15) FILTER (WHERE t.type IN ('SELL','TRADEIN','EXCHANGE','WITHDRAW') AND ti.item_role='NEW'), 0) AS sell_gold_g,
-      COALESCE(SUM(ti.qty * p.weight_baht * 15) FILTER (WHERE t.type='BUYBACK' AND ti.item_role='OLD'), 0) AS bb_gold_g,
-      COALESCE(SUM(ti.qty * p.weight_baht * 15) FILTER (WHERE t.type='WITHDRAW' AND ti.item_role='NEW'), 0) AS wd_gold_g
+      COALESCE(SUM(ti.qty * _gold_g(p.weight_baht)) FILTER (WHERE t.type IN ('SELL','TRADEIN','EXCHANGE','WITHDRAW') AND ti.item_role='NEW'), 0) AS sell_gold_g,
+      COALESCE(SUM(ti.qty * _gold_g(p.weight_baht)) FILTER (WHERE t.type='BUYBACK' AND ti.item_role='OLD'), 0) AS bb_gold_g,
+      COALESCE(SUM(ti.qty * _gold_g(p.weight_baht)) FILTER (WHERE t.type='WITHDRAW' AND ti.item_role='NEW'), 0) AS wd_gold_g
     FROM transactions t
     JOIN transaction_items ti ON ti.tx_id = t.id
     JOIN products p ON p.id = ti.product_id
@@ -1154,7 +1191,7 @@ BEGIN
     INTO v_new_items FROM transaction_items WHERE tx_id = p_tx_id AND item_role = 'NEW';
   v_new_gold_g := calc_items_gold_g(v_new_items);
 
-  SELECT COALESCE(SUM(ti.qty * p.weight_baht * 15), 0) INTO v_old_gold_g
+  SELECT COALESCE(SUM(ti.qty * _gold_g(p.weight_baht)), 0) INTO v_old_gold_g
   FROM transaction_items ti JOIN products p ON p.id = ti.product_id
   WHERE ti.tx_id = p_tx_id AND ti.item_role IN ('OLD', 'FOC');
 
@@ -1619,7 +1656,7 @@ BEGIN
   --   ลูกค้าส่งมอบทองตั้งแต่ตกลงขาย จึงบันทึกเต็มจำนวนตอนจ่ายงวดแรก
   --   เช็ค EXISTS กันบันทึกซ้ำงวดถัดไป + ครอบคลุมบิล PARTIAL เก่าที่ค้างอยู่
   SELECT COALESCE(SUM(ti.qty), 0),
-         COALESCE(SUM(ti.qty * p.weight_baht * 15), 0)
+         COALESCE(SUM(ti.qty * _gold_g(p.weight_baht)), 0)
     INTO v_total_qty, v_old_gold_g
   FROM transaction_items ti
   JOIN products p ON p.id = ti.product_id
@@ -1700,7 +1737,7 @@ BEGIN
   -- 1) total weight + ตรวจสต็อก OLD พอ (FOR UPDATE) — ห้าม mutate ก่อน validate ครบ
   FOR v_item IN SELECT (value->>'productId') AS pid, (value->>'qty')::numeric AS qty
                 FROM jsonb_array_elements(p_items) LOOP
-    SELECT weight_baht * 15 INTO v_weight FROM products WHERE id = v_item.pid;
+    SELECT _gold_g(weight_baht) INTO v_weight FROM products WHERE id = v_item.pid;
     IF v_weight IS NULL THEN
       RETURN jsonb_build_object('success', false, 'message', 'Unknown product: ' || v_item.pid);
     END IF;
@@ -1805,7 +1842,7 @@ BEGIN
   -- ตรวจสินค้า + เช็คสต๊อกพอ (FOR UPDATE) — ห้าม mutate ก่อน validate ครบ
   FOR v_item IN SELECT (value->>'productId') AS pid, (value->>'qty')::numeric AS qty
                 FROM jsonb_array_elements(p_items) LOOP
-    SELECT weight_baht * 15 INTO v_weight FROM products WHERE id = v_item.pid;
+    SELECT _gold_g(weight_baht) INTO v_weight FROM products WHERE id = v_item.pid;
     IF v_weight IS NULL THEN
       RETURN jsonb_build_object('success', false, 'message', 'Unknown product: ' || v_item.pid);
     END IF;
@@ -1887,7 +1924,7 @@ BEGIN
   LOOP
     v_s1b := _diff_sell_1baht(v_t.sell_1baht);
 
-    SELECT COALESCE(SUM(ti.qty * p.weight_baht * 15),0) INTO v_new_g
+    SELECT COALESCE(SUM(ti.qty * _gold_g(p.weight_baht)),0) INTO v_new_g
     FROM transaction_items ti JOIN products p ON p.id = ti.product_id
     WHERE ti.tx_id = v_t.id AND ti.item_role = 'NEW';
 
@@ -1901,7 +1938,7 @@ BEGIN
         premium=EXCLUDED.premium, cost_diff=EXCLUDED.cost_diff, cost_old_gold=0, diff=EXCLUDED.diff;
 
     ELSIF v_t.type = 'TRADEIN' THEN
-      SELECT COALESCE(SUM(ti.qty * p.weight_baht * 15),0) INTO v_old_g
+      SELECT COALESCE(SUM(ti.qty * _gold_g(p.weight_baht)),0) INTO v_old_g
       FROM transaction_items ti JOIN products p ON p.id = ti.product_id
       WHERE ti.tx_id = v_t.id AND ti.item_role IN ('OLD','FOC');
       v_new_sell := _diff_items_sell_total(v_t.id, ARRAY['NEW'], v_s1b);
@@ -2158,7 +2195,7 @@ BEGIN
   --   ‼️ ลำดับ: อ่าน (ยอดรวม + WAC ปัจจุบัน) ให้ครบก่อน แล้วค่อยเขียน stock_moves/lot/wac_state
   SELECT
     COALESCE(SUM(ug.qty), 0),
-    COALESCE(SUM(ug.qty * p.weight_baht * 15), 0),
+    COALESCE(SUM(ug.qty * _gold_g(p.weight_baht)), 0),
     COALESCE(SUM(ug.qty * _ug_cost_per_unit(ug.id)), 0)
     INTO v_total_qty, v_total_gold_g, v_total_value
   FROM user_gold_received ug
@@ -2194,8 +2231,8 @@ BEGIN
     --   cost_per_g = PriceIn ต่อชิ้น ÷ น้ำหนักต่อชิ้น (Trade-in/Exchange = sell_1baht/15 ของบิล)
     --   Σ(qty × g/unit × cost_per_g) = Σ(qty × ต้นทุนต่อชิ้น) = v_total_value เป๊ะ
     INSERT INTO old_gold_lots (product_id, qty_in, qty_left, gold_g_per_unit, cost_per_g, source_ref, date)
-    SELECT ug.product_id, SUM(ug.qty), SUM(ug.qty), p.weight_baht * 15,
-           _ug_cost_per_unit(ug.id) / (p.weight_baht * 15), p_close_id, NOW()
+    SELECT ug.product_id, SUM(ug.qty), SUM(ug.qty), _gold_g(p.weight_baht),
+           _ug_cost_per_unit(ug.id) / (_gold_g(p.weight_baht)), p_close_id, NOW()
     FROM user_gold_received ug
     JOIN products p ON p.id = ug.product_id
     WHERE ug.user_id = v_close_user AND ug.settled = FALSE
@@ -2692,14 +2729,14 @@ BEGIN
 
   SELECT
     COALESCE(SUM(sb.qty), 0),
-    COALESCE(SUM(sb.qty * p.weight_baht * 15), 0)
+    COALESCE(SUM(sb.qty * _gold_g(p.weight_baht)), 0)
   INTO v_new_pieces, v_new_g
   FROM stock_balances sb JOIN products p ON p.id = sb.product_id
   WHERE sb.gold_type = 'NEW';
 
   SELECT
     COALESCE(SUM(sb.qty), 0),
-    COALESCE(SUM(sb.qty * p.weight_baht * 15), 0)
+    COALESCE(SUM(sb.qty * _gold_g(p.weight_baht)), 0)
   INTO v_old_pieces, v_old_g
   FROM stock_balances sb JOIN products p ON p.id = sb.product_id
   WHERE sb.gold_type = 'OLD';
@@ -2708,7 +2745,7 @@ BEGIN
   --   ‼️ นี่คือสาเหตุที่ TOTAL GOLD น้อยกว่าที่นับจากบิลจริง (materialize ตอน approve ปิดกะ)
   SELECT
     COALESCE(SUM(ug.qty), 0),
-    COALESCE(SUM(ug.qty * p.weight_baht * 15), 0)
+    COALESCE(SUM(ug.qty * _gold_g(p.weight_baht)), 0)
   INTO v_pend_pieces, v_pend_g
   FROM user_gold_received ug JOIN products p ON p.id = ug.product_id
   WHERE COALESCE(ug.settled, FALSE) = FALSE;
@@ -2798,7 +2835,7 @@ DECLARE v_result JSONB;
 BEGIN
   WITH tx_g AS (
     SELECT t.id AS tx_id, t.type AS tx_type, t.total,
-           COALESCE(SUM(ti.qty * p.weight_baht * 15) FILTER (
+           COALESCE(SUM(ti.qty * _gold_g(p.weight_baht)) FILTER (
              WHERE (t.type = 'BUYBACK' AND ti.item_role = 'OLD')
                 OR (t.type <> 'BUYBACK' AND ti.item_role = 'NEW')
            ), 0) AS gold_g
@@ -2836,7 +2873,7 @@ DECLARE v_result JSONB;
 BEGIN
   WITH item_g AS (
     SELECT t.id AS tx_id, t.type AS tx_type, ti.item_role,
-           SUM(ti.qty * p.weight_baht * 15) AS gold_g
+           SUM(ti.qty * _gold_g(p.weight_baht)) AS gold_g
     FROM transactions t
     JOIN transaction_items ti ON ti.tx_id = t.id
     JOIN products p ON p.id = ti.product_id
@@ -2987,9 +3024,9 @@ DECLARE
 BEGIN
   SELECT
     COALESCE(SUM(CASE WHEN ti.item_role IN ('OLD','FOC','SWITCH','FREE_EX')
-                      THEN ti.qty * p.weight_baht * 15 ELSE 0 END), 0),
+                      THEN ti.qty * _gold_g(p.weight_baht) ELSE 0 END), 0),
     COALESCE(SUM(CASE WHEN ti.item_role = 'NEW'
-                      THEN ti.qty * p.weight_baht * 15 ELSE 0 END), 0)
+                      THEN ti.qty * _gold_g(p.weight_baht) ELSE 0 END), 0)
   INTO v_sales_old_g, v_sales_new_g
   FROM transaction_items ti
   JOIN transactions t ON t.id = ti.tx_id
@@ -2998,7 +3035,7 @@ BEGIN
     AND t.status IN ('COMPLETED', 'PAID', 'PARTIAL')
     AND (t.date AT TIME ZONE 'Asia/Bangkok')::date BETWEEN p_date_from AND p_date_to;
 
-  SELECT COALESCE(SUM(ti.qty * p.weight_baht * 15), 0) INTO v_bb_old_g
+  SELECT COALESCE(SUM(ti.qty * _gold_g(p.weight_baht)), 0) INTO v_bb_old_g
   FROM transaction_items ti
   JOIN transactions t ON t.id = ti.tx_id
   JOIN products p ON p.id = ti.product_id
@@ -3006,7 +3043,7 @@ BEGIN
     AND ti.item_role = 'OLD'
     AND (t.date AT TIME ZONE 'Asia/Bangkok')::date BETWEEN p_date_from AND p_date_to;
 
-  SELECT COALESCE(SUM(ti.qty * p.weight_baht * 15), 0) INTO v_wd_new_g
+  SELECT COALESCE(SUM(ti.qty * _gold_g(p.weight_baht)), 0) INTO v_wd_new_g
   FROM transaction_items ti
   JOIN transactions t ON t.id = ti.tx_id
   JOIN products p ON p.id = ti.product_id
@@ -3505,6 +3542,28 @@ GRANT EXECUTE ON FUNCTION public.get_stock_moves(gold_type, date, date) TO authe
 
 
 -- ============================================================
+-- [R15-6] sync น้ำหนักใน wac_state ให้ตรงกับ stock_balances × _gold_g (ล้างเศษ 0.0001 g เดิม)
+--   แตะเฉพาะ "น้ำหนัก" (new_gold_g/old_gold_g) — มูลค่า (new_value/old_value) ไม่แตะ
+--   รันซ้ำได้: ถ้าตรงอยู่แล้วก็ไม่เปลี่ยนอะไร
+-- ============================================================
+UPDATE wac_state w
+SET new_gold_g = COALESCE((SELECT SUM(sb.qty * _gold_g(p.weight_baht))
+                           FROM stock_balances sb JOIN products p ON p.id = sb.product_id
+                           WHERE sb.gold_type = 'NEW'), 0),
+    old_gold_g = COALESCE((SELECT SUM(sb.qty * _gold_g(p.weight_baht))
+                           FROM stock_balances sb JOIN products p ON p.id = sb.product_id
+                           WHERE sb.gold_type = 'OLD'), 0),
+    updated_at = NOW()
+WHERE w.id = 1
+  AND (w.new_gold_g IS DISTINCT FROM COALESCE((SELECT SUM(sb.qty * _gold_g(p.weight_baht))
+                                               FROM stock_balances sb JOIN products p ON p.id = sb.product_id
+                                               WHERE sb.gold_type = 'NEW'), 0)
+    OR w.old_gold_g IS DISTINCT FROM COALESCE((SELECT SUM(sb.qty * _gold_g(p.weight_baht))
+                                               FROM stock_balances sb JOIN products p ON p.id = sb.product_id
+                                               WHERE sb.gold_type = 'OLD'), 0));
+
+
+-- ============================================================
 -- [R14-2] 🔍 DIAGNOSTIC — ตรวจว่า "ทอง" แต่ละที่ตรงกันมั้ย
 --   รันได้ตลอด (SELECT ล้วน ไม่แก้ข้อมูล) — รันทั้งไฟล์ก็แค่พ่นผลลัพธ์ออกมา
 --   อ่านผล:
@@ -3518,7 +3577,7 @@ GRANT EXECUTE ON FUNCTION public.get_stock_moves(gold_type, date, date) TO authe
 SELECT jsonb_build_object(
   'balances_g', (
     SELECT jsonb_object_agg(gt, g) FROM (
-      SELECT sb.gold_type::text AS gt, SUM(sb.qty * p.weight_baht * 15) AS g
+      SELECT sb.gold_type::text AS gt, SUM(sb.qty * _gold_g(p.weight_baht)) AS g
       FROM stock_balances sb JOIN products p ON p.id = sb.product_id
       GROUP BY sb.gold_type) t),
   'moves_net_g', (
@@ -3527,13 +3586,13 @@ SELECT jsonb_build_object(
              SUM(CASE WHEN sm.direction = 'IN' THEN sm.gold_g ELSE -sm.gold_g END) AS g
       FROM stock_moves sm GROUP BY sm.gold_type) t),
   'pending_g', COALESCE((
-    SELECT SUM(ug.qty * p.weight_baht * 15)
+    SELECT SUM(ug.qty * _gold_g(p.weight_baht))
     FROM user_gold_received ug JOIN products p ON p.id = ug.product_id
     WHERE COALESCE(ug.settled, FALSE) = FALSE), 0),
   'pending_by_user', COALESCE((
     SELECT jsonb_object_agg(nick, g) FROM (
       SELECT COALESCE(u.nickname, ug.user_id::text) AS nick,
-             SUM(ug.qty * p.weight_baht * 15) AS g
+             SUM(ug.qty * _gold_g(p.weight_baht)) AS g
       FROM user_gold_received ug
       JOIN products p ON p.id = ug.product_id
       LEFT JOIN users u ON u.id = ug.user_id

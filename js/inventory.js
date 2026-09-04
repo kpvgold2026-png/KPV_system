@@ -28,7 +28,7 @@ async function loadInventory() {
       var newQty = newMap[pid] || 0;
       var oldQty = oldMap[pid] || 0;
       var totalQty = newQty + oldQty;
-      var weightG = (p ? p.weight_baht * 15 : 0);
+      var weightG = getGoldWeight(pid);
       return '<tr>' +
         '<td>' + pid + '</td>' +
         '<td>' + (p ? p.name : 'Unknown') + '</td>' +

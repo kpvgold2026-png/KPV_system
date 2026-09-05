@@ -8,10 +8,13 @@
 --  R15-2) "ดึงก่อน เขียนทีหลัง" — confirm_sell/tradein/exchange/withdraw_tx + stock_in_new_tx
 --         lock wac_state (FOR UPDATE) ก่อนอ่าน WAC/ราคา → serialize กับทุก tx ที่แตะสต๊อก
 --         ค่าที่อ่านสะท้อนการเขียนก่อนหน้าครบ ไม่มีใครเขียนแทรกระหว่างอ่านกับเขียน
---  R15-3) Diff Trade-in: cost_diff = Difference ตอนสร้างรายการ (transactions.diff_amount)
---         diff = ขายใหม่ + premium − Difference − ขายเก่า   (confirm_tradein_tx + recompute_diffs)
---  R15-4) ทองเก่าจาก Trade-in/Exchange: จำ "มูลค่าขายตอนทำรายการ" (PriceIn) ลง
---         user_gold_received.price_per_unit = weight_baht × sell_1baht ของบิล
+--  R15-3) [ยกเลิกโดย R15-9] Diff Trade-in: cost_diff = Difference ตอนสร้างรายการ
+--  R15-9) Diff Trade-in: cost_diff = WAC/g ณ ตอนทำรายการ × น้ำหนักส่วนต่าง (ใหม่ − เก่า) g
+--         diff = ขายใหม่ + premium − cost_diff − ขายเก่า ; recompute_diffs ใช้ snapshot wac_per_g
+--         จาก stock_moves ของบิล (ไม่ใช่ WAC ปัจจุบัน) → ตัวเลขไม่เปลี่ยนตาม WAC วันหลัง
+--  R15-4) ทองเก่าจาก Trade-in/Exchange: จำ "ราคาขายต่อชิ้น ณ ตอนทำรายการ" (PriceIn) ลง
+--         user_gold_received.price_per_unit = _diff_sell_price(สินค้า, sell_1baht ของบิล)
+--         (ราคาตามตารางสินค้า ปัดพัน → เลขลงตัว; 1 กรัมรวมค่ากำเหน็จ 120,000 เหมือนตารางขาย)
 --         → approve ปิดกะตีมูลค่าเข้า Stock OLD / lot / wac_state ด้วยค่านี้ (เดิม = 0)
 --         + _ug_cost_per_unit fallback แถวเก่าที่ยัง 0 → คำนวณจาก sell_1baht ของบิลต้นทาง
 --         + แถว STOCK_IN (OLD) ตอนปิดกะเก็บ snapshot wac_per_g/wac_per_baht ด้วย
@@ -22,6 +25,15 @@
 --  R15-6) ‼️ WAC/บาท ไม่ตรง (48,431,993 แทน 48,431,999): ทอง 1 กรัม weight_baht = 0.0666667
 --         × 15 = 1.0000005 g → น้ำหนักรวมจริง 799.5001 g (จอโชว์ 799.50) → ทุกจุดคิดกรัมผ่าน
 --         _gold_g() = ROUND(weight_baht × 15, 3) + sync น้ำหนักใน wac_state ให้ตรง stock_balances
+--  R15-7) ‼️ Stock OLD/NEW ตารางสรุป: ปิดกะแล้วทองตั้งต้นติดลบ Balance = 0 — get_stock_summary
+--         คืน carry = ตั้งต้น แต่ JS คิดว่าเป็นยอดปัจจุบันแล้วลบ IN ซ้ำ → RPC คืน balance เพิ่ม
+--         JS ใช้ carry/balance ตรง ๆ
+--  R15-8) มูลค่า Stock OLD ไม่ลงตัว (13.25 g = 42,762,199): 3 ต้นเหตุ
+--         a) PriceIn 1 กรัม = 0.0666667 × sell_1baht (ไม่ลงตัว) → ใช้ _diff_sell_price (R15-4 ปรับ)
+--         b) Buyback price ÷ จำนวนชิ้น (บิลผสม/หาร 3 ไม่ลงตัว) → แบ่งตามน้ำหนักจริงของแต่ละชิ้น
+--         c) เศษน้ำหนัก 1.0000005 g ในแถวเก่า → FIFO ของ get_stock_moves ได้เศษ (R15-6 ล้างข้อมูลเดิม)
+--         d) ตีมูลค่าย้อนหลัง lot/ug/stock_moves/wac_state ที่บันทึกด้วยสูตร a) ไปแล้ว (บล็อก DO ท้ายไฟล์)
+--            เช่น CL26000001: 42,762,198.94 → 43,004,000 (1กรัม 3,348,000×2 + 1สลึง 12,103,000 + 2สลึง 24,205,000)
 -- ============================================================
 
 
@@ -1200,10 +1212,10 @@ BEGIN
   v_new_sell_total := _diff_items_sell_total(p_tx_id, ARRAY['NEW'], v_s1b);
   v_old_sell_total := _diff_items_sell_total(p_tx_id, ARRAY['OLD','FOC'], v_s1b);
 
-  -- [R15-3] Cost(ส่วนต่าง) = Difference ตอนสร้างรายการ (diff_amount = (ใหม่−เก่า)บาท × sell_1baht)
-  --   ไม่ใช่ (ใหม่−เก่า)g × WAC อีกต่อไป — บิลเก่าที่ diff_amount ว่าง → คำนวณสูตรเดียวกันจากน้ำหนัก
-  v_cost_diff := CASE WHEN v_diff_amount <> 0 THEN v_diff_amount
-                      ELSE ((v_new_gold_g - v_old_gold_g) / 15.0) * v_s1b END;
+  -- [R15-9] Cost(ส่วนต่าง) = WAC ณ ตอนทำรายการ (WAC/g ที่อ่านหลัง lock ด้านบน) × น้ำหนักส่วนต่าง (ใหม่ − เก่า) g
+  --   (R15-3 เคยเปลี่ยนเป็น diff_amount — user สั่งกลับมาใช้ WAC × น้ำหนัก)
+  --   ค่า WAC ตัวเดียวกันถูก snapshot ลง stock_moves.wac_per_g ของบิลนี้ → recompute_diffs ใช้ค่านั้นซ้ำได้
+  v_cost_diff := (v_new_gold_g - v_old_gold_g) * v_wac_per_g;
 
   v_pay := _apply_confirm_payments(p_tx_id, p_payments, 'TRADEIN', 'Tradein ' || p_tx_id, v_user_id, v_is_sales);
 
@@ -1236,14 +1248,16 @@ BEGIN
     WHERE product_id = v_item.product_id AND gold_type = 'NEW';
   END LOOP;
 
-  -- [R15-4] ทองเก่าที่รับ: จำ "มูลค่าขายตอนทำรายการ" (PriceIn) ต่อชิ้น = weight_baht × sell_1baht ของบิล
+  -- [R15-4] ทองเก่าที่รับ: จำ "ราคาขายต่อชิ้น ณ ตอนทำรายการ" (PriceIn) = _diff_sell_price(สินค้า, sell_1baht ของบิล)
+  --   = ราคาขายตามตารางสินค้า (ปัดพัน, 1 กรัมรวมค่ากำเหน็จ) → เลขลงตัวและตรงกับ Cost(ทองเก่า) ใน Diff
   --   ใช้ตีมูลค่าเข้า Stock OLD / lot / wac_state ตอน Manager approve ปิดกะ (เดิมบันทึก 0)
+  --   ‼️ ห้ามใช้ weight_baht × sell_1baht — 1 กรัม (0.0666667 บาท) จะได้เศษไม่ลงตัว
   FOR v_item IN SELECT ti.product_id, ti.qty, p.weight_baht
                 FROM transaction_items ti JOIN products p ON p.id = ti.product_id
                 WHERE ti.tx_id = p_tx_id AND ti.item_role IN ('OLD', 'FOC') LOOP
     INSERT INTO user_gold_received (user_id, product_id, qty, type, ref_tx_id, date, created_by_id, price_per_unit, settled)
     VALUES (COALESCE(v_sale_user, v_user_id), v_item.product_id, v_item.qty, 'TRADEIN', p_tx_id, NOW(), v_user_id,
-            COALESCE(v_item.weight_baht, 0) * v_s1b, FALSE);
+            _diff_sell_price(v_item.product_id, v_s1b), FALSE);
   END LOOP;
 
   UPDATE wac_state
@@ -1252,7 +1266,7 @@ BEGIN
         updated_at = NOW()
     WHERE id = 1;
 
-  -- DIFF (ชีท): cost_diff = Difference ตอนสร้าง [R15-3] ; cost_old_gold = ขายเก่า
+  -- DIFF (ชีท): cost_diff = (ใหม่−เก่า)g × WAC ณ ตอนทำรายการ [R15-9] ; cost_old_gold = ขายเก่า
   v_diff := v_new_sell_total + COALESCE(v_premium, 0) - v_cost_diff - v_old_sell_total;
   INSERT INTO diffs (tx_id, type, sell_value, ex_fee, switch_fee, premium, cost_diff, cost_old_gold, diff, date)
   VALUES (p_tx_id, 'TRADEIN', v_new_sell_total, 0, 0, COALESCE(v_premium, 0), v_cost_diff, v_old_sell_total, v_diff, NOW())
@@ -1380,13 +1394,13 @@ BEGIN
     WHERE product_id = v_item.product_id AND gold_type = 'NEW';
   END LOOP;
 
-  -- [R15-4] ทองเก่าที่รับ: จำ PriceIn ต่อชิ้น = weight_baht × sell_1baht ของบิล (เดิมบันทึก 0)
+  -- [R15-4] ทองเก่าที่รับ: จำ PriceIn ต่อชิ้น = ราคาขายตามตารางสินค้า ณ ตอนทำรายการ (เดิมบันทึก 0)
   FOR v_item IN SELECT ti.product_id, ti.qty, p.weight_baht
                 FROM transaction_items ti JOIN products p ON p.id = ti.product_id
                 WHERE ti.tx_id = p_tx_id AND ti.item_role IN ('OLD', 'SWITCH', 'FREE_EX') LOOP
     INSERT INTO user_gold_received (user_id, product_id, qty, type, ref_tx_id, date, created_by_id, price_per_unit, settled)
     VALUES (COALESCE(v_sale_user, v_user_id), v_item.product_id, v_item.qty, 'EXCHANGE', p_tx_id, NOW(), v_user_id,
-            COALESCE(v_item.weight_baht, 0) * v_s1b, FALSE);
+            _diff_sell_price(v_item.product_id, v_s1b), FALSE);
   END LOOP;
 
   UPDATE wac_state
@@ -1662,13 +1676,17 @@ BEGIN
   JOIN products p ON p.id = ti.product_id
   WHERE ti.tx_id = p_tx_id AND ti.item_role = 'OLD';
 
-  IF v_total_qty > 0 THEN
-    v_price_per_unit := v_price / v_total_qty;
-  END IF;
-
+  -- [R15-8] PriceIn ต่อชิ้นของ Buyback = เงินที่จ่ายจริงของบิล "แบ่งตามน้ำหนัก" แต่ละชิ้น
+  --   เดิม = price ÷ จำนวนชิ้น (บิลผสมหลายขนาด → 10 บาท กับ 1 กรัม ได้ราคาต่อชิ้นเท่ากัน = ผิด)
+  --   ผลรวมทุกชิ้น = price ของบิลพอดี (ปัดทศนิยม 2 ตำแหน่ง)
   IF NOT EXISTS (SELECT 1 FROM user_gold_received WHERE ref_tx_id = p_tx_id) THEN
-    FOR v_item IN SELECT product_id, qty FROM transaction_items
-                  WHERE tx_id = p_tx_id AND item_role = 'OLD' LOOP
+    FOR v_item IN SELECT ti.product_id, ti.qty, _gold_g(p.weight_baht) AS g
+                  FROM transaction_items ti JOIN products p ON p.id = ti.product_id
+                  WHERE ti.tx_id = p_tx_id AND ti.item_role = 'OLD' LOOP
+      v_price_per_unit := CASE WHEN v_old_gold_g > 0
+                               THEN ROUND(v_price * v_item.g / v_old_gold_g, 2)
+                               WHEN v_total_qty > 0 THEN ROUND(v_price / v_total_qty, 2)
+                               ELSE 0 END;
       INSERT INTO user_gold_received (
         user_id, product_id, qty, type, ref_tx_id, date, created_by_id,
         price_per_unit, settled
@@ -1900,6 +1918,7 @@ RETURNS JSONB AS $$
 DECLARE
   v_t RECORD;
   v_wac NUMERIC := get_wac_per_g();
+  v_wac_tx NUMERIC;
   v_s1b NUMERIC;
   v_new_g NUMERIC;
   v_old_g NUMERIC;
@@ -1943,9 +1962,13 @@ BEGIN
       WHERE ti.tx_id = v_t.id AND ti.item_role IN ('OLD','FOC');
       v_new_sell := _diff_items_sell_total(v_t.id, ARRAY['NEW'], v_s1b);
       v_old_sell := _diff_items_sell_total(v_t.id, ARRAY['OLD','FOC'], v_s1b);
-      -- [R15-3] cost_diff = Difference ตอนสร้าง (diff_amount) — fallback สูตรเดียวกันจากน้ำหนัก
-      v_cost_diff := CASE WHEN v_t.diff_amount <> 0 THEN v_t.diff_amount
-                          ELSE ((v_new_g - v_old_g) / 15.0) * v_s1b END;
+      -- [R15-9] cost_diff = (ใหม่−เก่า)g × WAC "ณ ตอนทำรายการ" — ใช้ snapshot wac_per_g ที่ confirm
+      --   บันทึกไว้ใน stock_moves ของบิลนี้ (แถวเก่าที่ไม่มี snapshot → WAC ปัจจุบัน)
+      SELECT NULLIF(sm.wac_per_g, 0) INTO v_wac_tx
+      FROM stock_moves sm
+      WHERE sm.ref_id = v_t.id AND sm.gold_type = 'NEW' AND sm.direction = 'OUT'
+      ORDER BY sm.date DESC LIMIT 1;
+      v_cost_diff := (v_new_g - v_old_g) * COALESCE(v_wac_tx, v_wac);
       v_diff := v_new_sell + v_t.premium - v_cost_diff - v_old_sell;
       INSERT INTO diffs (tx_id, type, sell_value, ex_fee, switch_fee, premium, cost_diff, cost_old_gold, diff, date)
       VALUES (v_t.id, 'TRADEIN', v_new_sell, 0, 0, v_t.premium, v_cost_diff, v_old_sell, v_diff, v_t.date)
@@ -2089,11 +2112,11 @@ GRANT EXECUTE ON FUNCTION submit_close_report(DATE, JSONB, JSONB, JSONB, INT, NU
 -- ============================================================
 -- [R13-7 → R15-4] helper: มูลค่าต่อชิ้น (PriceIn) ของทองเก่าที่รับมา — ใช้ตีมูลค่าเข้า Stock OLD
 --   BUYBACK          → เงินที่ร้านจ่ายจริงต่อชิ้น (price_per_unit ที่ confirm_buyback_tx บันทึกไว้)
---   TRADEIN/EXCHANGE → มูลค่าขายตอนทำรายการ = weight_baht × sell_1baht ของบิล
+--   TRADEIN/EXCHANGE → ราคาขายต่อชิ้นตามตารางสินค้า ณ ตอนทำรายการ = _diff_sell_price(สินค้า, sell_1baht ของบิล)
 --                      (price_per_unit ที่ confirm_tradein/exchange_tx บันทึกไว้ [R15-4])
 --   fallback แถวเก่าที่ price_per_unit ว่าง/0:
 --     BUYBACK          → transactions.price ÷ จำนวนชิ้นของบิลนั้น
---     TRADEIN/EXCHANGE → weight_baht × sell_1baht ของบิลต้นทาง (ไม่มี → ราคาขายล่าสุด)
+--     TRADEIN/EXCHANGE → _diff_sell_price(สินค้า, sell_1baht ของบิลต้นทาง) (ไม่มี → ราคาขายล่าสุด)
 --   internal เท่านั้น
 -- ============================================================
 CREATE OR REPLACE FUNCTION _ug_cost_per_unit(p_ug_id BIGINT)
@@ -2106,8 +2129,8 @@ RETURNS NUMERIC LANGUAGE sql STABLE AS $$
         / NULLIF((SELECT SUM(u2.qty) FROM user_gold_received u2
                   WHERE u2.ref_tx_id = ug.ref_tx_id), 0)
       WHEN ug.type IN ('TRADEIN', 'EXCHANGE') THEN
-        COALESCE((SELECT p.weight_baht FROM products p WHERE p.id = ug.product_id), 0)
-        * _diff_sell_1baht(COALESCE((SELECT t.sell_1baht FROM transactions t WHERE t.id = ug.ref_tx_id), 0))
+        _diff_sell_price(ug.product_id,
+          _diff_sell_1baht(COALESCE((SELECT t.sell_1baht FROM transactions t WHERE t.id = ug.ref_tx_id), 0)))
       ELSE 0 END,
     0)
   FROM user_gold_received ug
@@ -3290,6 +3313,83 @@ GRANT EXECUTE ON FUNCTION get_live_report() TO authenticated;
 
 
 -- ============================================================
+-- [R15-7] get_stock_summary — คืนทั้ง carry (ตั้งต้น) และ balance (ปัจจุบัน) แยกกันชัด ๆ
+--   ‼️ ต้นเหตุ "ปิดกะแล้ว Old Gold เข้า แต่ทองตั้งต้นติดลบ Balance = 0":
+--     RPC เดิมคืน carry = stock_balances − net(วันนี้) = ยอดตั้งต้น
+--     แต่ JS (R14-2) เข้าใจว่า carry = ยอดปัจจุบัน → คิด ตั้งต้น = carry − IN + OUT อีกรอบ
+--     → ตั้งต้น = 0 − IN (ติดลบ) และ Balance โชว์ = carry = 0
+--   แก้: คืน carry = ตั้งต้น, balance = stock_balances.qty (ปัจจุบัน), in/out = วันนี้
+--        JS ใช้ตรง ๆ: ตั้งต้น = carry ; Balance = balance (ไม่คำนวณซ้อน)
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.get_stock_summary(p_gold_type gold_type)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $function$
+DECLARE
+  v_carry JSONB;
+  v_balance JSONB;
+  v_in JSONB;
+  v_out JSONB;
+  v_today_local DATE;
+BEGIN
+  v_today_local := (NOW() AT TIME ZONE 'Asia/Bangkok')::date;
+
+  SELECT COALESCE(jsonb_object_agg(product_id, total_qty), '{}'::jsonb)
+  INTO v_in
+  FROM (
+    SELECT smi.product_id, SUM(smi.qty) AS total_qty
+    FROM stock_move_items smi
+    JOIN stock_moves sm ON sm.id = smi.move_id
+    WHERE sm.gold_type = p_gold_type
+      AND sm.direction = 'IN'
+      AND (sm.date AT TIME ZONE 'Asia/Bangkok')::date = v_today_local
+    GROUP BY smi.product_id
+  ) t;
+
+  SELECT COALESCE(jsonb_object_agg(product_id, total_qty), '{}'::jsonb)
+  INTO v_out
+  FROM (
+    SELECT smi.product_id, SUM(smi.qty) AS total_qty
+    FROM stock_move_items smi
+    JOIN stock_moves sm ON sm.id = smi.move_id
+    WHERE sm.gold_type = p_gold_type
+      AND sm.direction = 'OUT'
+      AND (sm.date AT TIME ZONE 'Asia/Bangkok')::date = v_today_local
+    GROUP BY smi.product_id
+  ) t;
+
+  -- ยอดปัจจุบัน (stock_balances)
+  SELECT COALESCE(jsonb_object_agg(product_id, qty), '{}'::jsonb)
+  INTO v_balance
+  FROM stock_balances
+  WHERE gold_type = p_gold_type;
+
+  -- ยอดตั้งต้น = ปัจจุบัน − net(วันนี้)
+  SELECT COALESCE(jsonb_object_agg(product_id, opening_qty), '{}'::jsonb)
+  INTO v_carry
+  FROM (
+    SELECT
+      sb.product_id,
+      sb.qty - COALESCE((
+        SELECT SUM(CASE WHEN sm.direction = 'IN' THEN smi.qty ELSE -smi.qty END)
+        FROM stock_moves sm
+        JOIN stock_move_items smi ON smi.move_id = sm.id
+        WHERE sm.gold_type = p_gold_type
+          AND smi.product_id = sb.product_id
+          AND (sm.date AT TIME ZONE 'Asia/Bangkok')::date = v_today_local
+      ), 0) AS opening_qty
+    FROM stock_balances sb
+    WHERE sb.gold_type = p_gold_type
+  ) t;
+
+  RETURN jsonb_build_object('carry', v_carry, 'balance', v_balance, 'in', v_in, 'out', v_out);
+END;
+$function$;
+GRANT EXECUTE ON FUNCTION public.get_stock_summary(gold_type) TO authenticated;
+
+
+-- ============================================================
 -- [R15-1] get_stock_move_detail — WAC/บาท = WAC/g × 15 เสมอ
 --   เดิม: COALESCE(sm.wac_per_baht, wac_per_g × 15) — คอลัมน์ default 0 (ไม่ใช่ NULL)
 --   → แถวที่บันทึกแค่ wac_per_g (เช่น STOCK_IN OLD ตอนปิดกะรุ่นเก่า) โชว์ WAC/บาท = 0
@@ -3539,6 +3639,88 @@ BEGIN
 END;
 $function$;
 GRANT EXECUTE ON FUNCTION public.get_stock_moves(gold_type, date, date) TO authenticated;
+
+
+-- ============================================================
+-- [R15-6] ล้างเศษน้ำหนัก 1 กรัม (1.0000005 g) ในข้อมูลเดิม — แตะเฉพาะ "น้ำหนัก" ไม่แตะมูลค่า
+--   1) stock_moves.gold_g = Σ(qty × _gold_g) จาก stock_move_items (เฉพาะแถวที่มี items และต่างกัน < 0.01 g)
+--      → get_stock_moves (FIFO ของ OLD คิด unit = price ÷ gold_g) ไม่เหลือเศษทศนิยมจาก 1.0000005
+--   2) old_gold_lots.gold_g_per_unit → _gold_g ; ปรับ cost_per_g ให้มูลค่า lot เท่าเดิมเป๊ะ
+-- ============================================================
+UPDATE stock_moves sm
+SET gold_g = t.g
+FROM (
+  SELECT smi.move_id, SUM(smi.qty * _gold_g(p.weight_baht)) AS g
+  FROM stock_move_items smi JOIN products p ON p.id = smi.product_id
+  GROUP BY smi.move_id
+) t
+WHERE t.move_id = sm.id
+  AND sm.gold_g IS DISTINCT FROM t.g
+  AND ABS(COALESCE(sm.gold_g, 0) - t.g) < 0.01;
+
+UPDATE old_gold_lots l
+SET cost_per_g = CASE WHEN _gold_g(p.weight_baht) > 0
+                      THEN (l.gold_g_per_unit * l.cost_per_g) / _gold_g(p.weight_baht)
+                      ELSE l.cost_per_g END,
+    gold_g_per_unit = _gold_g(p.weight_baht)
+FROM products p
+WHERE p.id = l.product_id
+  AND l.gold_g_per_unit IS DISTINCT FROM _gold_g(p.weight_baht)
+  AND ABS(l.gold_g_per_unit - _gold_g(p.weight_baht)) < 0.01;
+
+-- ============================================================
+-- [R15-8d] ตีมูลค่าย้อนหลัง: ทองเก่า Trade-in/Exchange ที่ price_per_unit ถูกบันทึกด้วยสูตร
+--   weight_baht × sell_1baht (R15-4 รุ่นแรก — 1 กรัม = 3,227,349.47 ไม่ลงตัว)
+--   → ปรับเป็น _diff_sell_price(สินค้า, sell_1baht ของบิล) ให้เหมือนรายการใหม่
+--   ครอบคลุม: user_gold_received (ยังไม่ปิดกะ + ปิดแล้ว), old_gold_lots, stock_moves (แถว STOCK_IN OLD
+--   ของปิดกะนั้น — จับคู่ด้วย date เดียวกับ lot เพราะ approve สร้างทั้งคู่ใน tx เดียว NOW() เท่ากัน), wac_state.old_value
+--   รันซ้ำได้: แถวที่ค่าตรงแล้วจะถูกข้าม (CONTINUE)
+--   ‼️ เฉพาะบิลที่มี sell_1baht > 0 (บิลก่อน R15-5 ไม่มี → ไม่แตะ ตามที่ตกลงว่าไม่ย้อนแก้ของเก่า)
+-- ============================================================
+DO $$
+DECLARE
+  r RECORD;
+  v_new NUMERIC;
+  v_delta NUMERIC;
+  v_lot_date TIMESTAMPTZ;
+BEGIN
+  FOR r IN
+    SELECT ug.id, ug.product_id, ug.qty, ug.price_per_unit AS old_ppu,
+           COALESCE(ug.settled, FALSE) AS settled, ug.settled_close_id, t.sell_1baht
+    FROM user_gold_received ug
+    JOIN transactions t ON t.id = ug.ref_tx_id
+    WHERE ug.type IN ('TRADEIN', 'EXCHANGE')
+      AND COALESCE(t.sell_1baht, 0) > 0
+    ORDER BY ug.id
+  LOOP
+    v_new := _diff_sell_price(r.product_id, r.sell_1baht);
+    CONTINUE WHEN r.old_ppu IS NOT DISTINCT FROM v_new;
+
+    UPDATE user_gold_received SET price_per_unit = v_new WHERE id = r.id;
+
+    IF r.settled AND r.settled_close_id IS NOT NULL THEN
+      v_delta := r.qty * (v_new - COALESCE(r.old_ppu, 0));
+
+      -- lot ของปิดกะนั้น สินค้าเดียวกัน ที่ยังถือต้นทุนเก่าอยู่ (ชิ้นถัดไปของ lot เดียวกันจะไม่ match ซ้ำ)
+      UPDATE old_gold_lots l
+        SET cost_per_g = v_new / NULLIF(l.gold_g_per_unit, 0)
+        WHERE l.source_ref = r.settled_close_id
+          AND l.product_id = r.product_id
+          AND ABS(l.cost_per_g * l.gold_g_per_unit - COALESCE(r.old_ppu, 0)) < 0.01;
+
+      SELECT MIN(l.date) INTO v_lot_date FROM old_gold_lots l WHERE l.source_ref = r.settled_close_id;
+
+      UPDATE stock_moves sm
+        SET price = COALESCE(sm.price, 0) + v_delta
+        WHERE sm.gold_type = 'OLD' AND sm.type = 'STOCK_IN' AND sm.direction = 'IN'
+          AND v_lot_date IS NOT NULL AND sm.date = v_lot_date;
+
+      UPDATE wac_state
+        SET old_value = COALESCE(old_value, 0) + v_delta, updated_at = NOW()
+        WHERE id = 1;
+    END IF;
+  END LOOP;
+END $$;
 
 
 -- ============================================================

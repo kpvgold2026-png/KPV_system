@@ -36,7 +36,7 @@ async function loadStockOldSummary() {
       if (qtyIn[p.id] === undefined) qtyIn[p.id] = 0;
       if (qtyOut[p.id] === undefined) qtyOut[p.id] = 0;
     });
-    renderStockOldSummary(carry, qtyIn, qtyOut);
+    renderStockOldSummary(carry, qtyIn, qtyOut, res && res.balance ? res.balance : null);
   } catch(e) { console.error('Error loading stock old summary:', e); }
 }
 
@@ -67,15 +67,16 @@ async function loadStockOldFiltered() {
   } catch(e) { console.error('Error loading stock old filtered:', e); }
 }
 
-// [R14-2] ‼️ get_stock_summary คืน carry = stock_balances "ยอดปัจจุบัน" (รวมรายการวันนี้ไปแล้ว)
-//   เดิมแสดง carry เป็น "ทองตั้งต้น" แล้วคิด Balance = carry + IN - OUT → นับรายการวันนี้ซ้ำ 2 รอบ
-//   ที่ถูก: ทองตั้งต้น = ยอดปัจจุบัน - IN วันนี้ + OUT วันนี้ ; Balance = ยอดปัจจุบันตรง ๆ
-function renderStockOldSummary(carry, qtyIn, qtyOut) {
+// [R15-7] ‼️ แก้ R14-2 ที่เข้าใจผิด: get_stock_summary คืน carry = "ยอดตั้งต้น" (stock_balances − net วันนี้)
+//   ไม่ใช่ยอดปัจจุบัน → การคิด ตั้งต้น = carry − IN + OUT ทำให้ตั้งต้นติดลบและ Balance = 0 หลังปิดกะ
+//   ตอนนี้ RPC คืน balance (ยอดปัจจุบัน) มาด้วย: ตั้งต้น = carry ; Balance = balance ตรง ๆ
+//   DB ก่อน R15 (ไม่มี balance) → Balance = carry + IN − OUT
+function renderStockOldSummary(carry, qtyIn, qtyOut, balance) {
   document.getElementById('stockOldSummaryTable').innerHTML = FIXED_PRODUCTS.map(function(p) {
-    var bal = parseFloat(carry[p.id]) || 0;
+    var start = parseFloat(carry[p.id]) || 0;
     var i = parseFloat(qtyIn[p.id]) || 0;
     var o = parseFloat(qtyOut[p.id]) || 0;
-    var start = bal - i + o;
+    var bal = (balance && balance[p.id] !== undefined) ? (parseFloat(balance[p.id]) || 0) : (start + i - o);
     return '<tr><td>' + p.id + '</td><td>' + p.name + '</td><td>' + start + '</td>' +
       '<td style="color:#4caf50;">' + i + '</td>' +
       '<td style="color:#f44336;">' + o + '</td>' +

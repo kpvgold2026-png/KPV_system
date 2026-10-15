@@ -252,6 +252,12 @@ async function openCloseWorkModal(isResume) {
       }
     });
 
+    // [R16-2] ทองเก่า = ที่ถืออยู่ยังไม่ปิดกะ (แหล่งเดียวกับ tab Report และที่ approve เอาเข้าสต๊อก)
+    try {
+      var heldGold = await dbRpc('get_close_old_gold', { p_user_id: currentUser.id });
+      if (Array.isArray(heldGold)) goldReceived = heldGold;
+    } catch(e) { console.warn('get_close_old_gold not available — falling back to get_close_report:', e); }
+
     goldReceived.forEach(function(g) {
       var pid = g.product_id;
       var qty = parseFloat(g.qty) || 0;

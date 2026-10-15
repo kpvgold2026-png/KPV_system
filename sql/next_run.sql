@@ -1,4 +1,28 @@
 -- ============================================================
+-- KPV — Round 16 (2026-10-15)  [แก้ทับของเดิมในไฟล์นี้ — รันทั้งไฟล์ได้เหมือนเดิม]
+--  R16-1) ‼️ ปิดกะยอดโอนเกินจริง (เห็นยอดของวันก่อนรวมมาด้วย): approve_close_report กวาดกระเป๋า
+--         Sales เฉพาะ method=CASH → แถวโอน (TRANSFER) ใน user_cashbook ไม่เคยถูกเคลียร์
+--         แต่ get_close_cashbook / Report "เงินที่ถือ" ใช้ยอดสะสมทั้งกระเป๋า → ยอดโอนพอกขึ้นทุกวัน
+--         แก้: approve ลงแถวหักล้างยอดโอนให้เป็น 0 (ไม่แตะ cashbank — เงินโอนเข้าร้านตั้งแต่ยืนยันบิล)
+--         + บล็อก DO ท้ายไฟล์ ล้างยอดโอนค้างของกะที่ approve ไปแล้ว
+--  R16-2) ทองเก่าตอนปิดกะไม่ตรงกับ tab Report — อิงยอด Report (user_gold_received settled=false):
+--         + RPC ใหม่ get_close_old_gold → หน้าปิดกะ (close.js) ใช้แทน get_close_report.gold_received
+--         + approve_close_report เอาเข้าสต๊อกเฉพาะทองที่รับมาก่อนเวลากดปิดกะ (closes.date)
+--           กันทองของบิลหลังกดปิดกะ (เช่น Manager อนุมัติวันถัดไป) ถูกกวาดรวมเข้ากะนี้
+--  R16-3) เงินที่ถือใน Report ไม่ตรงของจริง: approve กวาดเงินทั้งกระเป๋า ณ เวลาอนุมัติ → ถ้าอนุมัติช้า
+--         (Sales เปิดกะใหม่/รับเงินบิลใหม่ไปแล้ว) เงินกะใหม่ถูกกวาดเข้าร้านไปด้วย Report เลยเหลือน้อยกว่าที่ถือจริง
+--         แก้: กวาดเฉพาะแถว user_cashbook ที่ date <= เวลากดปิดกะ (ทั้งเงินสดและยอดโอน)
+--  R16-4) Transfer OLD→NEW: PriceIn Stock New ≠ PriceOut Stock Old — หน้า Stock Old แสดง FIFO "ต่อกรัม"
+--         (get_stock_moves) แต่ transfer บันทึก price จาก lot ต่อสินค้า (_consume_old_lots) → คนละสูตร
+--         แก้: helper _old_fifo_out_cost (สูตรเดียวกับหน้าจอ) → transfer_old_to_new_tx / stock_out_old_tx ใช้เป็น price
+--         + wac_state ใช้ค่าเดียวกัน ; บล็อก DO ท้ายไฟล์ปรับแถว TRANSFER เดิมให้ตรง (NEW IN = OLD OUT)
+--  R16-5) "WAC ณ เวลาทำรายการ" ผิดในแถว STOCK_IN (NEW) / TRANSFER / STOCK_OUT — เก็บมูลค่า/g ของรายการเอง
+--         แทน WAC ร้าน → เก็บ get_wac_per_g() ณ ตอนทำรายการ (ก่อนรายการมีผล) เหมือน SELL/TRADEIN/ปิดกะ
+--         + บล็อก DO ท้ายไฟล์คำนวณย้อนหลังด้วยการไล่ stock_moves ตามเวลา
+-- ============================================================
+
+
+-- ============================================================
 -- KPV — Round 15 (2026-09-03)  [แก้ทับของเดิมในไฟล์นี้ — รันทั้งไฟล์ได้เหมือนเดิม]
 --  R15-1) WAC แหล่งเดียว — RPC ใหม่ get_wac_state() คืน wac_per_g + wac_per_baht
 --         (= wac_per_g × 15 แบบไม่ปัดเศษ) จาก wac_state; get_dashboard_data ใช้ตัวเดียวกัน
@@ -400,9 +424,9 @@ BEGIN
   v_ref_id := 'SIN-' || to_char(NOW() AT TIME ZONE 'Asia/Bangkok', 'YYYYMMDDHH24MISS') || '-' || substring(md5(random()::text), 1, 4);
 
   INSERT INTO stock_moves (ref_id, gold_type, type, direction, gold_g, price, wac_per_g, wac_per_baht, fulfilled, user_id, note, date)
+  -- [R16-5] wac_per_g = WAC ของร้าน ณ ตอนทำรายการ (ก่อนรับเข้า) — เดิมเก็บ p_cost ÷ g (= มูลค่า/g ของรายการเอง)
   VALUES (v_ref_id, 'NEW', 'STOCK_IN', 'IN', v_total_g, p_cost,
-          CASE WHEN v_total_g > 0 THEN p_cost / v_total_g ELSE 0 END,
-          CASE WHEN v_total_g > 0 THEN (p_cost / v_total_g) * 15 ELSE 0 END,
+          get_wac_per_g(), get_wac_per_g() * 15,
           TRUE, v_user_id, p_note, NOW())
   RETURNING id INTO v_move_id;
 
@@ -486,6 +510,32 @@ BEGIN
 END;
 $$;
 GRANT EXECUTE ON FUNCTION get_close_cashbook(UUID, DATE) TO authenticated;
+
+
+-- ============================================================
+-- [R16-2] get_close_old_gold — ทองเก่าที่ Sales ถืออยู่ (ยังไม่ปิดกะ) ต่อสินค้า
+--   แหล่งเดียวกับ tab Report (get_live_report_sales_breakdown.old_gold) และ
+--   approve_close_report (user_gold_received settled=false) → หน้าปิดกะ / Manager review /
+--   ทองที่เข้าสต๊อกตอนอนุมัติ ตรงกันทั้งหมด (เดิมหน้าปิดกะใช้ get_close_report.gold_received)
+-- ============================================================
+CREATE OR REPLACE FUNCTION get_close_old_gold(p_user_id UUID)
+RETURNS TABLE (product_id TEXT, qty NUMERIC)
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  IF p_user_id IS DISTINCT FROM current_user_id() AND NOT is_manager_or_admin() THEN
+    RETURN;
+  END IF;
+
+  RETURN QUERY
+  SELECT ug.product_id::text, SUM(ug.qty)::numeric
+  FROM user_gold_received ug
+  WHERE ug.user_id = p_user_id AND ug.settled = FALSE
+  GROUP BY ug.product_id;
+END;
+$$;
+GRANT EXECUTE ON FUNCTION get_close_old_gold(UUID) TO authenticated;
 
 
 -- ============================================================
@@ -1725,6 +1775,59 @@ GRANT EXECUTE ON FUNCTION confirm_buyback_tx(TEXT, NUMERIC, currency_code, TEXT,
 
 
 -- ============================================================
+-- [R16-4] helper: ต้นทุน FIFO "ต่อกรัม" ของทองเก่าที่จะตัดออกถัดไป p_gold_g กรัม
+--   สูตรเดียวกับ PriceOut ที่ get_stock_moves('OLD') แสดง (เดิน stock_moves OLD ตาม date,id
+--   IN = เพิ่มก้อน (price ÷ gold_g) / OUT = ตัดก้อนเก่าสุดก่อน) → แล้วตัดต่ออีก p_gold_g
+--   transfer_old_to_new_tx / stock_out_old_tx ใช้ค่านี้เป็น price → PriceIn Stock New = PriceOut Stock Old
+--   ⚠️ caller ต้องถือ lock wac_state และเรียก "ก่อน" INSERT แถว OUT ของตัวเอง
+-- ============================================================
+CREATE OR REPLACE FUNCTION _old_fifo_out_cost(p_gold_g NUMERIC)
+RETURNS NUMERIC LANGUAGE plpgsql AS $$
+DECLARE
+  v_qty NUMERIC[] := '{}';
+  v_unit NUMERIC[] := '{}';
+  v_head INT := 1;
+  v_row RECORD;
+  v_remaining NUMERIC;
+  v_cost NUMERIC := 0;
+  v_take NUMERIC;
+BEGIN
+  FOR v_row IN
+    SELECT direction, gold_g, COALESCE(price, 0) AS price
+    FROM stock_moves
+    WHERE gold_type = 'OLD'
+    ORDER BY date ASC, id ASC
+  LOOP
+    IF v_row.direction = 'IN' THEN
+      v_qty := v_qty || v_row.gold_g;
+      v_unit := v_unit || CASE WHEN v_row.gold_g > 0 THEN v_row.price / v_row.gold_g ELSE 0 END;
+    ELSE
+      v_remaining := v_row.gold_g;
+      WHILE v_remaining > 0 AND v_head <= COALESCE(array_length(v_qty, 1), 0) LOOP
+        v_take := LEAST(v_qty[v_head], v_remaining);
+        v_qty[v_head] := v_qty[v_head] - v_take;
+        v_remaining := v_remaining - v_take;
+        IF v_qty[v_head] <= 0 THEN v_head := v_head + 1; END IF;
+      END LOOP;
+    END IF;
+  END LOOP;
+
+  v_remaining := COALESCE(p_gold_g, 0);
+  WHILE v_remaining > 0 AND v_head <= COALESCE(array_length(v_qty, 1), 0) LOOP
+    v_take := LEAST(v_qty[v_head], v_remaining);
+    v_cost := v_cost + v_take * v_unit[v_head];
+    v_qty[v_head] := v_qty[v_head] - v_take;
+    v_remaining := v_remaining - v_take;
+    IF v_qty[v_head] <= 0 THEN v_head := v_head + 1; END IF;
+  END LOOP;
+
+  RETURN v_cost;
+END;
+$$;
+REVOKE ALL ON FUNCTION _old_fifo_out_cost(NUMERIC) FROM PUBLIC, anon, authenticated;
+
+
+-- ============================================================
 -- L1.3) transfer_old_to_new_tx — เปลี่ยนต้นทุนจาก WAC เฉลี่ย → FIFO ราย lot
 --   (base: เวอร์ชันล่าสุดจาก git cf4fbbd — คง lock/ref/โครงเดิมทั้งหมด)
 --   consumed_cost = Σ ต้นทุนจริงของ lot ที่ถูกตัด (เก่าสุดก่อน ต่อ product)
@@ -1741,6 +1844,7 @@ DECLARE
   v_stock NUMERIC;
   v_old_wac NUMERIC;
   v_consumed_cost NUMERIC := 0;
+  v_wac_now NUMERIC;
 BEGIN
   v_user_id := current_user_id();
   IF NOT is_manager_or_admin() THEN
@@ -1769,17 +1873,22 @@ BEGIN
   END LOOP;
 
   -- 2) ตัด lot FIFO ต่อ product → ต้นทุนจริงรวม (หลัง validate ผ่านครบแล้วเท่านั้น)
+  -- [R16-4] ต้นทุน = FIFO ต่อกรัม (สูตรเดียวกับ PriceOut ที่หน้า Stock Old แสดง) — คำนวณก่อน INSERT แถว OUT
+  --   lot ยังตัดเหมือนเดิมเพื่อเก็บจำนวนคงเหลือต่อสินค้า แต่ไม่ใช้ต้นทุนจาก lot แล้ว
+  v_consumed_cost := _old_fifo_out_cost(v_total_g);
+  v_wac_now := get_wac_per_g();
   FOR v_item IN SELECT (value->>'productId') AS pid, (value->>'qty')::numeric AS qty
                 FROM jsonb_array_elements(p_items) LOOP
-    v_consumed_cost := v_consumed_cost + _consume_old_lots(v_item.pid, v_item.qty);
+    PERFORM _consume_old_lots(v_item.pid, v_item.qty);
   END LOOP;
   v_old_wac := CASE WHEN v_total_g > 0 THEN v_consumed_cost / v_total_g ELSE 0 END;
 
   -- 3) INSERT OLD/OUT
   INSERT INTO stock_moves (ref_id, gold_type, type, direction, gold_g, price,
                            wac_per_g, wac_per_baht, fulfilled, user_id, note, date)
+  -- [R16-5] wac_per_g = WAC ของร้าน ณ ตอนทำรายการ (transfer ไม่เปลี่ยน WAC รวม) — เดิมเก็บต้นทุน/g ของรายการเอง
   VALUES (v_ref_id, 'OLD', 'TRANSFER', 'OUT', v_total_g, v_consumed_cost,
-          v_old_wac, v_old_wac * 15, TRUE, v_user_id, 'Transfer OLD->NEW', NOW())
+          v_wac_now, v_wac_now * 15, TRUE, v_user_id, 'Transfer OLD->NEW', NOW())
   RETURNING id INTO v_move_id;
 
   FOR v_item IN SELECT (value->>'productId') AS pid, (value->>'qty')::numeric AS qty
@@ -1794,7 +1903,7 @@ BEGIN
   INSERT INTO stock_moves (ref_id, gold_type, type, direction, gold_g, price,
                            wac_per_g, wac_per_baht, fulfilled, user_id, note, date)
   VALUES (v_ref_id, 'NEW', 'TRANSFER', 'IN', v_total_g, v_consumed_cost,
-          v_old_wac, v_old_wac * 15, TRUE, v_user_id, 'Transfer OLD->NEW', NOW())
+          v_wac_now, v_wac_now * 15, TRUE, v_user_id, 'Transfer OLD->NEW', NOW())
   RETURNING id INTO v_move_id;
 
   FOR v_item IN SELECT (value->>'productId') AS pid, (value->>'qty')::numeric AS qty
@@ -1846,6 +1955,7 @@ DECLARE
   v_stock NUMERIC;
   v_old_wac NUMERIC;
   v_consumed_cost NUMERIC := 0;
+  v_wac_now NUMERIC;
 BEGIN
   v_user_id := current_user_id();
   IF NOT is_manager_or_admin() THEN
@@ -1874,15 +1984,20 @@ BEGIN
   END LOOP;
 
   -- ตัด lot FIFO ต่อ product → ต้นทุนจริงรวม (หลัง validate ผ่านครบแล้วเท่านั้น)
+  -- [R16-4] ต้นทุน = FIFO ต่อกรัม (สูตรเดียวกับ PriceOut ที่หน้า Stock Old แสดง) — คำนวณก่อน INSERT แถว OUT
+  --   lot ยังตัดเหมือนเดิมเพื่อเก็บจำนวนคงเหลือต่อสินค้า แต่ไม่ใช้ต้นทุนจาก lot แล้ว
+  v_consumed_cost := _old_fifo_out_cost(v_total_g);
+  v_wac_now := get_wac_per_g();
   FOR v_item IN SELECT (value->>'productId') AS pid, (value->>'qty')::numeric AS qty
                 FROM jsonb_array_elements(p_items) LOOP
-    v_consumed_cost := v_consumed_cost + _consume_old_lots(v_item.pid, v_item.qty);
+    PERFORM _consume_old_lots(v_item.pid, v_item.qty);
   END LOOP;
   v_old_wac := CASE WHEN v_total_g > 0 THEN v_consumed_cost / v_total_g ELSE 0 END;
 
   INSERT INTO stock_moves (ref_id, gold_type, type, direction, gold_g, price, wac_per_g, wac_per_baht, fulfilled, user_id, note, date)
+  -- [R16-5] wac_per_g = WAC ของร้าน ณ ตอนทำรายการ (ก่อนตัดออก)
   VALUES (v_ref_id, 'OLD', 'STOCK_OUT', 'OUT', v_total_g, v_consumed_cost,
-          v_old_wac, v_old_wac * 15, TRUE, v_user_id, p_note, NOW())
+          v_wac_now, v_wac_now * 15, TRUE, v_user_id, p_note, NOW())
   RETURNING id INTO v_move_id;
 
   FOR v_item IN SELECT (value->>'productId') AS pid, (value->>'qty')::numeric AS qty
@@ -2154,6 +2269,7 @@ DECLARE
   v_user_id UUID;
   v_close_user UUID;
   v_close_date DATE;
+  v_close_ts TIMESTAMPTZ;
   v_cur_status close_status;
   v_nickname TEXT;
   v_new_status close_status;
@@ -2179,8 +2295,8 @@ BEGIN
                        ELSE 'REJECTED'::close_status END;
 
   -- [LOCK] + อ่านสถานะปัจจุบัน
-  SELECT c.user_id, c.date::date, c.status, u.nickname
-    INTO v_close_user, v_close_date, v_cur_status, v_nickname
+  SELECT c.user_id, c.date::date, c.date, c.status, u.nickname
+    INTO v_close_user, v_close_date, v_close_ts, v_cur_status, v_nickname
     FROM closes c JOIN users u ON u.id = c.user_id
     WHERE c.id = p_close_id
     FOR UPDATE OF c;
@@ -2224,7 +2340,8 @@ BEGIN
   FROM user_gold_received ug
   JOIN products p ON p.id = ug.product_id
   WHERE ug.user_id = v_close_user
-    AND ug.settled = FALSE;
+    AND ug.settled = FALSE
+    AND ug.date <= v_close_ts;  -- [R16-2] เฉพาะที่รับมาก่อนกดปิดกะ (= ยอด Report ตอนนั้น)
 
   -- snapshot WAC ณ เวลาที่ทองเก่าเข้าร้าน (ก่อนบวกยอดนี้เข้า) — โชว์ใน detail ของแถว STOCK_IN
   v_wac_now := get_wac_per_g();
@@ -2238,7 +2355,7 @@ BEGIN
     FOR v_item IN
       SELECT product_id, SUM(qty) AS qty
       FROM user_gold_received
-      WHERE user_id = v_close_user AND settled = FALSE
+      WHERE user_id = v_close_user AND settled = FALSE AND date <= v_close_ts
       GROUP BY product_id
     LOOP
       INSERT INTO stock_move_items (move_id, product_id, qty)
@@ -2258,7 +2375,7 @@ BEGIN
            _ug_cost_per_unit(ug.id) / (_gold_g(p.weight_baht)), p_close_id, NOW()
     FROM user_gold_received ug
     JOIN products p ON p.id = ug.product_id
-    WHERE ug.user_id = v_close_user AND ug.settled = FALSE
+    WHERE ug.user_id = v_close_user AND ug.settled = FALSE AND ug.date <= v_close_ts
     GROUP BY ug.product_id, p.weight_baht, _ug_cost_per_unit(ug.id);
 
     UPDATE wac_state
@@ -2269,7 +2386,7 @@ BEGIN
 
     UPDATE user_gold_received
       SET settled = TRUE, settled_at = NOW(), settled_close_id = p_close_id
-      WHERE user_id = v_close_user AND settled = FALSE;
+      WHERE user_id = v_close_user AND settled = FALSE AND date <= v_close_ts;
   END IF;
 
   -- โอนเงินสดที่ Sales ถืออยู่ (user_cashbook method=CASH) เข้าร้านอัตโนมัติ
@@ -2277,6 +2394,7 @@ BEGIN
     SELECT currency, SUM(amount) AS bal
     FROM user_cashbook
     WHERE user_id = v_close_user AND method = 'CASH'
+      AND date <= v_close_ts  -- [R16-3] เฉพาะเงินก่อนกดปิดกะ (= ยอดที่ส่งปิดกะ / Report ตอนนั้น)
     GROUP BY currency
     HAVING SUM(amount) > 0
   LOOP
@@ -2289,6 +2407,22 @@ BEGIN
     VALUES (v_cb_id, 'CASH_IN', v_cash.bal, v_cash.currency, 'CASH', 'ปิดกะ ' || p_close_id || ' โอนเงินสดจาก ' || v_nickname, NOW(), v_user_id);
 
     v_cash_moved := v_cash_moved || jsonb_build_object(v_cash.currency::text, v_cash.bal);
+  END LOOP;
+
+  -- [R16-1] เคลียร์ยอดโอน (method<>CASH) ในกระเป๋า Sales ให้เป็น 0 ด้วย
+  --   เงินโอนเข้าบัญชีร้าน (cashbank) ตั้งแต่ตอนยืนยันบิลแล้ว → ลงแค่ user_cashbook ไม่แตะ cashbank
+  --   เดิมกวาดเฉพาะ CASH → ยอดโอนค้างสะสมข้ามวัน ปิดกะวันถัดไปเลยเห็นยอดโอนของวันก่อนรวมมาด้วย
+  FOR v_cash IN
+    SELECT currency, method, bank_id, SUM(amount) AS bal
+    FROM user_cashbook
+    WHERE user_id = v_close_user AND method <> 'CASH'
+      AND date <= v_close_ts  -- [R16-3]
+    GROUP BY currency, method, bank_id
+    HAVING SUM(amount) <> 0
+  LOOP
+    v_uc_id := 'UC-CLT-' || to_char(NOW() AT TIME ZONE 'Asia/Bangkok', 'YYYYMMDDHH24MISSMS') || '-' || substring(md5(random()::text || v_cash.currency::text || COALESCE(v_cash.bank_id::text, '')), 1, 4);
+    INSERT INTO user_cashbook (id, user_id, type, amount, currency, method, bank_id, note, date)
+    VALUES (v_uc_id, v_close_user, 'CASH_OUT', -v_cash.bal, v_cash.currency, v_cash.method, v_cash.bank_id, 'ปิดกะ เคลียร์ยอดโอน ' || p_close_id, NOW());
   END LOOP;
 
   PERFORM _notify_user('INFO', '✅ ปิดกะของคุณได้รับการอนุมัติ: ' || p_close_id,
@@ -3743,6 +3877,139 @@ WHERE w.id = 1
     OR w.old_gold_g IS DISTINCT FROM COALESCE((SELECT SUM(sb.qty * _gold_g(p.weight_baht))
                                                FROM stock_balances sb JOIN products p ON p.id = sb.product_id
                                                WHERE sb.gold_type = 'OLD'), 0));
+
+
+-- ============================================================
+-- [R16-1] ล้างยอดโอนที่ค้างในกระเป๋า Sales จากกะที่ approve ไปแล้ว (ก่อนมี R16-1)
+--   ต่อ user: รวมแถว method<>CASH ที่ date <= เวลา approve ปิดกะล่าสุด → ลงแถวหักล้างให้เป็น 0
+--   แถวหักล้างลงวันที่ = approved_at → รันซ้ำได้ (รอบสองยอดรวมเป็น 0 แล้วจะถูกข้าม)
+--   รายการโอนหลังปิดกะล่าสุด (กะปัจจุบัน / กะที่ยังไม่ได้ approve) ไม่แตะ
+-- ============================================================
+DO $r16$
+DECLARE
+  r RECORD;
+BEGIN
+  FOR r IN
+    WITH last_close AS (
+      SELECT user_id, MAX(approved_at) AS at
+      FROM closes
+      WHERE status = 'APPROVED' AND approved_at IS NOT NULL
+      GROUP BY user_id
+    )
+    SELECT ucb.user_id, ucb.currency, ucb.method, ucb.bank_id, lc.at, SUM(ucb.amount) AS bal
+    FROM user_cashbook ucb
+    JOIN last_close lc ON lc.user_id = ucb.user_id
+    WHERE ucb.method <> 'CASH' AND ucb.date <= lc.at
+    GROUP BY ucb.user_id, ucb.currency, ucb.method, ucb.bank_id, lc.at
+    HAVING SUM(ucb.amount) <> 0
+  LOOP
+    INSERT INTO user_cashbook (id, user_id, type, amount, currency, method, bank_id, note, date)
+    VALUES ('UC-CLT-FIX-' || substring(md5(random()::text || r.user_id::text || COALESCE(r.bank_id::text, '') || r.currency::text), 1, 10),
+            r.user_id, 'CASH_OUT', -r.bal, r.currency, r.method, r.bank_id,
+            'R16-1 เคลียร์ยอดโอนค้างจากกะที่ปิดแล้ว', r.at);
+  END LOOP;
+END $r16$;
+
+
+-- ============================================================
+-- [R16-4] ปรับแถวเดิม: price ของ TRANSFER / STOCK_OUT (OLD OUT) = FIFO ต่อกรัม (= PriceOut ที่หน้าจอแสดง)
+--   TRANSFER → แถว NEW IN (ref เดียวกัน) = ค่าเดียวกัน ; wac_state ปรับตามส่วนต่าง
+--     new_value += Δ (เฉพาะ TRANSFER) ; old_value −= Δ (ตัดมูลค่าออกจาก OLD ตามจริง)
+--   FIFO ไม่ขึ้นกับ price ของแถว OUT → อัปเดตระหว่างเดินได้ ; รันซ้ำได้ (Δ = 0 ถูกข้าม)
+-- ============================================================
+DO $r16b$
+DECLARE
+  v_qty NUMERIC[] := '{}';
+  v_unit NUMERIC[] := '{}';
+  v_head INT := 1;
+  v_row RECORD;
+  v_remaining NUMERIC;
+  v_cost NUMERIC;
+  v_take NUMERIC;
+  v_delta NUMERIC;
+BEGIN
+  PERFORM 1 FROM wac_state WHERE id = 1 FOR UPDATE;
+
+  FOR v_row IN
+    SELECT id, ref_id, type, direction, gold_g, COALESCE(price, 0) AS price
+    FROM stock_moves
+    WHERE gold_type = 'OLD'
+    ORDER BY date ASC, id ASC
+  LOOP
+    IF v_row.direction = 'IN' THEN
+      v_qty := v_qty || v_row.gold_g;
+      v_unit := v_unit || CASE WHEN v_row.gold_g > 0 THEN v_row.price / v_row.gold_g ELSE 0 END;
+      CONTINUE;
+    END IF;
+
+    v_remaining := v_row.gold_g;
+    v_cost := 0;
+    WHILE v_remaining > 0 AND v_head <= COALESCE(array_length(v_qty, 1), 0) LOOP
+      v_take := LEAST(v_qty[v_head], v_remaining);
+      v_cost := v_cost + v_take * v_unit[v_head];
+      v_qty[v_head] := v_qty[v_head] - v_take;
+      v_remaining := v_remaining - v_take;
+      IF v_qty[v_head] <= 0 THEN v_head := v_head + 1; END IF;
+    END LOOP;
+
+    CONTINUE WHEN v_row.type NOT IN ('TRANSFER', 'STOCK_OUT');
+    v_delta := v_cost - v_row.price;
+    CONTINUE WHEN ABS(v_delta) < 0.005;
+
+    UPDATE stock_moves SET price = v_cost WHERE id = v_row.id;
+
+    IF v_row.type = 'TRANSFER' THEN
+      UPDATE stock_moves SET price = v_cost
+        WHERE ref_id = v_row.ref_id AND gold_type = 'NEW' AND type = 'TRANSFER' AND direction = 'IN';
+      UPDATE wac_state SET new_value = COALESCE(new_value, 0) + v_delta, updated_at = NOW() WHERE id = 1;
+    END IF;
+    UPDATE wac_state SET old_value = COALESCE(old_value, 0) - v_delta, updated_at = NOW() WHERE id = 1;
+  END LOOP;
+END $r16b$;
+
+
+-- ============================================================
+-- [R16-5] ปรับ "WAC ณ เวลาทำรายการ" ของแถวเดิม STOCK_IN (NEW) / TRANSFER / STOCK_OUT
+--   เดิมเก็บมูลค่า/g ของรายการเอง → คำนวณ WAC ย้อนหลังด้วยการไล่ stock_moves ทั้งหมด (NEW+OLD)
+--   ตามเวลา: WAC ก่อนรายการ = Σมูลค่า ÷ Σกรัม ของทุกแถวก่อนหน้า (IN +price / OUT −price)
+--   (wac_state เริ่มจาก 0 ตอน reset และทุกการเปลี่ยนผ่าน stock_moves → ไล่ซ้ำได้ค่าเดียวกัน)
+--   แถวที่เวลาเดียวกัน (คู่ TRANSFER OLD OUT/NEW IN) ใช้ WAC ก่อนกลุ่มนั้น
+--   แตะแค่คอลัมน์แสดงผล wac_per_g/wac_per_baht ของ 3 ประเภทนี้ (ไม่มีสูตรไหนใช้คำนวณต่อ) ; รันซ้ำได้
+-- ============================================================
+DO $r16c$
+DECLARE
+  v_row RECORD;
+  v_g NUMERIC := 0;
+  v_v NUMERIC := 0;
+  v_prev_date TIMESTAMPTZ := NULL;
+  v_wac_before NUMERIC := 0;
+BEGIN
+  FOR v_row IN
+    SELECT id, type, gold_type, direction, gold_g, COALESCE(price, 0) AS price, date, wac_per_g
+    FROM stock_moves
+    ORDER BY date ASC, id ASC
+  LOOP
+    IF v_prev_date IS DISTINCT FROM v_row.date THEN
+      v_wac_before := CASE WHEN v_g > 0 THEN v_v / v_g ELSE 0 END;
+      v_prev_date := v_row.date;
+    END IF;
+
+    IF (v_row.type = 'STOCK_IN' AND v_row.gold_type = 'NEW') OR v_row.type IN ('TRANSFER', 'STOCK_OUT') THEN
+      IF ABS(COALESCE(v_row.wac_per_g, 0) - v_wac_before) >= 0.005 THEN
+        UPDATE stock_moves SET wac_per_g = v_wac_before, wac_per_baht = v_wac_before * 15
+          WHERE id = v_row.id;
+      END IF;
+    END IF;
+
+    IF v_row.direction = 'IN' THEN
+      v_g := v_g + COALESCE(v_row.gold_g, 0);
+      v_v := v_v + v_row.price;
+    ELSE
+      v_g := v_g - COALESCE(v_row.gold_g, 0);
+      v_v := v_v - v_row.price;
+    END IF;
+  END LOOP;
+END $r16c$;
 
 
 -- ============================================================

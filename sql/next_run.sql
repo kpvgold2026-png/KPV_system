@@ -1,4 +1,9 @@
 -- ============================================================
+-- KPV — Round 17 (2026-10-21)
+--  R17-1) Buyback จ่ายด้วย THB/USD แปลงแล้วไม่ลงตัวกับ Total LAK: ถ้ามีรายการสกุลอื่น และยอดค้าง
+--         ≤ 500 LAK → ยืนยันได้ บิล COMPLETED, paid = Total, balance = 0 (เงินออกบันทึกตามจริง)
+--         confirm_buyback_tx เพิ่ม p_allow_short (JS ส่ง TRUE เฉพาะรายการสุดท้ายเมื่อมีสกุลอื่น)
+-- ============================================================
 -- KPV — Round 16 (2026-10-15)  [แก้ทับของเดิมในไฟล์นี้ — รันทั้งไฟล์ได้เหมือนเดิม]
 --  R16-1) ‼️ ปิดกะยอดโอนเกินจริง (เห็นยอดของวันก่อนรวมมาด้วย): approve_close_report กวาดกระเป๋า
 --         Sales เฉพาะ method=CASH → แถวโอน (TRANSFER) ใน user_cashbook ไม่เคยถูกเคลียร์
@@ -1599,12 +1604,15 @@ GRANT EXECUTE ON FUNCTION confirm_withdraw_tx(TEXT, JSONB, NUMERIC) TO authentic
 --   • FOR UPDATE แถว tx กันยืนยันพร้อมกัน
 --   (การเทียบ method ใช้ UPPER อยู่แล้ว — JS ส่ง 'CASH'/'BANK')
 -- ============================================================
+-- [R17-1] p_allow_short: ยอดค้าง ≤ 500 LAK (จ่ายด้วยสกุลอื่น) → ปิดบิลเป็น COMPLETED, paid = price
+DROP FUNCTION IF EXISTS confirm_buyback_tx(TEXT, NUMERIC, currency_code, TEXT, UUID, NUMERIC, NUMERIC, BOOLEAN);
 DROP FUNCTION IF EXISTS confirm_buyback_tx(TEXT, NUMERIC, currency_code, TEXT, UUID, NUMERIC, NUMERIC);
 DROP FUNCTION IF EXISTS confirm_buyback_tx(TEXT, NUMERIC, currency_code, TEXT, UUID, NUMERIC);
 
 CREATE FUNCTION confirm_buyback_tx(
   p_tx_id TEXT, p_paid NUMERIC, p_currency currency_code,
-  p_method TEXT, p_bank_id UUID, p_fee NUMERIC DEFAULT 0, p_change NUMERIC DEFAULT 0
+  p_method TEXT, p_bank_id UUID, p_fee NUMERIC DEFAULT 0, p_change NUMERIC DEFAULT 0,
+  p_allow_short BOOLEAN DEFAULT FALSE
 )
 RETURNS JSONB AS $$
 DECLARE
@@ -1685,6 +1693,11 @@ BEGIN
   IF v_new_balance <= 0 THEN
     v_new_status := 'COMPLETED';
     v_new_balance := 0;
+  ELSIF COALESCE(p_allow_short, FALSE) AND p_currency <> 'LAK' AND v_new_balance <= 500 THEN
+    -- [R17-1] เศษจากการแปลงสกุล ≤ 500 LAK → ถือว่าจ่ายครบตาม Total
+    v_new_status := 'COMPLETED';
+    v_new_balance := 0;
+    v_total_paid := v_price;
   ELSE
     v_new_status := 'PARTIAL';
   END IF;
@@ -1771,7 +1784,7 @@ EXCEPTION WHEN OTHERS THEN
   RETURN jsonb_build_object('success', false, 'message', SQLERRM);
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-GRANT EXECUTE ON FUNCTION confirm_buyback_tx(TEXT, NUMERIC, currency_code, TEXT, UUID, NUMERIC, NUMERIC) TO authenticated;
+GRANT EXECUTE ON FUNCTION confirm_buyback_tx(TEXT, NUMERIC, currency_code, TEXT, UUID, NUMERIC, NUMERIC, BOOLEAN) TO authenticated;
 
 
 -- ============================================================

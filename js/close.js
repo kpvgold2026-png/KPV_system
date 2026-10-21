@@ -243,6 +243,13 @@ async function openCloseWorkModal(isResume) {
             sellGoldG += (getGoldWeight(it.productId) || 0) * (parseFloat(it.qty) || 0);
           }
         });
+      } else if (t.type === 'WITHDRAW') {
+        // [R17-2] Withdraw จ่ายทองใหม่ออกจากสต๊อก → นับรวมในทองใหม่จ่ายออก (ไม่นับเป็นยอดขาย)
+        items.forEach(function(it) {
+          if (it.role === 'NEW' && newGoldOut[it.productId] !== undefined) {
+            newGoldOut[it.productId] += (parseFloat(it.qty) || 0);
+          }
+        });
       } else if (t.type === 'BUYBACK') {
         bbMoney += amt;
         bbCount++;

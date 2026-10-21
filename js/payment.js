@@ -372,6 +372,8 @@ async function confirmMultiPayment() {
       }
 
       if (currentPaymentData.type === 'BUYBACK') {
+        // [R17-1] มีสกุลอื่น + ยอดค้าง ≤ 500 LAK → รายการสุดท้าย (สกุลอื่นเสมอ) ปิดบิลตาม Total
+        var allowShort = nonLakItems.length > 0 && (total - totalPaid) <= 500;
         for (var pi = 0; pi < paymentEntries.length; pi++) {
           var p = paymentEntries[pi];
           var bankId = null;
@@ -388,7 +390,8 @@ async function confirmMultiPayment() {
             p_currency: p.currency,
             p_method: p.method,
             p_bank_id: bankId,
-            p_change: 0
+            p_change: 0,
+            p_allow_short: allowShort && pi === paymentEntries.length - 1
           });
           if (!partial || !partial.success) {
             alert('❌ เกิดข้อผิดพลาด: ' + (partial && partial.message ? partial.message : 'Unknown'));

@@ -419,7 +419,7 @@ function renderLRPaymentsByType(historyData, dateFrom, dateTo) {
     if (r.status !== 'COMPLETED' && r.status !== 'PAID' && r.status !== 'PARTIAL') return;
     var amt = parseFloat(r.total) || 0;
     if (r.type === 'BUYBACK') bbTotal += amt;
-    else if (r.type !== 'WITHDRAW') salesTotal += amt;
+    else salesTotal += amt;  // [R17-3] รวม Withdraw ด้วย
   });
 
   if (salesContainer) {

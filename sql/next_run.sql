@@ -3,6 +3,9 @@
 --  R17-1) Buyback จ่ายด้วย THB/USD แปลงแล้วไม่ลงตัวกับ Total LAK: ถ้ามีรายการสกุลอื่น และยอดค้าง
 --         ≤ 500 LAK → ยืนยันได้ บิล COMPLETED, paid = Total, balance = 0 (เงินออกบันทึกตามจริง)
 --         confirm_buyback_tx เพิ่ม p_allow_short (JS ส่ง TRUE เฉพาะรายการสุดท้ายเมื่อมีสกุลอื่น)
+--  R17-2) ปิดกะ: ทองใหม่จ่ายออก นับ WITHDRAW ด้วย (แก้ js/close.js อย่างเดียว)
+--  R17-3) Report ตาราง "ยอดเงินที่ได้รับจากการขาย" รวมเงิน WITHDRAW + หักเงินทอน WITHDRAW
+--         (get_payment_channel_summary)
 -- ============================================================
 -- KPV — Round 16 (2026-10-15)  [แก้ทับของเดิมในไฟล์นี้ — รันทั้งไฟล์ได้เหมือนเดิม]
 --  R16-1) ‼️ ปิดกะยอดโอนเกินจริง (เห็นยอดของวันก่อนรวมมาด้วย): approve_close_report กวาดกระเป๋า
@@ -3311,6 +3314,8 @@ GRANT EXECUTE ON FUNCTION get_history_txs(DATE, DATE, INT) TO authenticated;
 --   sales   = SELL + TRADEIN + EXCHANGE, buyback = BUYBACK, withdraw แยกไว้ต่างหาก
 --   change  = เงินทอนรวม (LAK, เงินสด) ของบิลฝั่งขาย — เอาไปหักในแถวรวมฝั่ง JS
 -- ============================================================
+-- [R17-3] Withdraw รวมเข้าตาราง "ยอดเงินที่ได้รับจากการขาย" (sales) + เงินทอนของ Withdraw ด้วย
+--   คีย์ 'withdraw' คงไว้ (ว่าง) เพื่อ compat
 CREATE OR REPLACE FUNCTION get_payment_channel_summary(p_date_from DATE, p_date_to DATE)
 RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE
@@ -3320,7 +3325,6 @@ BEGIN
   WITH pay AS (
     SELECT CASE t.type::text
              WHEN 'BUYBACK'  THEN 'buyback'
-             WHEN 'WITHDRAW' THEN 'withdraw'
              ELSE 'sales'
            END AS grp_key,
            CASE
@@ -3354,7 +3358,7 @@ BEGIN
 
   SELECT COALESCE(SUM(COALESCE(t.change_amount, 0)), 0) INTO v_change
   FROM transactions t
-  WHERE t.type IN ('SELL', 'TRADEIN', 'EXCHANGE')
+  WHERE t.type IN ('SELL', 'TRADEIN', 'EXCHANGE', 'WITHDRAW')
     AND t.status IN ('COMPLETED', 'PAID', 'PARTIAL')
     AND (t.date AT TIME ZONE 'Asia/Bangkok')::date BETWEEN p_date_from AND p_date_to;
 

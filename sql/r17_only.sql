@@ -1,4 +1,4 @@
--- KPV R17 only (R17-1) — Buyback: ยอดค้าง ≤ 500 LAK เมื่อจ่ายด้วยสกุลอื่น → ปิดบิลตาม Total
+-- KPV R17 only — R17-1 Buyback ยอดค้าง ≤ 500 LAK (สกุลอื่น) ปิดบิลตาม Total ; R17-3 Withdraw รวมในยอดเงินที่ได้รับจากการขาย
 
 -- [R17-1] p_allow_short: ยอดค้าง ≤ 500 LAK (จ่ายด้วยสกุลอื่น) → ปิดบิลเป็น COMPLETED, paid = price
 DROP FUNCTION IF EXISTS confirm_buyback_tx(TEXT, NUMERIC, currency_code, TEXT, UUID, NUMERIC, NUMERIC, BOOLEAN);
@@ -181,3 +181,62 @@ EXCEPTION WHEN OTHERS THEN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 GRANT EXECUTE ON FUNCTION confirm_buyback_tx(TEXT, NUMERIC, currency_code, TEXT, UUID, NUMERIC, NUMERIC, BOOLEAN) TO authenticated;
+
+
+-- [R17-3] Withdraw รวมเข้าตาราง "ยอดเงินที่ได้รับจากการขาย" (sales) + เงินทอนของ Withdraw ด้วย
+--   คีย์ 'withdraw' คงไว้ (ว่าง) เพื่อ compat
+CREATE OR REPLACE FUNCTION get_payment_channel_summary(p_date_from DATE, p_date_to DATE)
+RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER AS $$
+DECLARE
+  v_blocks JSONB;
+  v_change NUMERIC := 0;
+BEGIN
+  WITH pay AS (
+    SELECT CASE t.type::text
+             WHEN 'BUYBACK'  THEN 'buyback'
+             ELSE 'sales'
+           END AS grp_key,
+           CASE
+             WHEN UPPER(COALESCE(tp.method, 'CASH')) = 'CASH' THEN 'Cash'
+             WHEN b.name ILIKE 'BCEL%' THEN 'BCEL'
+             WHEN b.name ILIKE 'LDB%'  THEN 'LDB'
+             ELSE 'Other'
+           END AS channel,
+           tp.currency::text AS cur,
+           tp.amount AS amount
+    FROM transaction_payments tp
+    JOIN transactions t ON t.id = tp.tx_id
+    LEFT JOIN banks b ON b.id = tp.bank_id
+    WHERE t.status IN ('COMPLETED', 'PAID', 'PARTIAL')
+      AND t.type IN ('SELL', 'TRADEIN', 'EXCHANGE', 'WITHDRAW', 'BUYBACK')
+      AND (t.date AT TIME ZONE 'Asia/Bangkok')::date BETWEEN p_date_from AND p_date_to
+  ),
+  grp AS (
+    SELECT grp_key, channel,
+           COALESCE(SUM(amount) FILTER (WHERE cur = 'LAK'), 0) AS lak,
+           COALESCE(SUM(amount) FILTER (WHERE cur = 'THB'), 0) AS thb,
+           COALESCE(SUM(amount) FILTER (WHERE cur = 'USD'), 0) AS usd
+    FROM pay GROUP BY grp_key, channel
+  ),
+  byg AS (
+    SELECT grp_key,
+           jsonb_object_agg(channel, jsonb_build_object('LAK', lak, 'THB', thb, 'USD', usd)) AS blk
+    FROM grp GROUP BY grp_key
+  )
+  SELECT COALESCE(jsonb_object_agg(grp_key, blk), '{}'::jsonb) INTO v_blocks FROM byg;
+
+  SELECT COALESCE(SUM(COALESCE(t.change_amount, 0)), 0) INTO v_change
+  FROM transactions t
+  WHERE t.type IN ('SELL', 'TRADEIN', 'EXCHANGE', 'WITHDRAW')
+    AND t.status IN ('COMPLETED', 'PAID', 'PARTIAL')
+    AND (t.date AT TIME ZONE 'Asia/Bangkok')::date BETWEEN p_date_from AND p_date_to;
+
+  RETURN jsonb_build_object(
+    'sales',    COALESCE(v_blocks->'sales',    '{}'::jsonb),
+    'buyback',  COALESCE(v_blocks->'buyback',  '{}'::jsonb),
+    'withdraw', COALESCE(v_blocks->'withdraw', '{}'::jsonb),
+    'change_lak', v_change
+  );
+END;
+$$;
+GRANT EXECUTE ON FUNCTION get_payment_channel_summary(DATE, DATE) TO authenticated;

@@ -103,7 +103,7 @@ async function loadBuybacks() {
         '<td style="color: ' + (balance > 0 ? '#f44336' : '#4caf50') + '; font-weight: bold;">' + formatNumber(balance) + '</td>' +
         '<td><span class="status-badge status-' + status.toLowerCase() + '">' + status + '</span></td>' +
         '<td>' + saleName + '</td>' +
-        '<td>' + actions + '</td>' +
+        '<td style="white-space:nowrap;">' + actions + '</td>' +
         '</tr>';
     }).join('');
   } catch (error) {

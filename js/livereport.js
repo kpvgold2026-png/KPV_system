@@ -103,6 +103,15 @@ function renderLRSalesStatusV2(rows) {
     else if (status === 'PENDING') { statusText = '⏳ รอ Manager ยืนยัน'; statusColor = '#d4af37'; }
     else if (status === 'OPEN') { statusText = '🟢 เปิดกะอยู่'; statusColor = '#4caf50'; }
     else { statusText = '⚪ ยังไม่เปิดกะ'; statusColor = '#888'; }
+    // [R18] ปิดกะแล้วแต่ยังไม่เปิดกะใหม่ → ยอดยังค้างโชว์ บอกว่าเป็นกะของวันไหน
+    if ((status === 'CLOSED' || status === 'PENDING') && r.close_date) {
+      var today = getTodayLocalStr();
+      var yd = new Date(today + 'T00:00:00Z');
+      yd.setUTCDate(yd.getUTCDate() - 1);
+      var yesterday = yd.toISOString().split('T')[0];
+      if (r.close_date === yesterday) statusText += ' (ของเมื่อวาน)';
+      else if (r.close_date < today) statusText += ' (ของวันที่ ' + formatDateOnly(r.close_date) + ')';
+    }
 
     // build per-product goldQty map
     var goldQty = {};

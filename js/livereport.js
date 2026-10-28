@@ -1,6 +1,31 @@
 var _lrDateFrom = null;
 var _lrDateTo = null;
 var _lrHistoryTruncated = false;
+var _lrMidnightTimer = null;
+
+// [R19-2] เลย 00:00 (เวลาไทย) → กะที่ปิดแล้วของเมื่อวานกลายเป็น "ยังไม่เปิดกะ"
+//   ถ้ายังเปิดหน้า Report ค้างไว้ที่ "วันนี้" → เลื่อนวันที่เป็นวันใหม่แล้วโหลดใหม่เอง
+function _lrScheduleMidnightRefresh() {
+  if (_lrMidnightTimer) clearTimeout(_lrMidnightTimer);
+  var now = Date.now();
+  var bkk = new Date(now + 7 * 3600000);
+  var msToMidnight = 86400000 - (bkk.getUTCHours() * 3600000 + bkk.getUTCMinutes() * 60000 +
+                                 bkk.getUTCSeconds() * 1000 + bkk.getUTCMilliseconds());
+  var dayAtSchedule = getTodayLocalStr();
+  _lrMidnightTimer = setTimeout(function() {
+    _lrMidnightTimer = null;
+    var el = document.getElementById('lrSalesStatus');
+    if (!el || el.offsetParent === null) return;  // ไม่ได้เปิดหน้า Report อยู่
+    var today = getTodayLocalStr();
+    var elFrom = document.getElementById('lrDateFrom');
+    var elTo = document.getElementById('lrDateTo');
+    if (elFrom && elTo && elFrom.value === dayAtSchedule && elTo.value === dayAtSchedule) {
+      elFrom.value = today;
+      elTo.value = today;
+    }
+    loadLiveReport();
+  }, msToMidnight + 5000);
+}
 
 function initLiveReportDateFilter() {
   var today = getTodayLocalStr();
@@ -37,6 +62,7 @@ async function loadLiveReport() {
 
   var dateFrom = _lrDateFrom;
   var dateTo = _lrDateTo;
+  _lrScheduleMidnightRefresh();
 
   var spinnerHtml = '<div style="text-align:center;padding:30px;"><div style="display:inline-block;width:24px;height:24px;border:3px solid var(--border-color);border-top:3px solid var(--gold-primary);border-radius:50%;animation:spin 0.8s linear infinite;"></div></div>';
   ['lrSalesStatus', 'lrSummaryBoxes', 'lrSalesPayments', 'lrBuybackPayments', 'lrStockSummary', 'lrGoldTable'].forEach(function(id) {

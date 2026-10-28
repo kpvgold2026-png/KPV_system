@@ -119,6 +119,10 @@ async function loadHistorySell() {
 
         var detail = encodeURIComponent(JSON.stringify(detailArr));
         actions = '<button class="btn-action" onclick="viewTransactionDetail(\'' + typeLabel + '\',\'' + detail + '\')" style="background:#555;">👁 View</button>';
+        // [R19-3] Manager แก้ไขการชำระเงินของบิลที่จบแล้ว
+        if ((r.status === 'COMPLETED' || r.status === 'PAID') && isManager()) {
+          actions += ' <button class="btn-action" onclick="openEditPaymentModal(\'' + r.id + '\')" style="background:#ff9800;color:#fff;border-color:#ff9800;margin-left:4px;">✏️ แก้ไข</button>';
+        }
       } else if (r.status === 'PENDING' && isManager()) {
         var reviewMap = { 'SELL': 'reviewSell', 'TRADEIN': 'reviewTradein', 'EXCHANGE': 'reviewExchange', 'WITHDRAW': 'reviewWithdraw' };
         var fn = reviewMap[r.type];

@@ -15,10 +15,19 @@ function openMultiPaymentModal(type, id, total, phone, details) {
   
   document.getElementById('cashPaymentsList').innerHTML = '';
   document.getElementById('bankPaymentsList').innerHTML = '';
+  _setPaymentEditMode(false);
 
   updatePaymentSummary();
   
   openModal('multiPaymentModal');
+}
+
+// เรทแปลงเป็น LAK: Buyback (ร้านจ่ายออก) ใช้เรทรับซื้อ, อื่น ๆ ใช้เรทขาย
+function _paymentRateFor(currency, type) {
+  if (currency === 'LAK') return 1;
+  var isBuy = type === 'BUYBACK';
+  if (currency === 'THB') return (isBuy ? currentExchangeRates?.THB_Buy : currentExchangeRates?.THB_Sell) || 0;
+  return (isBuy ? currentExchangeRates?.USD_Buy : currentExchangeRates?.USD_Sell) || 0;
 }
 
 function addCashPayment() {
@@ -85,6 +94,7 @@ function renderBankPayments() {
           <option value="BCEL" ${item.bank === 'BCEL' ? 'selected' : ''}>BCEL</option>
           <option value="LDB" ${item.bank === 'LDB' ? 'selected' : ''}>LDB</option>
           <option value="OTHER" ${item.bank === 'OTHER' ? 'selected' : ''}>อื่น ๆ</option>
+          ${item.bank && ['BCEL', 'LDB', 'OTHER'].indexOf(item.bank) === -1 ? `<option value="${item.bank}" selected>${item.bank}</option>` : ''}
         </select>
         <select class="form-select" style="flex: 1;" onchange="updateBankCurrency(${item.id}, this.value)">
           <option value="LAK" ${item.currency === 'LAK' ? 'selected' : ''}>LAK</option>
@@ -126,7 +136,7 @@ function updateCashCurrency(id, value) {
   const item = paymentItems.cash.find(i => i.id === id);
   if (item) {
     item.currency = value;
-    item.rate = value === 'LAK' ? 1 : (value === 'THB' ? (currentPaymentData?.type === 'BUYBACK' ? (currentExchangeRates?.THB_Buy || 0) : (currentExchangeRates?.THB_Sell || 0)) : (currentPaymentData?.type === 'BUYBACK' ? (currentExchangeRates?.USD_Buy || 0) : (currentExchangeRates?.USD_Sell || 0)));
+    item.rate = _paymentRateFor(value, currentPaymentData?.type);
     renderCashPayments();
   }
 }
@@ -153,7 +163,7 @@ function updateBankCurrency(id, value) {
   const item = paymentItems.bank.find(i => i.id === id);
   if (item) {
     item.currency = value;
-    item.rate = value === 'LAK' ? 1 : (value === 'THB' ? (currentPaymentData?.type === 'BUYBACK' ? (currentExchangeRates?.THB_Buy || 0) : (currentExchangeRates?.THB_Sell || 0)) : (currentPaymentData?.type === 'BUYBACK' ? (currentExchangeRates?.USD_Buy || 0) : (currentExchangeRates?.USD_Sell || 0)));
+    item.rate = _paymentRateFor(value, currentPaymentData?.type);
     renderBankPayments();
   }
 }
@@ -276,6 +286,12 @@ async function confirmMultiPayment() {
       _isSubmitting = false;
       return;
     }
+    // [R19-3] แก้บิลที่จบแล้ว ต้องจ่ายครบ (ขาดได้ไม่เกิน 500 LAK)
+    if (currentPaymentData.editMode && total - totalPaid > 500) {
+      alert('❌ ยอดจ่ายยังไม่ครบ! ขาดอีก ' + formatNumber(Math.round(total - totalPaid)) + ' LAK');
+      _isSubmitting = false;
+      return;
+    }
   } else {
     if (totalPaid < total) {
       alert('❌ ยอดชำระยังไม่ครบ! ขาดอีก ' + formatNumber(total - totalPaid) + ' LAK');
@@ -315,7 +331,8 @@ async function confirmMultiPayment() {
       }
     }
 
-    try {
+    // [R19-3] โหมดแก้บิล: เงินทอนลงบัญชีของเจ้าของบิล (server เช็คยอดเอง) ไม่ใช่กระเป๋าคนที่กดแก้
+    if (!currentPaymentData.editMode) try {
       var userRows = await dbSelect('user_cashbook', {
         select: 'amount',
         filters: {
@@ -343,6 +360,11 @@ async function confirmMultiPayment() {
 
   try {
     showLoading();
+
+    if (currentPaymentData.editMode) {
+      await submitPaymentEdit(change);
+      return;
+    }
 
     var supabaseTypes = ['SELL', 'TRADEIN', 'EXCHANGE', 'WITHDRAW', 'BUYBACK'];
     if (supabaseTypes.indexOf(currentPaymentData.type) !== -1) {
@@ -372,8 +394,8 @@ async function confirmMultiPayment() {
       }
 
       if (currentPaymentData.type === 'BUYBACK') {
-        // [R17-1] มีสกุลอื่น + ยอดค้าง ≤ 500 LAK → รายการสุดท้าย (สกุลอื่นเสมอ) ปิดบิลตาม Total
-        var allowShort = nonLakItems.length > 0 && (total - totalPaid) <= 500;
+        // [R19-1] ยอดค้าง ≤ 500 LAK (ทุกสกุล รวม LAK) → รายการสุดท้ายปิดบิลตาม Total
+        var allowShort = (total - totalPaid) <= 500;
         for (var pi = 0; pi < paymentEntries.length; pi++) {
           var p = paymentEntries[pi];
           var bankId = null;
@@ -559,6 +581,7 @@ async function openBuybackPaymentModalFromList(buybackId) {
 
   document.getElementById('cashPaymentsList').innerHTML = '';
   document.getElementById('bankPaymentsList').innerHTML = '';
+  _setPaymentEditMode(false);
 
   updatePaymentSummary();
 
@@ -566,4 +589,109 @@ async function openBuybackPaymentModalFromList(buybackId) {
 }
 
 function onBuybackFeeChange() {
+}
+
+// ============================================================
+// [R19-3] แก้ไขการชำระเงินบิลที่จบแล้ว (Manager/Admin) — ใช้ modal เดียวกับตอนรับ/จ่ายเงิน
+//   server (edit_tx_payments) ลงส่วนต่าง: กะ Sales ยังไม่ปิด → กระเป๋า Sales ; ปิดแล้ว/Manager รับ → เงินร้าน
+// ============================================================
+function _setPaymentEditMode(on) {
+  var grp = document.getElementById('multiPaymentEditReasonGroup');
+  var inp = document.getElementById('multiPaymentEditReason');
+  if (grp) grp.style.display = on ? '' : 'none';
+  if (inp) inp.value = '';
+}
+
+async function openEditPaymentModal(txId) {
+  if (!isManager()) return;
+  var info;
+  try {
+    showLoading();
+    info = await dbRpc('get_tx_payment_edit_info', { p_tx_id: txId });
+  } catch (e) {
+    hideLoading();
+    alert('❌ เกิดข้อผิดพลาด: ' + e.message);
+    return;
+  }
+  hideLoading();
+  if (!info || !info.success) {
+    alert(info && info.message ? info.message : '❌ เกิดข้อผิดพลาด');
+    return;
+  }
+
+  var type = info.type;
+  var total = parseFloat(info.total) || 0;
+  var led = info.ledger || {};
+  var who = led.nickname || 'Sales';
+  var ledgerText = led.mode === 'SHIFT'
+    ? '🟢 กะของ ' + who + ' ยังไม่ปิด → ปรับยอดในกระเป๋า ' + who + ' (เงินโอนปรับที่บัญชีร้าน)'
+    : '🏦 ' + (led.nickname ? 'กะของ ' + led.nickname + ' ปิดแล้ว' : 'Manager/Admin เป็นผู้รับ/จ่ายเงิน') + ' → ปรับยอดเงินร้าน';
+
+  var details = '<div style="padding:8px 10px;border-radius:6px;background:rgba(255,152,0,0.12);border:1px solid #ff9800;font-size:13px;">' + ledgerText + '</div>';
+  var oldChange = parseFloat(info.change) || 0;
+  if (oldChange > 0) details += '<div style="margin-top:6px;font-size:12px;color:var(--text-secondary);">เงินทอนเดิม: ' + formatNumber(oldChange) + ' LAK</div>';
+  var payments = info.payments || [];
+  if (payments.some(function(p) { return p.currency && p.currency !== 'LAK'; })) {
+    details += '<div style="margin-top:6px;font-size:11px;color:var(--text-secondary);">* รายการ THB/USD คิดเป็น LAK ด้วยเรทปัจจุบัน</div>';
+  }
+  (info.edits || []).forEach(function(e) {
+    details += '<div style="margin-top:4px;font-size:11px;color:var(--text-secondary);">✏️ แก้ไขเมื่อ ' + formatDateTime(e.edited_at) + ' โดย ' + (e.by || '-') + ': ' + (e.reason || '') + '</div>';
+  });
+
+  openMultiPaymentModal(type, txId, total, info.phone, details);
+  document.getElementById('multiPaymentTitle').textContent = '✏️ แก้ไขการชำระเงิน';
+  currentPaymentData.editMode = true;
+  _setPaymentEditMode(true);
+
+  var seq = Date.now();
+  payments.forEach(function(p) {
+    var cur = p.currency || 'LAK';
+    var item = { id: seq++, currency: cur, amount: parseFloat(p.amount) || 0, rate: _paymentRateFor(cur, type) };
+    if (String(p.method || '').toUpperCase() === 'CASH') {
+      item.method = 'CASH';
+      paymentItems.cash.push(item);
+    } else {
+      item.method = 'BANK';
+      item.bank = p.bank || 'OTHER';
+      paymentItems.bank.push(item);
+    }
+  });
+  renderCashPayments();
+  renderBankPayments();
+}
+
+async function submitPaymentEdit(change) {
+  var reasonEl = document.getElementById('multiPaymentEditReason');
+  var reason = reasonEl ? reasonEl.value.trim() : '';
+  if (!reason) {
+    alert('❌ กรุณาระบุเหตุผลที่แก้ไข');
+    endSubmit();
+    return;
+  }
+
+  var payments = paymentItems.cash.concat(paymentItems.bank)
+    .filter(function(p) { return p.amount > 0; })
+    .map(function(p) {
+      return { method: p.method, currency: p.currency, amount: p.amount, rate: p.rate || 1, bank: p.bank || '' };
+    });
+
+  var res = await dbRpc('edit_tx_payments', {
+    p_tx_id: currentPaymentData.id,
+    p_payments: payments,
+    p_change: currentPaymentData.type === 'BUYBACK' ? 0 : change,
+    p_reason: reason
+  });
+  if (!res || !res.success) {
+    alert(res && res.message ? res.message : '❌ เกิดข้อผิดพลาด');
+    endSubmit();
+    return;
+  }
+
+  showToast('✅ แก้ไขการชำระเงินสำเร็จ');
+  closeModal('multiPaymentModal');
+  currentPaymentData = null;
+  paymentItems = { cash: [], bank: [] };
+  if (typeof loadHistorySell === 'function') loadHistorySell();
+  if (typeof loadBuybacks === 'function') loadBuybacks();
+  endSubmit();
 }

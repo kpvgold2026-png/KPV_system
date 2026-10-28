@@ -1,11 +1,12 @@
 -- ============================================================
--- reset.sql — รีเซ็ตข้อมูลเริ่มสด เป็น 0 ทุกอย่าง (อัปเดต 2026-08-27)
+-- reset.sql — รีเซ็ตข้อมูลเริ่มสด เป็น 0 ทุกอย่าง (อัปเดต 2026-10-28)
 -- ============================================================
 -- ผลลัพธ์หลังรัน:
 --   - ลบทุก tx + diff + cashbank + user_cashbook + closes + notifications
 --     + stock_moves + stock_transfers + inventory_snapshots + approvals
 --     + user_gold_received + daily_reports + audit_logs
 --     + admin_ref_counter + bill_sequence + old_gold_lots
+--     + tx_payment_edits + tx_gold_edits (ประวัติแก้บิล)
 --   - ‼️ ไม่ทำรายการ STOCK_IN bootstrap — ทุกอย่างเริ่มที่ 0
 --   - ทองเก่า (OLD) = 0 (ทุก product ที่มีในตาราง products)
 --   - ทองใหม่ (NEW) = 0 (ทุก product ที่มีในตาราง products)
@@ -47,12 +48,16 @@ DELETE FROM transactions;
 --   audit_logs         = ‼️ ต้องล้างด้วย — แท็บ "รายการที่ถูกลบ" (utils.js
 --                        loadDeletedList) อ่านจากตารางนี้ ถ้าไม่ล้างแต่ reset
 --                        bill_sequence เลขบิลใหม่จะซ้ำกับ ref_id ของบิลที่ลบไปแล้ว
+--   tx_payment_edits   = ประวัติแก้การชำระเงินบิล   (Round 19)
+--   tx_gold_edits      = ประวัติแก้รายการทองบิล     (Round 19)
+--                        ไม่ล้าง → บิลใหม่ที่ได้เลขซ้ำจะโชว์ประวัติแก้ของบิลเก่า
 -- ============================================================
 DO $$
 DECLARE t TEXT;
 BEGIN
   FOREACH t IN ARRAY ARRAY[
-    'bill_sequence', 'admin_ref_counter', 'old_gold_lots', 'daily_reports', 'audit_logs'
+    'bill_sequence', 'admin_ref_counter', 'old_gold_lots', 'daily_reports', 'audit_logs',
+    'tx_payment_edits', 'tx_gold_edits'
   ] LOOP
     IF to_regclass('public.' || t) IS NOT NULL THEN
       EXECUTE format('DELETE FROM public.%I', t);
@@ -113,7 +118,9 @@ COMMIT;
 --          (SELECT COUNT(*) FROM closes)         AS closes,
 --          (SELECT COUNT(*) FROM old_gold_lots)  AS old_lots,
 --          (SELECT COUNT(*) FROM audit_logs)     AS audit_logs,
---          (SELECT COUNT(*) FROM bill_sequence)  AS bill_seq;
+--          (SELECT COUNT(*) FROM bill_sequence)  AS bill_seq,
+--          (SELECT COUNT(*) FROM tx_payment_edits) AS pay_edits,
+--          (SELECT COUNT(*) FROM tx_gold_edits)  AS gold_edits;
 --
 --   -- payment breakdown (ต้องว่าง)
 --   SELECT type, currency, amount, method, note FROM cashbank ORDER BY date ASC;

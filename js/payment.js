@@ -695,3 +695,183 @@ async function submitPaymentEdit(change) {
   if (typeof loadBuybacks === 'function') loadBuybacks();
   endSubmit();
 }
+
+// ============================================================
+// [R19-4] กดแก้ไขบิล → เลือก "แก้ยอดเงิน" หรือ "แก้ยอดทอง"
+//   แก้ทอง: เปลี่ยนชนิด/จำนวนแท่งได้ แต่น้ำหนักรวมแต่ละกลุ่มต้องเท่าเดิม (เงินของบิลไม่เปลี่ยน)
+// ============================================================
+var _txEditChooserId = null;
+var _goldEdit = null;
+var GOLD_EDIT_ROLE_LABELS = {
+  'NEW': 'ทองใหม่ (ออกจากร้าน)',
+  'OLD': 'ทองเก่า (รับเข้า)',
+  'FOC': 'F.O.C (ทองเก่า)',
+  'SWITCH': 'Switch (ทองเก่า)',
+  'FREE_EX': 'Free Ex (ทองเก่า)'
+};
+var GOLD_EDIT_ROLE_ORDER = ['NEW', 'OLD', 'FOC', 'SWITCH', 'FREE_EX'];
+
+function openTxEditChooser(txId) {
+  if (!isManager()) return;
+  _txEditChooserId = txId;
+  document.getElementById('txEditChooserId').textContent = txId;
+  openModal('txEditChooserModal');
+}
+
+function chooseTxEdit(kind) {
+  var id = _txEditChooserId;
+  closeModal('txEditChooserModal');
+  if (!id) return;
+  if (kind === 'gold') openEditGoldModal(id);
+  else openEditPaymentModal(id);
+}
+
+function _goldEditGramsPerUnit(pid) {
+  var p = FIXED_PRODUCTS.find(function(x) { return x.id === pid; });
+  return p ? Math.round(p.weight * 15 * 1000) / 1000 : 0;
+}
+
+function _goldEditGrams(map) {
+  var g = 0;
+  Object.keys(map || {}).forEach(function(pid) { g += (parseFloat(map[pid]) || 0) * _goldEditGramsPerUnit(pid); });
+  return Math.round(g * 1000) / 1000;
+}
+
+async function openEditGoldModal(txId) {
+  if (!isManager()) return;
+  var info;
+  try {
+    showLoading();
+    info = await dbRpc('get_tx_gold_edit_info', { p_tx_id: txId });
+  } catch (e) {
+    hideLoading();
+    alert('❌ เกิดข้อผิดพลาด: ' + e.message);
+    return;
+  }
+  hideLoading();
+  if (!info || !info.success) {
+    alert(info && info.message ? info.message : '❌ เกิดข้อผิดพลาด');
+    return;
+  }
+
+  var orig = {};
+  (info.items || []).forEach(function(i) {
+    var role = String(i.role || '').toUpperCase();
+    if (!orig[role]) orig[role] = {};
+    orig[role][i.productId] = (orig[role][i.productId] || 0) + (parseFloat(i.qty) || 0);
+  });
+  var roles = GOLD_EDIT_ROLE_ORDER.filter(function(r) { return orig[r]; });
+  if (roles.length === 0) {
+    alert('❌ บิลนี้ไม่มีรายการทอง');
+    return;
+  }
+  var cur = {};
+  roles.forEach(function(r) {
+    cur[r] = {};
+    FIXED_PRODUCTS.forEach(function(p) { cur[r][p.id] = orig[r][p.id] || 0; });
+  });
+  _goldEdit = { id: txId, type: info.type, roles: roles, orig: orig, cur: cur };
+
+  document.getElementById('goldEditId').textContent = txId;
+  document.getElementById('goldEditPhone').textContent = info.phone || '-';
+  document.getElementById('goldEditReason').value = '';
+
+  var og = info.old_gold || {};
+  var note = '<div style="padding:8px 10px;border-radius:6px;background:rgba(255,152,0,0.12);border:1px solid #ff9800;font-size:13px;margin-bottom:12px;">'
+    + '⚖️ เปลี่ยนชนิด/จำนวนได้ แต่ <b>น้ำหนักรวมแต่ละกลุ่มต้องเท่าเดิม</b> — ยอดเงินของบิลไม่เปลี่ยน';
+  if (og.state === 'HELD') note += '<br>🟢 ทองเก่ายังอยู่กับ ' + (og.nickname || 'Sales') + ' (กะยังไม่ปิด) → ปรับรายการที่ Sales ถือ';
+  else if (og.state === 'STOCK') note += '<br>🏦 ทองเก่าเข้า Stock OLD แล้ว → ปรับ Stock OLD (ชิ้นเดิมต้องยังอยู่ในสต๊อก)';
+  if (roles.indexOf('NEW') !== -1) note += '<br>📦 ทองใหม่ → คืนสต๊อก NEW ชิ้นเดิม แล้วตัดชิ้นใหม่';
+  note += '</div>';
+  (info.edits || []).forEach(function(e) {
+    note += '<div style="margin:-6px 0 10px;font-size:11px;color:var(--text-secondary);">✏️ แก้ทองเมื่อ ' + formatDateTime(e.edited_at) + ' โดย ' + (e.by || '-') + ': ' + (e.reason || '') + '</div>';
+  });
+  document.getElementById('goldEditNote').innerHTML = note;
+
+  renderGoldEdit();
+  openModal('goldEditModal');
+}
+
+function renderGoldEdit() {
+  if (!_goldEdit) return;
+  var html = '';
+  _goldEdit.roles.forEach(function(role) {
+    html += '<div style="background:var(--bg-light);border-radius:8px;padding:12px;margin-bottom:12px;">';
+    html += '<div style="font-weight:700;color:var(--gold-primary);margin-bottom:10px;">' + (GOLD_EDIT_ROLE_LABELS[role] || role) + '</div>';
+    html += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;">';
+    FIXED_PRODUCTS.forEach(function(p) {
+      var q = _goldEdit.cur[role][p.id] || 0;
+      var was = _goldEdit.orig[role][p.id] || 0;
+      html += '<label style="display:block;font-size:12px;color:var(--text-secondary);">' + p.name
+        + (was ? ' <span style="color:var(--gold-primary);">(เดิม ' + was + ')</span>' : '')
+        + '<input type="number" min="0" step="1" class="form-input" style="margin-top:4px;" value="' + (q || '') + '" placeholder="0"'
+        + ' oninput="updateGoldEditQty(\'' + role + '\',\'' + p.id + '\',this.value)"></label>';
+    });
+    html += '</div>';
+    html += '<div id="goldEditSum_' + role + '" style="margin-top:10px;font-size:13px;font-weight:700;"></div>';
+    html += '</div>';
+  });
+  document.getElementById('goldEditBody').innerHTML = html;
+  _goldEdit.roles.forEach(updateGoldEditSummary);
+}
+
+function updateGoldEditQty(role, pid, value) {
+  if (!_goldEdit || !_goldEdit.cur[role]) return;
+  var n = parseFloat(String(value).replace(/,/g, ''));
+  _goldEdit.cur[role][pid] = isNaN(n) ? 0 : n;
+  updateGoldEditSummary(role);
+}
+
+function updateGoldEditSummary(role) {
+  var el = document.getElementById('goldEditSum_' + role);
+  if (!el || !_goldEdit) return;
+  var oldG = _goldEditGrams(_goldEdit.orig[role]);
+  var newG = _goldEditGrams(_goldEdit.cur[role]);
+  var ok = Math.abs(oldG - newG) < 0.001;
+  el.style.color = ok ? '#4caf50' : '#f44336';
+  el.textContent = (ok ? '✓ ' : '✕ ') + 'น้ำหนักเดิม ' + oldG.toFixed(2) + ' g → ใหม่ ' + newG.toFixed(2) + ' g'
+    + (ok ? '' : ' (ต่างกัน ' + (newG - oldG > 0 ? '+' : '') + (newG - oldG).toFixed(2) + ' g)');
+}
+
+async function submitGoldEdit() {
+  if (_isSubmitting || !_goldEdit) return;
+
+  var items = [];
+  var bad = [];
+  var changed = false;
+  for (var ri = 0; ri < _goldEdit.roles.length; ri++) {
+    var role = _goldEdit.roles[ri];
+    var map = _goldEdit.cur[role];
+    if (Math.abs(_goldEditGrams(_goldEdit.orig[role]) - _goldEditGrams(map)) >= 0.001) bad.push(GOLD_EDIT_ROLE_LABELS[role] || role);
+    for (var pid in map) {
+      var q = map[pid] || 0;
+      if (q < 0 || Math.floor(q) !== q) { alert('❌ จำนวนต้องเป็นจำนวนเต็มบวก'); return; }
+      if (q !== (_goldEdit.orig[role][pid] || 0)) changed = true;
+      if (q > 0) items.push({ role: role, productId: pid, qty: q });
+    }
+  }
+  if (bad.length) { alert('❌ น้ำหนักรวมต้องเท่าเดิม: ' + bad.join(', ')); return; }
+  if (!changed) { alert('ไม่มีรายการที่เปลี่ยน'); return; }
+  var reason = document.getElementById('goldEditReason').value.trim();
+  if (!reason) { alert('❌ กรุณาระบุเหตุผลที่แก้ไข'); return; }
+
+  _isSubmitting = true;
+  try {
+    showLoading();
+    var res = await dbRpc('edit_tx_gold', { p_tx_id: _goldEdit.id, p_items: items, p_reason: reason });
+    if (!res || !res.success) {
+      alert(res && res.message ? res.message : '❌ เกิดข้อผิดพลาด');
+      endSubmit();
+      return;
+    }
+    showToast('✅ แก้ไขรายการทองสำเร็จ');
+    closeModal('goldEditModal');
+    _goldEdit = null;
+    if (typeof loadHistorySell === 'function') loadHistorySell();
+    if (typeof loadBuybacks === 'function') loadBuybacks();
+    endSubmit();
+  } catch (e) {
+    alert('❌ เกิดข้อผิดพลาด: ' + e.message);
+    endSubmit();
+  }
+}

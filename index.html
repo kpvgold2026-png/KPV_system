@@ -2108,6 +2108,49 @@
     </div>
   </div>
 
+  <!-- [R19-4] เลือกแก้ไขบิล: เงิน / ทอง -->
+  <div id="txEditChooserModal" class="modal">
+    <div class="modal-content" style="max-width: 420px;">
+      <div class="modal-header">
+        <h2>✏️ แก้ไขบิล</h2>
+        <span class="close" onclick="closeModal('txEditChooserModal')">&times;</span>
+      </div>
+      <div style="padding: 20px;">
+        <div style="text-align:center;color:var(--text-secondary);margin-bottom:16px;" id="txEditChooserId">-</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <button class="btn-primary" style="padding:16px 8px;background:#2196f3;" onclick="chooseTxEdit('money')">💵 แก้ยอดเงิน</button>
+          <button class="btn-primary" style="padding:16px 8px;" onclick="chooseTxEdit('gold')">🥇 แก้ยอดทอง</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- [R19-4] แก้ไขรายการทอง (น้ำหนักรวมต้องเท่าเดิม) -->
+  <div id="goldEditModal" class="modal">
+    <div class="modal-content" style="max-width: 600px;">
+      <div class="modal-header">
+        <h2>🥇 แก้ไขรายการทอง</h2>
+        <span class="close" onclick="closeModal('goldEditModal')">&times;</span>
+      </div>
+      <div style="padding: 20px;">
+        <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+          <div><strong>Transaction ID:</strong> <span id="goldEditId">-</span></div>
+          <div><strong>Phone:</strong> <span id="goldEditPhone">-</span></div>
+        </div>
+        <div id="goldEditNote"></div>
+        <div id="goldEditBody"></div>
+        <div style="margin-top: 15px;">
+          <label style="color: #ff9800; font-weight: bold; margin-bottom: 8px; display: block;">✏️ เหตุผลที่แก้ไข *</label>
+          <input type="text" class="form-input" id="goldEditReason" placeholder="เช่น ลูกค้าขอเปลี่ยนเป็น 2 สลึง x2">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick="closeModal('goldEditModal')">Cancel</button>
+        <button class="btn-primary" onclick="submitGoldEdit()">✓ Confirm</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Review Decision Modal -->
   <div id="reviewDecisionModal" class="modal">
     <div class="modal-content" style="max-width: 500px;">
@@ -2153,34 +2196,34 @@
   
   <script defer src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="js/config.js?v=219"></script>
-  <script src="js/utils.js?v=219"></script>
-  <script src="js/api.js?v=219"></script>
-  <script src="js/ui.js?v=219"></script>
-  <script src="js/dashboard.js?v=219"></script>
-  <script src="js/products.js?v=219"></script>
-  <script src="js/pricerate.js?v=219"></script>
-  <script src="js/sell.js?v=219"></script>
-  <script src="js/payment.js?v=219"></script>
-  <script src="js/tradein.js?v=219"></script>
-  <script src="js/buyback.js?v=219"></script>
-  <script src="js/exchange.js?v=219"></script>
-  <script src="js/withdraw.js?v=219"></script>
-  <script src="js/historysell.js?v=219"></script>
-  <script src="js/cashbank.js?v=219"></script>
-  <script src="js/accounting.js?v=219"></script>
-  <script src="js/diff.js?v=219"></script>
-  <script src="js/reports.js?v=219"></script>
-  <script src="js/livereport.js?v=219"></script>
-  <script src="js/usersetting.js?v=219"></script>
-  <script src="js/stockold.js?v=219"></script>
-  <script src="js/stocknew.js?v=219"></script>
-  <script src="js/wac.js?v=219"></script>
-  <script src="js/inventory.js?v=219"></script>
-  <script src="js/close.js?v=219"></script>
-  <script src="js/review.js?v=219"></script>
-  <script src="js/notification.js?v=219"></script>
-  <script src="js/auth.js?v=219"></script>
+  <script src="js/config.js?v=220"></script>
+  <script src="js/utils.js?v=220"></script>
+  <script src="js/api.js?v=220"></script>
+  <script src="js/ui.js?v=220"></script>
+  <script src="js/dashboard.js?v=220"></script>
+  <script src="js/products.js?v=220"></script>
+  <script src="js/pricerate.js?v=220"></script>
+  <script src="js/sell.js?v=220"></script>
+  <script src="js/payment.js?v=220"></script>
+  <script src="js/tradein.js?v=220"></script>
+  <script src="js/buyback.js?v=220"></script>
+  <script src="js/exchange.js?v=220"></script>
+  <script src="js/withdraw.js?v=220"></script>
+  <script src="js/historysell.js?v=220"></script>
+  <script src="js/cashbank.js?v=220"></script>
+  <script src="js/accounting.js?v=220"></script>
+  <script src="js/diff.js?v=220"></script>
+  <script src="js/reports.js?v=220"></script>
+  <script src="js/livereport.js?v=220"></script>
+  <script src="js/usersetting.js?v=220"></script>
+  <script src="js/stockold.js?v=220"></script>
+  <script src="js/stocknew.js?v=220"></script>
+  <script src="js/wac.js?v=220"></script>
+  <script src="js/inventory.js?v=220"></script>
+  <script src="js/close.js?v=220"></script>
+  <script src="js/review.js?v=220"></script>
+  <script src="js/notification.js?v=220"></script>
+  <script src="js/auth.js?v=220"></script>
   
   <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
   <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/th.js"></script>

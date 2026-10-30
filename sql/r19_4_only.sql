@@ -80,8 +80,8 @@ DECLARE
   v_tx RECORD;
   v_og JSONB;
 BEGIN
-  IF NOT is_manager_or_admin() THEN
-    RETURN jsonb_build_object('success', false, 'message', 'Manager only');
+  IF NOT is_admin() THEN
+    RETURN jsonb_build_object('success', false, 'message', '❌ Admin เท่านั้นที่แก้ไขบิลได้');
   END IF;
   SELECT t.id, t.type::text AS type, t.status::text AS status, t.phone INTO v_tx
   FROM transactions t WHERE t.id = p_tx_id;
@@ -143,8 +143,8 @@ DECLARE
   v_changed BOOLEAN;
 BEGIN
   v_editor := current_user_id();
-  IF NOT is_manager_or_admin() THEN
-    RETURN jsonb_build_object('success', false, 'message', 'Manager only');
+  IF NOT is_admin() THEN
+    RETURN jsonb_build_object('success', false, 'message', '❌ Admin เท่านั้นที่แก้ไขบิลได้');
   END IF;
   IF p_reason IS NULL OR TRIM(p_reason) = '' THEN
     RETURN jsonb_build_object('success', false, 'message', 'กรุณาระบุเหตุผลที่แก้ไข');
@@ -358,7 +358,7 @@ BEGIN
   VALUES (p_tx_id, v_old_items, v_new_items, v_state, TRIM(p_reason), v_editor);
 
   IF v_state = 'HELD' THEN
-    PERFORM _notify_user('INFO', '✏️ Manager แก้ไขรายการทองบิล ' || p_tx_id || ' — ทองเก่าที่คุณถือถูกปรับ',
+    PERFORM _notify_user('INFO', '✏️ Admin แก้ไขรายการทองบิล ' || p_tx_id || ' — ทองเก่าที่คุณถือถูกปรับ',
                          (v_og->>'user_id')::uuid, LOWER(v_tx.type), p_tx_id);
   END IF;
 

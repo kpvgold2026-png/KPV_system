@@ -395,31 +395,19 @@ async function confirmMultiPayment() {
 
       if (currentPaymentData.type === 'BUYBACK') {
         // [R19-1] ยอดค้าง ≤ 500 LAK (ทุกสกุล รวม LAK) → รายการสุดท้ายปิดบิลตาม Total
+        // [R20-1] จ่ายทุกรายการใน RPC เดียว — รายการไหน error = ยกเลิกทั้งรอบ (เดิมรายการแรกค้างในบิล)
         var allowShort = (total - totalPaid) <= 500;
-        for (var pi = 0; pi < paymentEntries.length; pi++) {
-          var p = paymentEntries[pi];
-          var bankId = null;
-          if (p.bank) {
-            try {
-              var b = await dbSelect('banks', { select: 'id', filters: { name: 'eq.' + p.bank }, limit: 1, useCache: true });
-              if (b && b.length > 0) bankId = b[0].id;
-            } catch(e2) {}
-          }
-
-          var partial = await dbRpc(rpcName, {
-            p_tx_id: currentPaymentData.id,
-            p_paid: p.amount,
-            p_currency: p.currency,
-            p_method: p.method,
-            p_bank_id: bankId,
-            p_change: 0,
-            p_allow_short: allowShort && pi === paymentEntries.length - 1
-          });
-          if (!partial || !partial.success) {
-            alert('❌ เกิดข้อผิดพลาด: ' + (partial && partial.message ? partial.message : 'Unknown'));
-            endSubmit();
-            return;
-          }
+        var bbRes = await dbRpc('confirm_buyback_multi_tx', {
+          p_tx_id: currentPaymentData.id,
+          p_payments: paymentEntries.map(function(p) {
+            return { method: p.method, currency: p.currency, amount: p.amount, bank: p.bank || '' };
+          }),
+          p_allow_short: allowShort
+        });
+        if (!bbRes || !bbRes.success) {
+          alert('❌ เกิดข้อผิดพลาด: ' + (bbRes && bbRes.message ? bbRes.message : 'Unknown'));
+          endSubmit();
+          return;
         }
       } else {
         var payments = paymentEntries.map(function(p) {
@@ -592,7 +580,7 @@ function onBuybackFeeChange() {
 }
 
 // ============================================================
-// [R19-3] แก้ไขการชำระเงินบิลที่จบแล้ว (Manager/Admin) — ใช้ modal เดียวกับตอนรับ/จ่ายเงิน
+// [R19-3] แก้ไขการชำระเงินบิลที่จบแล้ว (Admin เท่านั้น — R20-2) — ใช้ modal เดียวกับตอนรับ/จ่ายเงิน
 //   server (edit_tx_payments) ลงส่วนต่าง: กะ Sales ยังไม่ปิด → กระเป๋า Sales ; ปิดแล้ว/Manager รับ → เงินร้าน
 // ============================================================
 function _setPaymentEditMode(on) {
@@ -603,7 +591,7 @@ function _setPaymentEditMode(on) {
 }
 
 async function openEditPaymentModal(txId) {
-  if (!isManager()) return;
+  if (!isAdmin()) return;
   var info;
   try {
     showLoading();
@@ -712,7 +700,7 @@ var GOLD_EDIT_ROLE_LABELS = {
 var GOLD_EDIT_ROLE_ORDER = ['NEW', 'OLD', 'FOC', 'SWITCH', 'FREE_EX'];
 
 function openTxEditChooser(txId) {
-  if (!isManager()) return;
+  if (!isAdmin()) return;
   _txEditChooserId = txId;
   document.getElementById('txEditChooserId').textContent = txId;
   openModal('txEditChooserModal');
@@ -738,7 +726,7 @@ function _goldEditGrams(map) {
 }
 
 async function openEditGoldModal(txId) {
-  if (!isManager()) return;
+  if (!isAdmin()) return;
   var info;
   try {
     showLoading();

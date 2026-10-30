@@ -120,7 +120,7 @@ async function loadHistorySell() {
         var detail = encodeURIComponent(JSON.stringify(detailArr));
         actions = '<button class="btn-action" onclick="viewTransactionDetail(\'' + typeLabel + '\',\'' + detail + '\')" style="background:#555;">👁 View</button>';
         // [R19-3] Manager แก้ไขการชำระเงินของบิลที่จบแล้ว
-        if ((r.status === 'COMPLETED' || r.status === 'PAID') && isManager()) {
+        if ((r.status === 'COMPLETED' || r.status === 'PAID') && isAdmin()) { // [R20-2] แก้ไขบิลที่จบแล้ว = Admin เท่านั้น
           actions += ' <button class="btn-action" onclick="openTxEditChooser(\'' + r.id + '\')" style="background:#ff9800;color:#fff;border-color:#ff9800;margin-left:4px;">✏️ แก้ไข</button>';
         }
       } else if (r.status === 'PENDING' && isManager()) {

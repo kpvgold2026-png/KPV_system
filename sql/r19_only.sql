@@ -447,8 +447,8 @@ DECLARE
   v_tx RECORD;
   v_led JSONB;
 BEGIN
-  IF NOT is_manager_or_admin() THEN
-    RETURN jsonb_build_object('success', false, 'message', 'Manager only');
+  IF NOT is_admin() THEN
+    RETURN jsonb_build_object('success', false, 'message', '❌ Admin เท่านั้นที่แก้ไขบิลได้');
   END IF;
 
   SELECT t.id, t.type::text AS type, t.status::text AS status, t.total, t.price,
@@ -529,8 +529,8 @@ DECLARE
   v_ok BOOLEAN;
 BEGIN
   v_editor := current_user_id();
-  IF NOT is_manager_or_admin() THEN
-    RETURN jsonb_build_object('success', false, 'message', 'Manager only');
+  IF NOT is_admin() THEN
+    RETURN jsonb_build_object('success', false, 'message', '❌ Admin เท่านั้นที่แก้ไขบิลได้');
   END IF;
   IF p_reason IS NULL OR TRIM(p_reason) = '' THEN
     RETURN jsonb_build_object('success', false, 'message', 'กรุณาระบุเหตุผลที่แก้ไข');
@@ -723,7 +723,7 @@ BEGIN
           v_old_change, v_change, v_deltas, TRIM(p_reason), v_editor);
 
   IF v_is_shift AND jsonb_array_length(v_deltas) > 0 THEN
-    PERFORM _notify_user('INFO', '✏️ Manager แก้ไขการชำระเงินบิล ' || p_tx_id || ' — ยอดในกระเป๋าของคุณถูกปรับ',
+    PERFORM _notify_user('INFO', '✏️ Admin แก้ไขการชำระเงินบิล ' || p_tx_id || ' — ยอดในกระเป๋าของคุณถูกปรับ',
                          v_user, LOWER(v_tx.type), p_tx_id);
   END IF;
 

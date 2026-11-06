@@ -42,7 +42,7 @@ DELETE FROM transactions;
 -- ============================================================
 -- 1.1) ตารางที่เพิ่มมาทีหลัง (แต่ละรอบ) — safe ถ้ายังไม่มี table
 --   bill_sequence      = counter เลขบิล SE/TI/EX/BB/WD (Round 4)
---   admin_ref_counter  = counter SI/SO/CB/TF/CL       (Round 7.5)
+--   admin_ref_counter  = counter SI/SO/TF/CL/SH/CB/UC/CE/UE (Round 7.5, R21)
 --   old_gold_lots      = lot ทองเก่า FIFO             (Round 11.1)
 --   daily_reports      = wealth snapshot รายวัน       (Round 12)
 --   audit_logs         = ‼️ ต้องล้างด้วย — แท็บ "รายการที่ถูกลบ" (utils.js

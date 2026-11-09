@@ -70,23 +70,56 @@ var _inactivityTimer = null;
 var _sessionCheckInterval = null;
 var INACTIVITY_LIMIT = (CONFIG.INACTIVITY_TIMEOUT_MINUTES || 60) * 60 * 1000;
 
+var _lastActivityWrite = 0;
+var _inactivityLoggingOut = false;
+
+function _inactivityMsg() {
+  var mins = CONFIG.INACTIVITY_TIMEOUT_MINUTES || 60;
+  return mins >= 60 ? (mins / 60) + ' ชั่วโมง' : mins + ' นาที';
+}
+
+// ออกจากระบบเพราะไม่ใช้งาน — logout ทันที ไม่ใช้ alert() ก่อน
+// (alert จะค้างหน้าจอไว้จนกว่าจะมีคนกด OK → ระบบยังไม่ออกจริงและข้อมูลยังโชว์อยู่)
+// ข้อความแจ้งเตือนจะไปโชว์ที่หน้า login หลัง reload แทน
+function _logoutForInactivity() {
+  if (_inactivityLoggingOut || !currentUser) return;
+  _inactivityLoggingOut = true;
+  try { localStorage.setItem('logoutReason', 'inactivity'); } catch(e) {}
+  logout();
+}
+
+// เช็คจากเวลาจริง (lastActivity) — setTimeout อย่างเดียวไม่พอ เพราะเบราว์เซอร์หน่วง/หยุด timer
+// ตอนแท็บอยู่เบื้องหลังหรือคอม sleep → กลับมาขยับเมาส์ก็ใช้ต่อได้โดยไม่หลุด
+function checkInactivityExpired() {
+  if (!currentUser) return false;
+  if (isSessionExpired()) { _logoutForInactivity(); return true; }
+  return false;
+}
+
 function resetInactivityTimer() {
-  localStorage.setItem('lastActivity', Date.now());
+  if (!currentUser) return;
+  // ถ้าเกินเวลาแล้ว (เช่น เพิ่งกลับมาจาก sleep) ห้ามต่ออายุ → ออกจากระบบเลย
+  if (checkInactivityExpired()) return;
+  var now = Date.now();
+  if (now - _lastActivityWrite > 5000) {   // กันเขียน localStorage ทุกครั้งที่ขยับเมาส์
+    _lastActivityWrite = now;
+    localStorage.setItem('lastActivity', now);
+  }
   if (_inactivityTimer) clearTimeout(_inactivityTimer);
-  _inactivityTimer = setTimeout(function() {
-    if (currentUser) {
-      var mins = CONFIG.INACTIVITY_TIMEOUT_MINUTES || 60;
-      var msg = mins >= 60 ? (mins / 60) + ' ชั่วโมง' : mins + ' นาที';
-      alert('⏰ ไม่มีการใช้งาน ' + msg + ' — ออกจากระบบอัตโนมัติ');
-      logout();
-    }
-  }, INACTIVITY_LIMIT);
+  _inactivityTimer = setTimeout(checkInactivityExpired, INACTIVITY_LIMIT + 1000);
+}
+
+function _onVisibilityForInactivity() {
+  if (document.visibilityState === 'visible') checkInactivityExpired();
 }
 
 function startInactivityWatch() {
   ['click', 'keydown', 'mousemove', 'touchstart', 'scroll'].forEach(function(evt) {
     document.addEventListener(evt, resetInactivityTimer, { passive: true });
   });
+  document.addEventListener('visibilitychange', _onVisibilityForInactivity);
+  window.addEventListener('focus', checkInactivityExpired);
+  _lastActivityWrite = 0;
   resetInactivityTimer();
   startSessionCheck();
 }
@@ -95,6 +128,8 @@ function stopInactivityWatch() {
   ['click', 'keydown', 'mousemove', 'touchstart', 'scroll'].forEach(function(evt) {
     document.removeEventListener(evt, resetInactivityTimer);
   });
+  document.removeEventListener('visibilitychange', _onVisibilityForInactivity);
+  window.removeEventListener('focus', checkInactivityExpired);
   if (_inactivityTimer) { clearTimeout(_inactivityTimer); _inactivityTimer = null; }
   stopSessionCheck();
 }
@@ -196,6 +231,7 @@ async function fetchUsersFromDB() {
 
 async function checkSession() {
   if (!currentUser) return;
+  if (checkInactivityExpired()) return;
   try {
     var result = await dbRpc('get_my_session', {});
     var stored = result && result.session_token ? result.session_token : null;
@@ -447,6 +483,21 @@ function isManager() {
   return currentUser && (currentUser.role === 'Manager' || currentUser.role === 'Admin');
 }
 
+// โชว์เหตุผลที่ถูก logout (ไม่ใช้งานนาน) บนหน้า login หลัง reload
+function showLogoutReasonIfAny() {
+  var reason = null;
+  try { reason = localStorage.getItem('logoutReason'); localStorage.removeItem('logoutReason'); } catch(e) {}
+  if (reason !== 'inactivity') return;
+  var screen = document.getElementById('loginScreen');
+  if (!screen) return;
+  var box = document.createElement('div');
+  box.textContent = '⏰ ไม่มีการใช้งาน ' + _inactivityMsg() + ' — ระบบออกจากระบบอัตโนมัติ กรุณาเข้าสู่ระบบใหม่';
+  box.style.cssText = 'position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:9999;background:#ff9800;color:#000;padding:10px 18px;border-radius:8px;font-weight:bold;font-size:14px;max-width:calc(100% - 32px);text-align:center;box-shadow:0 2px 10px rgba(0,0,0,0.4);cursor:pointer;';
+  box.onclick = function() { box.remove(); };
+  document.body.appendChild(box);
+  setTimeout(function() { if (box.parentNode) box.remove(); }, 15000);
+}
+
 async function restoreSession() {
   try {
     var s = await sb.auth.getSession();
@@ -464,6 +515,7 @@ async function restoreSession() {
       _cachedSession = null;
       localStorage.removeItem('currentUser');
       localStorage.removeItem('lastActivity');
+      try { localStorage.setItem('logoutReason', 'inactivity'); } catch(e) {}
       return false;
     }
     currentUser = JSON.parse(saved);
@@ -521,7 +573,7 @@ async function revalidateRestoredUser() {
 
 document.addEventListener('DOMContentLoaded', async function() {
   var ok = await restoreSession();
-  if (!ok) return;
+  if (!ok) { showLogoutReasonIfAny(); return; }
   try {
     var result = await dbRpc('get_my_session', {});
     var stored = result && result.session_token ? result.session_token : null;

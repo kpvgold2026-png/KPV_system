@@ -33,7 +33,7 @@ function mergeItems(items) {
 function formatNumber(num) {
   var n = typeof num === 'string' ? parseFloat(num.replace(/,/g, '')) : num;
   if (typeof n !== 'number' || isNaN(n)) n = 0;
-  return new Intl.NumberFormat('en-US').format(Math.round(n));
+  return new Intl.NumberFormat('en-US').format(Math.round(n) || 0);
 }
 
 function formatCurrency(amount, currency) {
@@ -41,14 +41,31 @@ function formatCurrency(amount, currency) {
   if (isNaN(n)) n = 0;
   var cur = String(currency || '').trim().toUpperCase();
   if (cur === 'THB' || cur === 'USD') {
-    return new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
+    return new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(_noNegZero(n, 2));
   }
-  return new Intl.NumberFormat('en-US').format(Math.round(n));
+  return new Intl.NumberFormat('en-US').format(Math.round(n) || 0);
 }
 
 function formatWeight(num) {
-  return new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(num);
+  return new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(_noNegZero(num, 2));
 }
+
+// กัน "-0" / "-0.00": ค่าติดลบเล็กมาก (เช่น -0.0000001 จาก floating point) ที่ปัดแล้วเป็นศูนย์ → คืน 0 บวก
+function _noNegZero(num, decimals) {
+  var n = parseFloat(num);
+  if (isNaN(n)) return 0;
+  var f = Math.pow(10, decimals || 0);
+  return Math.round(n * f) === 0 ? 0 : n;
+}
+
+// toFixed() ของ JS คืน "-0.00" เมื่อค่าเป็นลบเล็กๆ (เช่น -0.001.toFixed(2)) → แก้ทั้งระบบให้เป็น "0.00"
+(function() {
+  var _origToFixed = Number.prototype.toFixed;
+  Number.prototype.toFixed = function(digits) {
+    var out = _origToFixed.call(this, digits);
+    return /^-0(\.0+)?$/.test(out) ? out.slice(1) : out;
+  };
+})();
 
 function parseSheetDate(dateValue) {
   if (!dateValue) return null;
